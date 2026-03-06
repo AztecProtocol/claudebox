@@ -62,6 +62,11 @@ a{color:inherit;text-decoration:none}a:hover{text-decoration:underline}
 .chat-label{font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:2px}
 .chat-label.reply-label{color:#5FA7F1}
 .chat-label.artifact-label{color:#FAD979}
+/* Compact artifact lines */
+.artifact-line{color:#FAD979 !important}
+.artifact-icon{color:#FAD979;font-size:10px;flex-shrink:0;width:14px;text-align:center}
+.artifact-link{color:#FAD979;text-decoration:none}
+.artifact-link:hover{text-decoration:underline}
 
 /* Tool/status lines */
 .chat-status{display:flex;align-items:center;gap:6px;font-size:11px;color:#666;padding:2px 12px 2px 36px;font-family:'SF Mono',monospace}
@@ -176,6 +181,28 @@ function linkify(s){
   return parts.join("");
 }
 
+function compactArtifact(text){
+  // PR: markdown link with #N
+  var prMd=text.match(/\\[(?:PR )?#(\\d+)[^\\]]*\\]\\((https?:\\/\\/[^)]+)\\)/);
+  if(prMd)return '<a href="'+esc(prMd[2])+'" target="_blank" class="link artifact-link">PR #'+prMd[1]+'</a>';
+  // Issue: "Issue #N: title — url" or "Closed issue #N: ..."
+  var issueM=text.match(/^(?:Closed )?[Ii]ssue #(\\d+).*?(https?:\\/\\/\\S+)/);
+  if(issueM){var pre=text.indexOf("Closed")===0?"Closed ":"";return '<a href="'+esc(issueM[2])+'" target="_blank" class="link artifact-link">'+pre+'#'+issueM[1]+'</a>';}
+  // Cross-ref
+  var xref=text.match(/^Cross-ref #(\\d+)/);
+  if(xref){var u=text.match(/(https?:\\/\\/\\S+)/);if(u)return '<a href="'+esc(u[1])+'" target="_blank" class="link artifact-link">Cross-ref #'+xref[1]+'</a>';return '<span class="artifact-link">Cross-ref #'+xref[1]+'</span>';}
+  // Gist
+  var gist=text.match(/^Gist:\\s*(https?:\\/\\/\\S+)/);
+  if(gist)return '<a href="'+esc(gist[1])+'" target="_blank" class="link artifact-link">Gist</a>';
+  // Skill PR
+  var skill=text.match(/[Ss]kill.*?#(\\d+).*?(https?:\\/\\/\\S+)/);
+  if(skill)return '<a href="'+esc(skill[2])+'" target="_blank" class="link artifact-link">PR #'+skill[1]+'</a>';
+  // Label
+  var label=text.match(/audit label:\\s*(\\S+)/);
+  if(label)return '<span class="artifact-link">Label '+esc(label[1])+'</span>';
+  return linkify(text);
+}
+
 function timeAgo(iso){
   var ms=Date.now()-new Date(iso).getTime();
   if(ms<60000)return "just now";
@@ -230,7 +257,8 @@ function ChatMessage({entry, agentLogUrl}){
     return html\`<div class="chat-msg bot"><div class="chat-avatar">CB</div><div class="chat-bubble context-bubble"><div class="chat-text" dangerouslySetInnerHTML=\${{__html:linked}}></div><div class="chat-time">\${t}</div></div></div>\`;
   }
   if(entry.type==="artifact"){
-    return html\`<div class="chat-msg bot"><div class="chat-avatar">CB</div><div class="chat-bubble artifact-bubble"><div class="chat-label artifact-label">artifact</div><div class="chat-text" dangerouslySetInnerHTML=\${{__html:linked}}></div><div class="chat-time">\${t}</div></div></div>\`;
+    const compact=compactArtifact(entry.text);
+    return html\`<div class="chat-status artifact-line"><span class="artifact-icon">\u25C6</span><span dangerouslySetInnerHTML=\${{__html:compact}}></span><span class="ts">\${t}</span></div>\`;
   }
   if(entry.type==="agent_start"){
     const agentInner=agentLogUrl
@@ -351,11 +379,11 @@ function Sidebar({open, status, exitCode, user, baseBranch, logUrl, sessions, ar
     </div>
     \${artifacts.length?html\`<div class="sidebar-section">
       <div class="sidebar-label">Artifacts (\${artifacts.length})</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
       \${artifacts.map((a,i)=>{
-        const raw=a.text.replace(/^- /,"");
-        const truncated=raw.length>120?raw.slice(0,120)+"\u2026":raw;
-        return html\`<div class="artifact-row" key=\${i} dangerouslySetInnerHTML=\${{__html:linkify(truncated)}}></div>\`;
+        return html\`<span key=\${i} dangerouslySetInnerHTML=\${{__html:compactArtifact(a.text)}}></span>\`;
       })}
+      </div>
     </div>\`:null}
     \${sessions.length>1?html\`<div class="sidebar-section">
       <div class="sidebar-label">Session History</div>

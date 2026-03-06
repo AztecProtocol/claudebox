@@ -97,6 +97,53 @@ export function linkify(text: string): string {
   return parts.join("");
 }
 
+/**
+ * Compact artifact text into short clickable links.
+ * "- [PR #5: title](url)" → "PR #5" linked
+ * "Issue #70: title — url" → "#70" linked
+ * "Closed issue #70: title — url" → "Closed #70" linked
+ * "Cross-ref #70: context" → "Cross-ref #70" linked
+ * "Gist: url" → "Gist" linked
+ * "Skill PR [/name #3](url)" → "PR #3 /name" linked
+ * "Created audit label: scope/slug" → "Label scope/slug"
+ */
+function compactArtifact(text: string): string {
+  // PR: "- [PR #5: title](url)" or markdown link with PR
+  const prMd = text.match(/\[(?:PR )?#(\d+)[^\]]*\]\((https?:\/\/[^)]+)\)/);
+  if (prMd) return `<a href="${esc(prMd[2])}" target="_blank" class="link artifact-link">PR #${prMd[1]}</a>`;
+
+  // Issue: "Issue #70: title — url"
+  const issueMatch = text.match(/^(?:Closed )?[Ii]ssue #(\d+).*?(https?:\/\/\S+)/);
+  if (issueMatch) {
+    const prefix = text.startsWith("Closed") ? "Closed " : "";
+    return `<a href="${esc(issueMatch[2])}" target="_blank" class="link artifact-link">${prefix}#${issueMatch[1]}</a>`;
+  }
+
+  // Cross-ref: "Cross-ref #70: context"
+  const xrefMatch = text.match(/^Cross-ref #(\d+)/);
+  if (xrefMatch) {
+    // Try to extract URL if present
+    const urlMatch = text.match(/(https?:\/\/\S+)/);
+    if (urlMatch) return `<a href="${esc(urlMatch[1])}" target="_blank" class="link artifact-link">Cross-ref #${xrefMatch[1]}</a>`;
+    return `<span class="artifact-link">Cross-ref #${xrefMatch[1]}</span>`;
+  }
+
+  // Gist: "Gist: url"
+  const gistMatch = text.match(/^Gist:\s*(https?:\/\/\S+)/);
+  if (gistMatch) return `<a href="${esc(gistMatch[1])}" target="_blank" class="link artifact-link">Gist</a>`;
+
+  // Skill: "Skill PR [/name #3](url)" or similar
+  const skillMatch = text.match(/[Ss]kill.*?#(\d+).*?(https?:\/\/\S+)/);
+  if (skillMatch) return `<a href="${esc(skillMatch[2])}" target="_blank" class="link artifact-link">PR #${skillMatch[1]}</a>`;
+
+  // Audit label: "Created audit label: scope/slug"
+  const labelMatch = text.match(/audit label:\s*(\S+)/);
+  if (labelMatch) return `<span class="artifact-link">Label ${esc(labelMatch[1])}</span>`;
+
+  // Fallback: linkify the whole text
+  return linkify(text);
+}
+
 export function renderUserMsg(promptText: string, t: string, user: string): string {
   return `<div class="chat-msg user"><div class="chat-bubble user-bubble"><div class="chat-text">${promptText}</div><div class="chat-time">${t}</div></div><div class="chat-avatar user-avatar">${esc(user.slice(0, 2).toUpperCase())}</div></div>`;
 }
@@ -110,7 +157,9 @@ export function renderActivityEntry(a: ActivityEntry, agentLogUrl?: string): str
   } else if (a.type === "context") {
     return `<div class="chat-msg bot" data-msg="${msgHash}"><div class="chat-avatar">CB</div><div class="chat-bubble context-bubble"><div class="chat-text">${linked}</div><div class="chat-time">${timeStr}</div></div></div>`;
   } else if (a.type === "artifact") {
-    return `<div class="chat-msg bot" data-msg="${msgHash}"><div class="chat-avatar">CB</div><div class="chat-bubble artifact-bubble"><div class="chat-label artifact-label">artifact</div><div class="chat-text">${linked}</div><div class="chat-time">${timeStr}</div></div></div>`;
+    // Compact artifact rendering — show short #N links instead of full text
+    const compact = compactArtifact(a.text);
+    return `<div class="chat-status artifact-line" data-msg="${msgHash}"><span class="artifact-icon">\u25C6</span><span>${compact}</span><span class="ts">${timeStr}</span></div>`;
   } else if (a.type === "agent_start") {
     const agentText = agentLogUrl
       ? `<a href="${agentLogUrl}" target="_blank" class="link">Agent: ${linked}</a>`
