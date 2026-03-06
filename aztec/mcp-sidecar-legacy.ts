@@ -33,7 +33,7 @@ const QUIET_MODE = process.env.CLAUDEBOX_QUIET === "1";
 const CI_ALLOW = process.env.CLAUDEBOX_CI_ALLOW === "1";
 const STATS_DIR = process.env.CLAUDEBOX_STATS_DIR || "/stats";
 
-import { getSchema, allSchemas, schemasPrompt } from "./lib/stat-schemas.ts";
+import { getSchema, allSchemas, schemasPrompt } from "../packages/libclaudebox/stat-schemas.ts";
 
 const SESSION_META = {
   log_id: process.env.CLAUDEBOX_LOG_ID || "",

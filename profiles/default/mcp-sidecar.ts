@@ -12,7 +12,7 @@ import {
   buildCommonGhWhitelist,
   registerCommonTools, registerCloneRepo, registerPRTools,
   startMcpHttpServer,
-} from "../../mcp-base.ts";
+} from "../../packages/libclaudebox/mcp/base.ts";
 
 // ── Profile config ──────────────────────────────────────────────
 const REPO = "AztecProtocol/aztec-packages";

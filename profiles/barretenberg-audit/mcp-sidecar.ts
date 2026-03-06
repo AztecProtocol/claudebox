@@ -17,7 +17,7 @@ import {
   buildCommonGhWhitelist, sanitizeError,
   logActivity, updateRootComment, otherArtifacts,
   registerCommonTools, registerCloneRepo, registerPRTools, startMcpHttpServer,
-} from "../../mcp-base.ts";
+} from "../../packages/libclaudebox/mcp/base.ts";
 
 // ── Profile config ──────────────────────────────────────────────
 const REPO = "AztecProtocol/barretenberg-claude";

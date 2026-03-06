@@ -17,7 +17,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 
-import { getSchema, allSchemas, schemasPrompt } from "./lib/stat-schemas.ts";
+import { getSchema, allSchemas, schemasPrompt } from "../stat-schemas.ts";
 
 // ── Config ──────────────────────────────────────────────────────
 export const PORT = parseInt(process.env.MCP_PORT || "9801", 10);

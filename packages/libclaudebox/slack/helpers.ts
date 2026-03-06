@@ -1,9 +1,9 @@
-import type { SessionMeta } from "./types.ts";
-import { SLACK_BOT_TOKEN } from "./config.ts";
-import type { SessionStore } from "./session-store.ts";
-import type { DockerService } from "./docker.ts";
-import { truncate, extractHashFromUrl, sessionUrl } from "./util.ts";
-import { toTargetRef } from "./base-branch.ts";
+import type { SessionMeta } from "../types.ts";
+import { SLACK_BOT_TOKEN } from "../config.ts";
+import type { SessionStore } from "../session-store.ts";
+import type { DockerService } from "../docker.ts";
+import { truncate, extractHashFromUrl, sessionUrl } from "../util.ts";
+import { toTargetRef } from "../base-branch.ts";
 
 /**
  * Convert Markdown-style links and bare URLs to Slack mrkdwn format.

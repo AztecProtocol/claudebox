@@ -13,13 +13,13 @@ import { WebSocketServer } from "ws";
 import {
   SLACK_BOT_TOKEN, SLACK_APP_TOKEN, HTTP_PORT, DOCKER_IMAGE, MAX_CONCURRENT,
   SESSION_PAGE_USER, SESSION_PAGE_PASS,
-} from "./lib/config.ts";
-import { SessionStore } from "./lib/session-store.ts";
-import { DockerService } from "./lib/docker.ts";
-import { InteractiveSessionManager } from "./lib/interactive.ts";
-import { registerSlackHandlers } from "./lib/slack-handlers.ts";
-import { createHttpServer } from "./lib/http-routes.ts";
-import { QuestionStore } from "./lib/question-store.ts";
+} from "./packages/libclaudebox/config.ts";
+import { SessionStore } from "./packages/libclaudebox/session-store.ts";
+import { DockerService } from "./packages/libclaudebox/docker.ts";
+import { InteractiveSessionManager } from "./packages/libclaudebox/interactive.ts";
+import { registerSlackHandlers } from "./packages/libclaudebox/slack/handlers.ts";
+import { createHttpServer } from "./packages/libclaudebox/http-routes.ts";
+import { QuestionStore } from "./packages/libclaudebox/question-store.ts";
 
 // Prevent unhandled Slack/WebSocket rejections from crashing the process
 process.on("unhandledRejection", (reason: any) => {

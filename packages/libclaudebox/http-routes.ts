@@ -6,11 +6,11 @@ import type { SessionStore } from "./session-store.ts";
 import type { DockerService } from "./docker.ts";
 import type { InteractiveSessionManager } from "./interactive.ts";
 import type { SessionMeta, Artifact, EnrichedWorkspace, ThreadGroup, ChannelGroup } from "./types.ts";
-import { workspacePageHTML, dashboardHTML, auditDashboardHTML, personalDashboardHTML, type WorkspaceCard } from "./html-templates.ts";
+import { workspacePageHTML, dashboardHTML, auditDashboardHTML, personalDashboardHTML, type WorkspaceCard } from "./html/templates.ts";
 import { parseMessage, parseKeywords, validateResumeSession, truncate, prKeyFromUrl } from "./util.ts";
 import { QuestionStore } from "./question-store.ts";
 import { generateTags } from "./tagger.ts";
-import { updateSlackStatus } from "./slack-helpers.ts";
+import { updateSlackStatus } from "./slack/helpers.ts";
 
 // ── Helpers ─────────────────────────────────────────────────────
 

@@ -22,7 +22,7 @@ export interface StatSchema {
 
 const schemas = new Map<string, StatSchema>();
 
-function register(s: StatSchema): void { schemas.set(s.name, s); }
+export function register(s: StatSchema): void { schemas.set(s.name, s); }
 export function getSchema(name: string): StatSchema | undefined { return schemas.get(name); }
 export function allSchemas(): StatSchema[] { return [...schemas.values()]; }
 

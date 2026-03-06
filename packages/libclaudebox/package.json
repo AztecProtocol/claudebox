@@ -1,0 +1,13 @@
+{
+  "name": "libclaudebox",
+  "version": "0.1.0",
+  "description": "Claude Code session orchestrator framework",
+  "type": "module",
+  "main": "index.ts",
+  "exports": {
+    ".": "./index.ts",
+    "./mcp": "./mcp/base.ts",
+    "./config": "./config.ts",
+    "./profile-types": "./profile-types.ts"
+  }
+}

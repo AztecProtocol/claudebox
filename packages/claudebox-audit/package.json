@@ -1,0 +1,7 @@
+{
+  "name": "claudebox-audit",
+  "version": "0.1.0",
+  "description": "Audit dashboard and MCP tools for ClaudeBox",
+  "type": "module",
+  "main": "index.ts"
+}

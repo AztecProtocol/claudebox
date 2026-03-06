@@ -1,13 +1,13 @@
 import type { App } from "@slack/bolt";
-import type { SessionStore } from "./session-store.ts";
-import type { DockerService } from "./docker.ts";
-import { MAX_CONCURRENT, getActiveSessions, CHANNEL_PROFILES } from "./config.ts";
-import { parseMessage, parseKeywords, validateResumeSession, truncate, extractHashFromUrl, sessionUrl } from "./util.ts";
+import type { SessionStore } from "../session-store.ts";
+import type { DockerService } from "../docker.ts";
+import { MAX_CONCURRENT, getActiveSessions, CHANNEL_PROFILES } from "../config.ts";
+import { parseMessage, parseKeywords, validateResumeSession, truncate, extractHashFromUrl, sessionUrl } from "../util.ts";
 import {
   resolveUserName, getThreadContext, handleTerminalCommand,
   startNewSession, startReplySession,
-} from "./slack-helpers.ts";
-import { resolveBaseBranch, resolveQuietMode, resolveChannelName } from "./base-branch.ts";
+} from "./helpers.ts";
+import { resolveBaseBranch, resolveQuietMode, resolveChannelName } from "../base-branch.ts";
 
 /** Normalized incoming Slack message — unifies app_mention, DM, and slash command. */
 interface IncomingMessage {
