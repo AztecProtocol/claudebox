@@ -2,16 +2,19 @@
  * Manual test: verify Claude container can read CI logs via `ci.sh dlog`.
  *
  * This test is NOT added to CI — it requires:
- * - A running sidecar with Redis tunnel access (bastion SSH)
- * - The aztec-packages repo with ci.sh
+ * - The bastion SSH key at ~/.ssh/build_instance_key
+ * - The aztec-packages repo
+ * - Docker
  *
  * Run manually:
  *   CLAUDEBOX_SECURITY_TESTS=1 node --experimental-strip-types --no-warnings \
  *     --test tests/manual/ci-log-read.test.ts
  *
- * It starts a sidecar (with real credentials) and a Claude container,
- * then runs `ci.sh dlog <key>` inside the Claude container and verifies
- * that log output is returned without directly exposing credentials.
+ * Optionally set TEST_LOG_KEY to a known Redis key (default: auto-detected).
+ *
+ * The Claude container gets the bastion SSH key (for Redis tunnel) but
+ * NO API tokens (GH_TOKEN, SLACK_BOT_TOKEN, etc). ci.sh uses the SSH key
+ * to open a tunnel to Redis and read logs directly.
  */
 
 import { describe, it, before, after } from "node:test";
@@ -24,23 +27,30 @@ import { tmpdir, homedir } from "os";
 const SHOULD_RUN = process.env.CLAUDEBOX_SECURITY_TESTS === "1";
 const DOCKER_IMAGE = process.env.CLAUDEBOX_TEST_IMAGE || "claudebox:latest";
 const TEST_DIR = join(tmpdir(), `claudebox-cilog-${Date.now()}`);
-const LOG_KEY = process.env.TEST_LOG_KEY || "d720d97bbb5cbe32";
 
-const NETWORK = `cbcilog-net-${Date.now()}`;
-const SIDECAR = `cbcilog-sidecar-${Date.now()}`;
 const CLAUDE_CTR = `cbcilog-claude-${Date.now()}`;
 
-// Real credentials from the host environment
-const GH_TOKEN = process.env.GH_TOKEN || "";
-const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN || "";
 const BASTION_SSH_KEY = process.env.BASTION_SSH_KEY || join(homedir(), ".ssh", "build_instance_key");
 const REPO_DIR = process.env.CLAUDE_REPO_DIR || join(homedir(), "aztec-packages");
-const CLAUDEBOX_CODE_DIR = process.env.CLAUDEBOX_CODE_DIR || join(REPO_DIR, ".claude", "claudebox");
 
-function dockerExec(container: string, cmd: string[]): { stdout: string; stderr: string; exitCode: number } {
+// Find a valid log key from Redis (or use TEST_LOG_KEY)
+function findValidLogKey(): string {
+  if (process.env.TEST_LOG_KEY) return process.env.TEST_LOG_KEY;
+  try {
+    const result = spawnSync("bash", ["-c", `
+      cd ${REPO_DIR} && source ci3/source && source ci3/source_redis &&
+      redis_cli --scan 2>/dev/null | head -1
+    `], { encoding: "utf-8", timeout: 15_000 });
+    const key = result.stdout?.trim();
+    if (key && /^[a-f0-9]+$/.test(key)) return key;
+  } catch {}
+  return "";
+}
+
+function dockerExec(container: string, cmd: string[], timeout = 60_000): { stdout: string; stderr: string; exitCode: number } {
   const result = spawnSync("docker", ["exec", container, ...cmd], {
     encoding: "utf-8",
-    timeout: 30_000,
+    timeout,
   });
   return {
     stdout: result.stdout || "",
@@ -50,6 +60,8 @@ function dockerExec(container: string, cmd: string[]): { stdout: string; stderr:
 }
 
 describe("CI log reading via ci.sh dlog (manual)", { skip: !SHOULD_RUN }, () => {
+  let logKey = "";
+
   before(() => {
     try {
       execFileSync("docker", ["version"], { timeout: 5_000 });
@@ -57,53 +69,25 @@ describe("CI log reading via ci.sh dlog (manual)", { skip: !SHOULD_RUN }, () => 
       throw new Error("Docker not available");
     }
 
+    logKey = findValidLogKey();
+    if (!logKey) throw new Error("No valid Redis log key found. Set TEST_LOG_KEY or ensure Redis is reachable from host.");
+    console.log(`[setup] Using log key: ${logKey}`);
+
     mkdirSync(join(TEST_DIR, "workspace"), { recursive: true });
     writeFileSync(join(TEST_DIR, "workspace", "prompt.txt"), "test");
 
-    // Create network
-    execFileSync("docker", ["network", "create", NETWORK], { timeout: 10_000 });
-
     const uid = `${process.getuid!()}:${process.getgid!()}`;
 
-    // Start sidecar with real credentials + cred-proxy
-    execFileSync("docker", [
-      "run", "-d",
-      "--name", SIDECAR,
-      "--network", NETWORK,
-      "--user", uid,
-      "-e", `HOME=/home/aztec-dev`,
-      "-e", `GH_TOKEN=${GH_TOKEN}`,
-      "-e", `SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}`,
-      "-e", `MCP_PORT=9801`,
-      "-v", `${join(TEST_DIR, "workspace")}:/workspace:rw`,
-      "-v", `${CLAUDEBOX_CODE_DIR}:/opt/claudebox:ro`,
-      "-v", `${BASTION_SSH_KEY}:/home/aztec-dev/.ssh/build_instance_key:ro`,
-      "--entrypoint", "/opt/claudebox/profiles/default/mcp-sidecar.ts",
-      DOCKER_IMAGE,
-    ], { timeout: 30_000 });
-
-    // Wait for sidecar health
-    let healthy = false;
-    for (let i = 0; i < 30; i++) {
-      try {
-        const r = dockerExec(SIDECAR, ["curl", "-sf", "http://127.0.0.1:9801/health"]);
-        if (r.stdout.includes("ok")) { healthy = true; break; }
-      } catch {}
-      execSync("sleep 1");
-    }
-    if (!healthy) throw new Error("Sidecar never became healthy");
-
-    // Start Claude container — no credentials, just AZTEC_MCP_SERVER pointing to sidecar
+    // Start Claude container with SSH key (for Redis tunnel) but NO API tokens.
+    // This mirrors the real container setup in docker.ts.
     execFileSync("docker", [
       "run", "-d",
       "--name", CLAUDE_CTR,
-      "--network", NETWORK,
       "--user", uid,
       "-e", `HOME=/home/aztec-dev`,
-      "-e", `AZTEC_MCP_SERVER=http://${SIDECAR}:9801/creds`,
-      "-e", `CLAUDEBOX_MCP_URL=http://${SIDECAR}:9801/mcp`,
       "-v", `${join(TEST_DIR, "workspace")}:/workspace:rw`,
       "-v", `${join(REPO_DIR, ".git")}:/reference-repo/.git:ro`,
+      "-v", `${BASTION_SSH_KEY}:/home/aztec-dev/.ssh/build_instance_key:ro`,
       "--entrypoint", "sleep",
       DOCKER_IMAGE,
       "300",
@@ -117,38 +101,47 @@ describe("CI log reading via ci.sh dlog (manual)", { skip: !SHOULD_RUN }, () => 
     }
 
     // Clone the repo inside the container so ci.sh is available
-    dockerExec(CLAUDE_CTR, [
+    console.log("[setup] Cloning repo...");
+    const cloneResult = dockerExec(CLAUDE_CTR, [
       "git", "clone", "--reference", "/reference-repo", "--dissociate",
       "--depth", "1", "https://github.com/AztecProtocol/aztec-packages.git",
       "/workspace/aztec-packages",
-    ]);
+    ], 120_000);
+    if (cloneResult.exitCode !== 0) {
+      throw new Error(`Clone failed: ${cloneResult.stderr.slice(0, 300)}`);
+    }
+    console.log("[setup] Clone done");
   });
 
   after(() => {
     try { execFileSync("docker", ["rm", "-f", CLAUDE_CTR], { timeout: 10_000 }); } catch {}
-    try { execFileSync("docker", ["rm", "-f", SIDECAR], { timeout: 10_000 }); } catch {}
-    try { execFileSync("docker", ["network", "rm", NETWORK], { timeout: 10_000 }); } catch {}
     try { rmSync(TEST_DIR, { recursive: true }); } catch {}
   });
 
-  it(`reads CI log ${LOG_KEY} via ci.sh dlog`, () => {
+  it("reads CI log via ci.sh dlog", () => {
+    console.log(`[test] Running: ci.sh dlog ${logKey}`);
     const r = dockerExec(CLAUDE_CTR, [
       "bash", "-c",
-      `cd /workspace/aztec-packages && ./ci.sh dlog ${LOG_KEY}`,
-    ]);
+      `cd /workspace/aztec-packages && ./ci.sh dlog ${logKey}`,
+    ], 60_000);
 
     console.log(`[ci.sh dlog] exit=${r.exitCode} stdout=${r.stdout.length} bytes`);
     if (r.stderr) console.log(`[ci.sh dlog] stderr: ${r.stderr.slice(0, 500)}`);
+    if (r.stdout) console.log(`[ci.sh dlog] first 200 chars: ${r.stdout.slice(0, 200)}`);
 
     assert.equal(r.exitCode, 0, `ci.sh dlog should succeed. stderr: ${r.stderr.slice(0, 300)}`);
-    assert.ok(r.stdout.length > 0, "Log output should not be empty");
+    assert.ok(r.stdout.length > 100, "Log output should have meaningful content");
+    assert.ok(
+      !r.stdout.includes("Key not found"),
+      `Log key ${logKey} should exist in Redis`,
+    );
   });
 
-  it("credentials are NOT in Claude container env", () => {
+  it("API tokens are NOT in Claude container env", () => {
     const r = dockerExec(CLAUDE_CTR, ["env"]);
     assert.ok(!r.stdout.includes("GH_TOKEN="), "GH_TOKEN should not be in env");
     assert.ok(!r.stdout.includes("SLACK_BOT_TOKEN="), "SLACK_BOT_TOKEN should not be in env");
-    // AZTEC_MCP_SERVER is expected — it's the proxy URL, not a secret
-    assert.ok(r.stdout.includes("AZTEC_MCP_SERVER="), "AZTEC_MCP_SERVER should be set");
+    assert.ok(!r.stdout.includes("LINEAR_API_KEY="), "LINEAR_API_KEY should not be in env");
+    assert.ok(!r.stdout.includes("CI_PASSWORD="), "CI_PASSWORD should not be in env");
   });
 });
