@@ -67,11 +67,12 @@ export async function handleCredentialRequest(req: IncomingMessage, res: ServerR
 
   try {
     const redisKeyPattern = /^[a-zA-Z0-9:._\/-]+$/;
+    const hasTraversal = (k: string) => k.includes("..") || k.startsWith("/");
     if (path === "redis-setexz") {
       const key = req.headers["x-redis-key"] as string;
       const expire = req.headers["x-redis-expire"] as string;
       if (!key || !expire) { res.writeHead(400); res.end('{"error":"missing key/expire headers"}'); return; }
-      if (!redisKeyPattern.test(key)) { res.writeHead(400); res.end('{"error":"invalid key"}'); return; }
+      if (!redisKeyPattern.test(key) || hasTraversal(key)) { res.writeHead(400); res.end('{"error":"invalid key"}'); return; }
       const expireNum = parseInt(expire, 10);
       if (isNaN(expireNum) || expireNum <= 0 || expireNum > 2592000) { res.writeHead(400); res.end('{"error":"invalid expire (must be 1-2592000)"}'); return; }
       if (!ensureRedisTunnel()) { res.writeHead(502); res.end('{"error":"redis tunnel unavailable"}'); return; }
@@ -81,7 +82,7 @@ export async function handleCredentialRequest(req: IncomingMessage, res: ServerR
     } else if (path === "redis-publish") {
       const body = JSON.parse((await readRawBody(req)).toString());
       if (!body.channel || !body.message) { res.writeHead(400); res.end('{"error":"missing channel/message"}'); return; }
-      if (!redisKeyPattern.test(body.channel)) { res.writeHead(400); res.end('{"error":"invalid channel"}'); return; }
+      if (!redisKeyPattern.test(body.channel) || hasTraversal(body.channel)) { res.writeHead(400); res.end('{"error":"invalid channel"}'); return; }
       if (!ensureRedisTunnel()) { res.writeHead(502); res.end('{"error":"redis tunnel unavailable"}'); return; }
       execFileSync("redis-cli", ["PUBLISH", body.channel, body.message], { timeout: 5000, stdio: "ignore" });
       res.writeHead(200); res.end('{"ok":true}');
@@ -109,7 +110,7 @@ export async function handleCredentialRequest(req: IncomingMessage, res: ServerR
     } else if (path === "redis-getz") {
       const key = req.headers["x-redis-key"] as string;
       if (!key) { res.writeHead(400); res.end('{"error":"missing key header"}'); return; }
-      if (!redisKeyPattern.test(key)) { res.writeHead(400); res.end('{"error":"invalid key"}'); return; }
+      if (!redisKeyPattern.test(key) || hasTraversal(key)) { res.writeHead(400); res.end('{"error":"invalid key"}'); return; }
       if (!ensureRedisTunnel()) { res.writeHead(502); res.end('{"error":"redis tunnel unavailable"}'); return; }
       try {
         const raw = execFileSync("redis-cli", ["--raw", "GET", key], { timeout: 10000 });

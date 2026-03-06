@@ -1,0 +1,27 @@
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6399:6379"
+
+  sidecar:
+    image: node:22-alpine
+    depends_on:
+      - redis
+    volumes:
+      - ./sidecar.ts:/app/sidecar.ts:ro
+    environment:
+      - REDIS_HOST=redis
+    working_dir: /app
+    command: ["sh", "-c", "apk add --no-cache redis >/dev/null 2>&1 && node --experimental-strip-types --no-warnings sidecar.ts"]
+
+  claude:
+    image: node:22-alpine
+    depends_on:
+      - sidecar
+    volumes:
+      - ./test.ts:/app/test.ts:ro
+    environment:
+      - AZTEC_MCP_SERVER=http://sidecar:9801/creds
+    working_dir: /app
+    command: ["node", "--experimental-strip-types", "--no-warnings", "test.ts"]
