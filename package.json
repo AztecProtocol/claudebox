@@ -4,7 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "node --experimental-strip-types --no-warnings --import ./tests/setup.ts --test tests/**/*.test.ts"
+    "test": "node --experimental-strip-types --no-warnings --import ./tests/setup.ts --test 'tests/libclaudebox/**/*.test.ts' 'tests/integration/**/*.test.ts'",
+    "test:security": "CLAUDEBOX_SECURITY_TESTS=1 node --experimental-strip-types --no-warnings --import ./tests/setup.ts --test tests/security/**/*.test.ts"
   },
   "keywords": [],
   "author": "",
