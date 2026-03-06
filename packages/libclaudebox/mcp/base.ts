@@ -18,6 +18,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { z } from "zod";
 
 import { getSchema, allSchemas, schemasPrompt } from "../stat-schemas.ts";
+import { ServerClient, createServerClientFromEnv } from "../server-client.ts";
 
 // ── Config ──────────────────────────────────────────────────────
 export const PORT = parseInt(process.env.MCP_PORT || "9801", 10);
@@ -46,6 +47,24 @@ export const SESSION_META = {
 };
 
 export const statusPageUrl = WORKTREE_ID ? `https://${CLAUDEBOX_HOST}/s/${WORKTREE_ID}` : "";
+
+// ── Server client (initialized lazily, used for Slack/comment/DM) ────
+let _serverClient: ServerClient | null = null;
+
+export function getServerClient(): ServerClient {
+  if (!_serverClient) {
+    // Include SESSION_META fields that aren't in env (like repo, set by profile)
+    const extraMeta: Record<string, string> = {};
+    if (SESSION_META.repo) extraMeta.repo = SESSION_META.repo;
+    if (SESSION_META.slack_message_ts) extraMeta.slack_message_ts = SESSION_META.slack_message_ts;
+    _serverClient = createServerClientFromEnv(extraMeta);
+  }
+  return _serverClient;
+}
+
+export function setServerClient(client: ServerClient): void {
+  _serverClient = client;
+}
 
 // ── Parse Slack permalink from link if no Slack coords provided ──
 function parseSlackPermalink(link: string): { channel: string; thread_ts: string } | null {
@@ -137,36 +156,8 @@ export function truncateForSlack(text: string, maxLen = 600): string {
 // ── Activity log ────────────────────────────────────────────────
 export const ACTIVITY_LOG = "/workspace/activity.jsonl";
 
-// Seed seen artifacts from existing activity log (so resumed sessions don't re-post)
-const _seenArtifactUrls = new Set<string>();
-try {
-  if (existsSync(ACTIVITY_LOG)) {
-    for (const line of readFileSync(ACTIVITY_LOG, "utf-8").split("\n")) {
-      if (!line.trim()) continue;
-      try {
-        const entry = JSON.parse(line);
-        if (entry.type === "artifact") {
-          const m = entry.text.match(/(https?:\/\/[^\s)>\]]+)/);
-          if (m) _seenArtifactUrls.add(m[1].replace(/[.,;:!?]+$/, ''));
-        }
-      } catch {}
-    }
-  }
-} catch {}
-
 export function logActivity(type: string, text: string): void {
-  // Dedup artifacts by URL — don't re-post the same PR/gist/link
-  if (type === "artifact") {
-    const urlMatch = text.match(/(https?:\/\/[^\s)>\]]+)/);
-    if (urlMatch) {
-      const cleanUrl = urlMatch[1].replace(/[.,;:!?]+$/, '');
-      if (_seenArtifactUrls.has(cleanUrl)) return;
-      _seenArtifactUrls.add(cleanUrl);
-    }
-  }
-  try {
-    appendFileSync(ACTIVITY_LOG, JSON.stringify({ ts: new Date().toISOString(), type, text }) + "\n");
-  } catch {}
+  getServerClient().logActivity(type, text);
 }
 
 // ── Root comment state ──────────────────────────────────────────
@@ -291,6 +282,22 @@ export function buildSlackText(status: string): string {
 export async function updateRootComment(status?: string): Promise<string[]> {
   const s = status ?? lastStatus;
   if (status) lastStatus = status;
+
+  const client = getServerClient();
+  if (client.hasServer) {
+    try {
+      return await client.updateComment({
+        status: s,
+        sections: { ...commentSections },
+        trackedPRs: [...trackedPRs.entries()].map(([num, pr]) => ({ num, ...pr })),
+        otherArtifacts: [...otherArtifacts],
+      });
+    } catch (e: any) {
+      return [`Server: ${e.message}`];
+    }
+  }
+
+  // Fallback: direct API calls (for legacy/standalone mode)
   const results: string[] = [];
 
   if (SLACK_BOT_TOKEN && SESSION_META.slack_channel && SESSION_META.slack_message_ts) {
@@ -562,7 +569,6 @@ Channel and thread are locked to this session — you can only read/write your o
       args: z.record(z.any()).describe("Method arguments"),
     },
     async ({ method, args }) => {
-      if (!SLACK_BOT_TOKEN) return { content: [{ type: "text", text: "No SLACK_BOT_TOKEN" }], isError: true };
       if (!SLACK_WHITELIST.has(method))
         return { content: [{ type: "text", text: `Blocked: ${method}. Allowed: ${[...SLACK_WHITELIST].join(", ")}` }], isError: true };
       if (QUIET_MODE && method === "chat.postMessage")
@@ -591,6 +597,29 @@ Channel and thread are locked to this session — you can only read/write your o
           return { content: [{ type: "text", text: "No Slack thread configured for this session" }], isError: true };
         payload.ts = SESSION_META.slack_thread_ts;
       }
+
+      // Use ServerClient if available (token stays on server)
+      const client = getServerClient();
+      if (client.hasServer) {
+        try {
+          const d = await client.slack(method, payload);
+          if (!d.ok) {
+            return { content: [{ type: "text", text: `${method}: ${d.error}${d.hint ? ` ${d.hint}` : ""}` }], isError: true };
+          }
+          const READ_METHODS = new Set(["conversations.replies"]);
+          if (READ_METHODS.has(method)) {
+            const text = JSON.stringify(d, null, 2);
+            const maxLen = 50_000;
+            return { content: [{ type: "text", text: text.length > maxLen ? text.slice(0, maxLen) + "\n...(truncated)" : text }] };
+          }
+          return { content: [{ type: "text", text: `OK${d.ts ? ` (ts: ${d.ts})` : ""}` }] };
+        } catch (e: any) {
+          return { content: [{ type: "text", text: `Server: ${e.message}` }], isError: true };
+        }
+      }
+
+      // Fallback: direct Slack API (legacy/standalone mode)
+      if (!SLACK_BOT_TOKEN) return { content: [{ type: "text", text: "No Slack access — no server or SLACK_BOT_TOKEN configured" }], isError: true };
 
       try {
         const READ_METHODS = new Set(["conversations.replies"]);
@@ -996,13 +1025,24 @@ function buildCompletionSummary(): string {
 }
 
 async function dmAuthorOnCompletion(): Promise<void> {
-  if (!SLACK_BOT_TOKEN || !SESSION_META.user) return;
+  if (!SESSION_META.user) return;
   if (SESSION_META.slack_channel && SESSION_META.slack_channel.startsWith("D")) return;
-  try {
-    // Build a brief DM with link back to context
-    const parts: string[] = [];
 
-    // Context link — where the task was triggered
+  const client = getServerClient();
+  if (client.hasServer) {
+    const hasError = lastStatus?.includes("error");
+    const status = hasError ? "Task failed" : "Task done";
+    await client.dmAuthor({
+      status,
+      trackedPRs: [...trackedPRs.entries()].map(([num, pr]) => ({ num, ...pr })),
+    });
+    return;
+  }
+
+  // Fallback: direct Slack API (legacy/standalone mode)
+  if (!SLACK_BOT_TOKEN) return;
+  try {
+    const parts: string[] = [];
     const contextLinks: string[] = [];
     if (SESSION_META.slack_channel && SESSION_META.slack_thread_ts) {
       const slackDomain = process.env.SLACK_WORKSPACE_DOMAIN || "slack";
@@ -1013,13 +1053,11 @@ async function dmAuthorOnCompletion(): Promise<void> {
       contextLinks.push(`<${SESSION_META.link}|source>`);
     }
 
-    // Brief status + PR links
     const prLinks = [...trackedPRs.entries()].map(([num, pr]) => `<${pr.url}|#${num}>`);
     const hasError = lastStatus?.includes("error");
     const status = hasError ? "Task failed" : "Task done";
     parts.push(status + (prLinks.length ? ` ${prLinks.join(" ")}` : ""));
 
-    // Footer: context + status page
     const footer: string[] = [...contextLinks];
     if (statusPageUrl) footer.push(`<${statusPageUrl}|status>`);
     if (footer.length) parts.push(footer.join(" \u2502 "));
@@ -1059,18 +1097,31 @@ async function dmAuthorOnCompletion(): Promise<void> {
 }
 
 async function initSlackFromPermalink(): Promise<void> {
-  if (!SLACK_BOT_TOKEN || !SESSION_META.slack_channel || !SESSION_META.slack_thread_ts || SESSION_META.slack_message_ts) return;
+  if (!SESSION_META.slack_channel || !SESSION_META.slack_thread_ts || SESSION_META.slack_message_ts) return;
+
+  const client = getServerClient();
   const initText = buildSlackText("Starting…");
-  const headers = { Authorization: `Bearer ${SLACK_BOT_TOKEN}`, "Content-Type": "application/json" };
+
+  // Try ServerClient first, then fall back to direct API
+  const doSlackCall = async (method: string, args: Record<string, any>): Promise<any> => {
+    if (client.hasServer) {
+      return client.slack(method, args);
+    }
+    if (!SLACK_BOT_TOKEN) return { ok: false, error: "no_token" };
+    const headers = { Authorization: `Bearer ${SLACK_BOT_TOKEN}`, "Content-Type": "application/json" };
+    const res = await fetch(`https://slack.com/api/${method}`, {
+      method: "POST", headers, body: JSON.stringify(args),
+    });
+    return res.json();
+  };
 
   try {
-    const r = await fetch("https://slack.com/api/chat.update", {
-      method: "POST", headers,
-      body: JSON.stringify({ channel: SESSION_META.slack_channel, ts: SESSION_META.slack_thread_ts, text: initText }),
+    const d = await doSlackCall("chat.update", {
+      channel: SESSION_META.slack_channel, ts: SESSION_META.slack_thread_ts, text: initText,
     });
-    const d = await r.json() as any;
     if (d.ok) {
       SESSION_META.slack_message_ts = SESSION_META.slack_thread_ts;
+      getServerClient().updateSessionMeta({ slack_message_ts: SESSION_META.slack_message_ts });
       console.log(`[Sidecar] Updated linked message directly in ${SESSION_META.slack_channel}, ts=${SESSION_META.slack_thread_ts}`);
       return;
     }
@@ -1080,13 +1131,12 @@ async function initSlackFromPermalink(): Promise<void> {
   }
 
   try {
-    const r = await fetch("https://slack.com/api/chat.postMessage", {
-      method: "POST", headers,
-      body: JSON.stringify({ channel: SESSION_META.slack_channel, thread_ts: SESSION_META.slack_thread_ts, text: initText }),
+    const d = await doSlackCall("chat.postMessage", {
+      channel: SESSION_META.slack_channel, thread_ts: SESSION_META.slack_thread_ts, text: initText,
     });
-    const d = await r.json() as any;
     if (d.ok && d.ts) {
       SESSION_META.slack_message_ts = d.ts;
+      getServerClient().updateSessionMeta({ slack_message_ts: d.ts });
       console.log(`[Sidecar] Posted thread reply in ${SESSION_META.slack_channel}, ts=${d.ts}`);
     } else {
       console.error(`[Sidecar] Failed to post thread reply: ${d.error}`);
@@ -1525,5 +1575,5 @@ export function registerPRTools(server: McpServer, config: PRToolConfig): void {
     });
 }
 
-// Re-export z for profile sidecar convenience
-export { z, McpServer };
+// Re-export for profile sidecar convenience
+export { z, McpServer, ServerClient, createServerClientFromEnv };

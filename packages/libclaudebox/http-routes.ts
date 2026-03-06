@@ -1189,6 +1189,190 @@ const routes: Route[] = [
       });
     },
   },
+  // ── Internal API: Slack proxy (sidecar → server) ──────────────
+  {
+    method: "POST", pattern: /^\/api\/internal\/slack$/, auth: "api",
+    handler: async (req, res) => {
+      if (!SLACK_BOT_TOKEN) { json(res, 503, { ok: false, error: "no_slack_token" }); return; }
+      let body: any;
+      try { body = JSON.parse(await readBody(req)); }
+      catch { json(res, 400, { error: "invalid JSON" }); return; }
+
+      const { method, args } = body;
+      if (!method || typeof method !== "string") { json(res, 400, { error: "method required" }); return; }
+
+      // Whitelist check
+      const ALLOWED_METHODS = new Set(["chat.postMessage", "chat.update", "reactions.add", "conversations.replies", "users.list", "conversations.open"]);
+      if (!ALLOWED_METHODS.has(method)) { json(res, 403, { ok: false, error: `blocked: ${method}` }); return; }
+
+      try {
+        const READ_METHODS = new Set(["conversations.replies", "users.list"]);
+        const isRead = READ_METHODS.has(method);
+        const url = isRead
+          ? `https://slack.com/api/${method}?${new URLSearchParams(Object.entries(args || {}).map(([k, v]) => [k, String(v)])).toString()}`
+          : `https://slack.com/api/${method}`;
+        const slackRes = await fetch(url, {
+          method: isRead ? "GET" : "POST",
+          headers: isRead
+            ? { Authorization: `Bearer ${SLACK_BOT_TOKEN}` }
+            : { Authorization: `Bearer ${SLACK_BOT_TOKEN}`, "Content-Type": "application/json" },
+          ...(!isRead && { body: JSON.stringify(args || {}) }),
+        });
+        const d = await slackRes.json();
+        json(res, 200, d);
+      } catch (e: any) {
+        json(res, 500, { ok: false, error: e.message });
+      }
+    },
+  },
+
+  // ── Internal API: Root comment update (sidecar → server) ─────
+  {
+    method: "POST", pattern: /^\/api\/internal\/comment$/, auth: "api",
+    handler: async (req, res) => {
+      let body: any;
+      try { body = JSON.parse(await readBody(req)); }
+      catch { json(res, 400, { error: "invalid JSON" }); return; }
+
+      const { status, sections, trackedPRs, otherArtifacts, session } = body;
+      const results: string[] = [];
+
+      // Build Slack text from sections
+      const buildSlackTextFromSections = () => {
+        const parts: string[] = [];
+        if (sections?.response) {
+          parts.push(sections.response.length > 600 ? sections.response.slice(0, 600) + "…" : sections.response);
+        } else if (status) {
+          parts.push(status.length > 600 ? status.slice(0, 600) + "…" : status);
+        }
+        const footer: string[] = [];
+        const prLinks = (trackedPRs || []).map((pr: any) => `<${pr.url}|#${pr.num}>`);
+        if (prLinks.length) footer.push(prLinks.join(" "));
+        const worktreeId = session?.worktree_id;
+        const host = session?.host || "claudebox.work";
+        if (worktreeId) footer.push(`<https://${host}/s/${worktreeId}|status>`);
+        if (footer.length) parts.push(footer.join("  \u2502  "));
+        return parts.join("\n");
+      };
+
+      // Build GitHub body from sections
+      const buildGhBodyFromSections = () => {
+        const lines: string[] = [];
+        const worktreeId = session?.worktree_id;
+        const host = session?.host || "claudebox.work";
+        const logUrl = session?.log_url || "";
+        const links: string[] = [];
+        if (worktreeId) links.push(`[Live status](https://${host}/s/${worktreeId})`);
+        if (logUrl) links.push(`[Log](${logUrl})`);
+        if (links.length) lines.push(links.join(" · "));
+        if (sections?.status) { lines.push(""); lines.push(`**Status:** ${sections.status}`); }
+        if (sections?.response) { lines.push(""); lines.push(`**Response:** ${sections.response}`); }
+        const prLines = (trackedPRs || []).map((pr: any) => {
+          const label = pr.action === "created" ? "Created" : "Updated";
+          return `- **${label}** [#${pr.num}: ${pr.title}](${pr.url})`;
+        });
+        if (prLines.length) { lines.push(""); lines.push("**Pull Requests**"); lines.push(...prLines); }
+        if (otherArtifacts?.length) lines.push(...otherArtifacts);
+        return lines.join("\n");
+      };
+
+      // Update Slack
+      if (SLACK_BOT_TOKEN && session?.slack_channel && session?.slack_message_ts) {
+        try {
+          const r = await fetch("https://slack.com/api/chat.update", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${SLACK_BOT_TOKEN}`, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              channel: session.slack_channel, ts: session.slack_message_ts,
+              text: buildSlackTextFromSections(),
+            }),
+          });
+          const d = await r.json() as any;
+          results.push(d.ok ? "Slack updated" : `Slack: ${d.error}`);
+        } catch (e: any) { results.push(`Slack: ${e.message}`); }
+      }
+
+      // Update GitHub comment
+      if (GH_TOKEN && session?.run_comment_id && session?.repo) {
+        try {
+          const r = await fetch(
+            `https://api.github.com/repos/${session.repo}/issues/comments/${session.run_comment_id}`,
+            {
+              method: "PATCH",
+              headers: { Authorization: `Bearer ${GH_TOKEN}`, Accept: "application/vnd.github.v3+json", "Content-Type": "application/json" },
+              body: JSON.stringify({ body: buildGhBodyFromSections() }),
+            });
+          results.push(r.ok ? "GitHub updated" : `GitHub: ${r.status}`);
+        } catch (e: any) { results.push(`GitHub: ${e.message}`); }
+      }
+
+      json(res, 200, { results });
+    },
+  },
+
+  // ── Internal API: DM author on completion ─────────────────────
+  {
+    method: "POST", pattern: /^\/api\/internal\/dm$/, auth: "api",
+    handler: async (req, res) => {
+      if (!SLACK_BOT_TOKEN) { json(res, 200, { ok: false, reason: "no_slack" }); return; }
+      let body: any;
+      try { body = JSON.parse(await readBody(req)); }
+      catch { json(res, 400, { error: "invalid JSON" }); return; }
+
+      const { status, trackedPRs, session } = body;
+      if (!session?.user) { json(res, 200, { ok: false, reason: "no_user" }); return; }
+      if (session.slack_channel?.startsWith("D")) { json(res, 200, { ok: false, reason: "already_dm" }); return; }
+
+      try {
+        const parts: string[] = [];
+        const contextLinks: string[] = [];
+        if (session.slack_channel && session.slack_thread_ts) {
+          const slackDomain = process.env.SLACK_WORKSPACE_DOMAIN || "slack";
+          const threadLink = `https://${slackDomain}.slack.com/archives/${session.slack_channel}/p${session.slack_thread_ts.replace(".", "")}`;
+          contextLinks.push(`<${threadLink}|thread>`);
+        }
+        if (session.link) contextLinks.push(`<${session.link}|source>`);
+
+        const prLinks = (trackedPRs || []).map((pr: any) => `<${pr.url}|#${pr.num}>`);
+        parts.push((status || "Task done") + (prLinks.length ? ` ${prLinks.join(" ")}` : ""));
+
+        const footer: string[] = [...contextLinks];
+        const host = session.host || "claudebox.work";
+        if (session.worktree_id) footer.push(`<https://${host}/s/${session.worktree_id}|status>`);
+        if (footer.length) parts.push(footer.join(" \u2502 "));
+
+        // Find user
+        const searchResp = await fetch("https://slack.com/api/users.list?limit=200", {
+          headers: { Authorization: `Bearer ${SLACK_BOT_TOKEN}` },
+        });
+        const searchData = await searchResp.json() as any;
+        const slackUser = searchData.members?.find((m: any) =>
+          m.real_name === session.user || m.name === session.user || m.profile?.display_name === session.user
+        );
+        if (!slackUser) { json(res, 200, { ok: false, reason: "user_not_found" }); return; }
+
+        // Open DM
+        const openResp = await fetch("https://slack.com/api/conversations.open", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${SLACK_BOT_TOKEN}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ users: slackUser.id }),
+        });
+        const openData = await openResp.json() as any;
+        if (!openData.ok) { json(res, 200, { ok: false, reason: openData.error }); return; }
+
+        // Send DM
+        await fetch("https://slack.com/api/chat.postMessage", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${SLACK_BOT_TOKEN}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ channel: openData.channel.id, text: parts.join("\n") }),
+        });
+
+        json(res, 200, { ok: true, user: slackUser.id });
+      } catch (e: any) {
+        json(res, 500, { ok: false, error: e.message });
+      }
+    },
+  },
 ];
 
 // ── Server factory ──────────────────────────────────────────────

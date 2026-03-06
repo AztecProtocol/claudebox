@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "http";
+import type { SessionMeta } from "./types.ts";
 
 /**
  * Docker sandbox configuration for a profile.
@@ -37,6 +38,19 @@ export interface StatSchema {
 }
 
 /**
+ * Server-side extensions for a profile.
+ * Routes are mounted at /api/profiles/<name>/* on the host server.
+ */
+export interface ProfileServer {
+  /** HTTP routes — mounted at /api/profiles/<name>/ */
+  routes?: () => RouteRegistration[];
+  /** Called when a session starts for this profile */
+  onSessionStart?: (session: SessionMeta) => Promise<void>;
+  /** Called when a session ends for this profile */
+  onSessionEnd?: (session: SessionMeta) => Promise<void>;
+}
+
+/**
  * Host-side profile manifest. Every profile directory exports this as default
  * from host-manifest.ts.
  */
@@ -45,12 +59,14 @@ export interface ProfileManifest {
   name: string;
   /** Docker sandbox config */
   docker?: DockerConfig;
-  /** HTTP routes to add to host server (lazy-loaded) */
-  routes?: () => RouteRegistration[];
+  /** Server-side extensions (routes, lifecycle hooks) */
+  server?: ProfileServer;
   /** Stat schemas to register */
   schemas?: StatSchema[];
   /** Slack channel IDs that default to this profile */
   channels?: string[];
   /** Channel-specific base branch overrides */
   branchOverrides?: Record<string, string>;
+  /** Whether this profile requires a claudebox server (e.g. for Slack, audit endpoints) */
+  requiresServer?: boolean;
 }

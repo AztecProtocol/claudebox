@@ -6,6 +6,7 @@ const manifest: ProfileManifest = {
     mountReferenceRepo: false,
   },
   channels: ["C0AJCUKUNGP"],
+  requiresServer: true,
 };
 
 export default manifest;

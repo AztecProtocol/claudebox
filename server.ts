@@ -37,12 +37,25 @@ process.on("unhandledRejection", (reason: any) => {
 });
 
 async function main() {
+  // ── Parse --profiles flag ──
+  const profilesArg = process.argv.find(a => a.startsWith("--profiles="))?.split("=")[1]
+    || (process.argv.indexOf("--profiles") >= 0 ? process.argv[process.argv.indexOf("--profiles") + 1] : "");
+  const requestedProfiles = profilesArg ? profilesArg.split(",").map(p => p.trim()).filter(Boolean) : [];
+
   // ── Discover profiles and build channel maps ──
   const rootDir = dirname(import.meta.url.replace("file://", ""));
   setProfilesDir(join(rootDir, "profiles"));
 
   const profileMap = await buildChannelProfileMap();
   const branchMap = await buildChannelBranchMap();
+
+  // Filter to requested profiles if specified
+  if (requestedProfiles.length > 0) {
+    for (const [ch, prof] of profileMap) {
+      if (!requestedProfiles.includes(prof)) profileMap.delete(ch);
+    }
+  }
+
   setChannelMaps(
     Object.fromEntries(branchMap),
     Object.fromEntries(profileMap),
@@ -50,6 +63,7 @@ async function main() {
 
   console.log("ClaudeBox server starting...");
   console.log(`  Image: ${DOCKER_IMAGE}`);
+  console.log(`  Profiles: ${requestedProfiles.length ? requestedProfiles.join(", ") : "(all)"}`);
   console.log(`  Slack: Socket Mode`);
   console.log(`  HTTP:  port ${HTTP_PORT}`);
   console.log(`  Max concurrent: ${MAX_CONCURRENT}`);

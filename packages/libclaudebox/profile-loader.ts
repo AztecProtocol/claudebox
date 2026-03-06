@@ -80,13 +80,24 @@ export async function buildChannelBranchMap(): Promise<Map<string, string>> {
   return map;
 }
 
-/** Collect routes from all discovered profiles. */
-export async function collectProfileRoutes(): Promise<RouteRegistration[]> {
+/** Collect server routes from all discovered profiles, prefixed with /api/profiles/<name>/. */
+export async function collectProfileRoutes(onlyProfiles?: string[]): Promise<RouteRegistration[]> {
   const all: RouteRegistration[] = [];
-  for (const name of discoverProfiles()) {
+  const names = onlyProfiles || discoverProfiles();
+  for (const name of names) {
     const manifest = await loadProfile(name);
-    if (manifest.routes) {
-      try { all.push(...manifest.routes()); } catch (e: any) {
+    const routesFn = manifest.server?.routes;
+    if (routesFn) {
+      try {
+        const routes = routesFn();
+        // Mount each route under /api/profiles/<name>/
+        for (const route of routes) {
+          all.push({
+            ...route,
+            pattern: new RegExp(`^/api/profiles/${name}${route.pattern.source.replace(/^\^/, "/")}$`),
+          });
+        }
+      } catch (e: any) {
         console.error(`[PROFILES] Failed to load routes for ${name}: ${e.message}`);
       }
     }

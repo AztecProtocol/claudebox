@@ -10,7 +10,7 @@ import { SessionStreamer } from "./session-streamer.ts";
 import {
   REPO_DIR, DOCKER_IMAGE, CLAUDEBOX_CODE_DIR, CLAUDE_BINARY,
   BASTION_SSH_KEY, GH_TOKEN, SLACK_BOT_TOKEN, HTTP_PORT,
-  CLAUDEBOX_HOST, CLAUDEBOX_STATS_DIR,
+  CLAUDEBOX_HOST, CLAUDEBOX_STATS_DIR, API_SECRET,
   buildLogUrl,
   incrActiveSessions, decrActiveSessions,
 } from "./config.ts";
@@ -251,6 +251,9 @@ export class DockerService {
         sidecarBinds.push(`${join(REPO_DIR, ".git")}:/reference-repo/.git:ro`);
       }
 
+      // Server URL for sidecar → server communication (host.docker.internal bridges to host)
+      const serverUrl = `http://host.docker.internal:${HTTP_PORT}`;
+
       await this.docker.createContainer({
         name: sidecarName,
         Image: DOCKER_IMAGE,
@@ -262,6 +265,9 @@ export class DockerService {
           `GH_TOKEN=${GH_TOKEN}`,
           `SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}`,
           `LINEAR_API_KEY=${process.env.LINEAR_API_KEY || ""}`,
+          // Server client env — sidecar uses these to talk to host server
+          `CLAUDEBOX_SERVER_URL=${serverUrl}`,
+          `CLAUDEBOX_SERVER_TOKEN=${API_SECRET}`,
           `CLAUDEBOX_LOG_ID=${logId}`,
           `CLAUDEBOX_LOG_URL=${logUrl}`,
           `CLAUDEBOX_WORKTREE_ID=${worktreeId}`,
@@ -281,6 +287,7 @@ export class DockerService {
         ],
         HostConfig: {
           NetworkMode: networkName,
+          ExtraHosts: ["host.docker.internal:host-gateway"],
           Binds: sidecarBinds,
         },
       }).then(c => c.start());
@@ -496,6 +503,7 @@ export class DockerService {
       if (mountRef) {
         sidecarBinds.push(`${join(REPO_DIR, ".git")}:/reference-repo/.git:ro`);
       }
+      const intServerUrl = `http://host.docker.internal:${HTTP_PORT}`;
       await this.docker.createContainer({
         name: sidecarName,
         Image: DOCKER_IMAGE,
@@ -507,6 +515,8 @@ export class DockerService {
           `GH_TOKEN=${GH_TOKEN}`,
           `SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}`,
           `LINEAR_API_KEY=${process.env.LINEAR_API_KEY || ""}`,
+          `CLAUDEBOX_SERVER_URL=${intServerUrl}`,
+          `CLAUDEBOX_SERVER_TOKEN=${API_SECRET}`,
           `CLAUDEBOX_LOG_ID=${logId}`,
           `CLAUDEBOX_LOG_URL=${session.log_url || ""}`,
           `CLAUDEBOX_WORKTREE_ID=${worktreeId || ""}`,
@@ -520,6 +530,7 @@ export class DockerService {
         ],
         HostConfig: {
           NetworkMode: networkName,
+          ExtraHosts: ["host.docker.internal:host-gateway"],
           Binds: sidecarBinds,
         },
       }).then(c => c.start());
