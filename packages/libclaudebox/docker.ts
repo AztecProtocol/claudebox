@@ -308,8 +308,6 @@ export class DockerService {
         "-v", `${CLAUDEBOX_CODE_DIR}:/opt/claudebox:ro`,
         "-e", `CLAUDEBOX_MCP_URL=${mcpUrl}`,
         "-e", `SESSION_UUID=${sessionUuid}`,
-        "-e", `CI_PASSWORD=${process.env.CI_PASSWORD || ""}`,
-        // "-e", `AZTEC_MCP_SERVER=http://${sidecarName}:9801/creds`,  // TODO: enable after #21146 merges
         "-e", `CLAUDEBOX_SIDECAR_HOST=${sidecarName}`,
         "-e", `CLAUDEBOX_SIDECAR_PORT=9801`,
         "-e", `CLAUDEBOX_CONTAINER_CLAUDE_MD=${claudeMdPath}`,

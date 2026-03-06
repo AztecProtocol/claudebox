@@ -6,6 +6,11 @@
  * discovery attacks from inside the Claude container to verify the
  * canary is never reachable.
  *
+ * The Claude container receives ZERO credentials. All secrets live in the
+ * sidecar container, accessible only via whitelisted MCP tool calls over
+ * the internal Docker network. CI access goes through bastion SSH (on the
+ * sidecar), so CI_PASSWORD is also not injected.
+ *
  * Requires Docker. Skipped in CI unless CLAUDEBOX_SECURITY_TESTS=1.
  */
 
@@ -87,7 +92,6 @@ server.listen(9801, () => console.log("sidecar ready"));
     execFileSync("docker", ["network", "create", NETWORK], { timeout: 10_000 });
 
     // Start sidecar with ALL secrets set to canary
-    const uid = `${process.getuid!()}:${process.getgid!()}`;
     execFileSync("docker", [
       "run", "-d",
       "--name", SIDECAR,
@@ -95,6 +99,7 @@ server.listen(9801, () => console.log("sidecar ready"));
       "-e", `GH_TOKEN=${CANARY}`,
       "-e", `SLACK_BOT_TOKEN=${CANARY}`,
       "-e", `LINEAR_API_KEY=${CANARY}`,
+      "-e", `CI_PASSWORD=${CANARY}`,
       "-e", `API_SECRET=${CANARY}`,
       "-e", `CLAUDEBOX_SESSION_PASS=${CANARY}`,
       "-v", `${join(TEST_DIR, "workspace")}:/workspace:rw`,
@@ -115,14 +120,13 @@ server.listen(9801, () => console.log("sidecar ready"));
     }
     if (!healthy) throw new Error("Sidecar never became healthy");
 
-    // Start Claude container — NO secret env vars, only CI_PASSWORD (also canary to test)
-    // But the key point: GH_TOKEN, SLACK_BOT_TOKEN, LINEAR_API_KEY are NOT passed
+    // Start Claude container — ZERO credentials injected.
+    // All secrets stay on the sidecar. CI access goes through bastion SSH.
     execFileSync("docker", [
       "run", "-d",
       "--name", CLAUDE_CTR,
       "--network", NETWORK,
       "-e", `HOME=/home/aztec-dev`,
-      "-e", `CI_PASSWORD=${CANARY}`,  // this one IS expected in Claude container
       "-e", `CLAUDEBOX_MCP_URL=http://${SIDECAR}:9801/mcp`,
       "-e", `CLAUDEBOX_SIDECAR_HOST=${SIDECAR}`,
       "-e", `CLAUDEBOX_SIDECAR_PORT=9801`,
@@ -150,49 +154,46 @@ server.listen(9801, () => console.log("sidecar ready"));
 
   // ── ENV VAR TESTS ──
 
-  it("canary NOT in Claude container env vars (except CI_PASSWORD)", () => {
+  it("canary NOT in any Claude container env var", () => {
     const r = dockerExec(CLAUDE_CTR, ["env"]);
-    // Remove CI_PASSWORD line (that one IS expected)
-    const envWithoutCiPass = r.stdout
-      .split("\n")
-      .filter(l => !l.startsWith("CI_PASSWORD="))
-      .join("\n");
-
-    assertCanaryNotFound(envWithoutCiPass, "env vars (excluding CI_PASSWORD)");
+    assertCanaryNotFound(r.stdout, "env vars");
   });
 
   it("GH_TOKEN not set in Claude container", () => {
     const r = dockerExec(CLAUDE_CTR, ["bash", "-c", "echo GH=$GH_TOKEN"]);
-    assert.equal(r.stdout.trim(), "GH=", "GH_TOKEN should be empty in Claude container");
+    assert.equal(r.stdout.trim(), "GH=", "GH_TOKEN should be empty");
   });
 
   it("SLACK_BOT_TOKEN not set in Claude container", () => {
     const r = dockerExec(CLAUDE_CTR, ["bash", "-c", "echo SB=$SLACK_BOT_TOKEN"]);
-    assert.equal(r.stdout.trim(), "SB=", "SLACK_BOT_TOKEN should be empty in Claude container");
+    assert.equal(r.stdout.trim(), "SB=", "SLACK_BOT_TOKEN should be empty");
   });
 
   it("LINEAR_API_KEY not set in Claude container", () => {
     const r = dockerExec(CLAUDE_CTR, ["bash", "-c", "echo LK=$LINEAR_API_KEY"]);
-    assert.equal(r.stdout.trim(), "LK=", "LINEAR_API_KEY should be empty in Claude container");
+    assert.equal(r.stdout.trim(), "LK=", "LINEAR_API_KEY should be empty");
+  });
+
+  it("CI_PASSWORD not set in Claude container", () => {
+    const r = dockerExec(CLAUDE_CTR, ["bash", "-c", "echo CP=$CI_PASSWORD"]);
+    assert.equal(r.stdout.trim(), "CP=", "CI_PASSWORD should be empty");
   });
 
   it("API_SECRET not set in Claude container", () => {
     const r = dockerExec(CLAUDE_CTR, ["bash", "-c", "echo AS=$API_SECRET"]);
-    assert.equal(r.stdout.trim(), "AS=", "API_SECRET should be empty in Claude container");
+    assert.equal(r.stdout.trim(), "AS=", "API_SECRET should be empty");
   });
 
   it("CLAUDEBOX_SESSION_PASS not set in Claude container", () => {
     const r = dockerExec(CLAUDE_CTR, ["bash", "-c", "echo SP=$CLAUDEBOX_SESSION_PASS"]);
-    assert.equal(r.stdout.trim(), "SP=", "CLAUDEBOX_SESSION_PASS should be empty in Claude container");
+    assert.equal(r.stdout.trim(), "SP=", "CLAUDEBOX_SESSION_PASS should be empty");
   });
 
   // ── /proc ENVIRONMENT SNOOPING ──
 
   it("canary NOT in /proc/1/environ", () => {
     const r = dockerExec(CLAUDE_CTR, ["cat", "/proc/1/environ"]);
-    // Remove CI_PASSWORD entries (expected to be there)
-    const cleaned = r.stdout.replace(/CI_PASSWORD=[^\0]*/g, "");
-    assertCanaryNotFound(cleaned, "/proc/1/environ");
+    assertCanaryNotFound(r.stdout, "/proc/1/environ");
   });
 
   it("canary NOT in /proc/*/environ (all processes)", () => {
@@ -200,16 +201,13 @@ server.listen(9801, () => console.log("sidecar ready"));
       "bash", "-c",
       "for f in /proc/[0-9]*/environ; do cat $f 2>/dev/null; echo; done",
     ]);
-    // Remove CI_PASSWORD entries
-    const cleaned = r.stdout.replace(/CI_PASSWORD=[^\0]*/g, "");
-    assertCanaryNotFound(cleaned, "/proc/*/environ");
+    assertCanaryNotFound(r.stdout, "/proc/*/environ");
   });
 
   // ── /proc MEMORY SNOOPING ──
 
   it("cannot read /proc/1/mem (permission denied)", () => {
     const r = dockerExec(CLAUDE_CTR, ["bash", "-c", "cat /proc/1/mem 2>&1 || true"]);
-    // Should fail — either permission denied or input/output error
     assert.ok(
       r.exitCode !== 0 || r.stderr.includes("ermission") || r.stdout.includes("ermission") ||
       r.stderr.includes("Input/output error") || r.stdout.includes("Input/output error"),
@@ -236,26 +234,19 @@ server.listen(9801, () => console.log("sidecar ready"));
   });
 
   it("canary NOT findable via broad filesystem grep", () => {
-    // Search common locations where secrets might leak
     const dirs = ["/tmp", "/home", "/etc", "/var"];
     for (const dir of dirs) {
       const r = dockerExec(CLAUDE_CTR, [
         "bash", "-c",
         `grep -r "${CANARY}" ${dir}/ 2>/dev/null || true`,
       ]);
-      // CI_PASSWORD may appear in /home/aztec-dev/.bashrc or similar — filter it out
-      const cleaned = r.stdout
-        .split("\n")
-        .filter(l => !l.includes("CI_PASSWORD"))
-        .join("\n");
-      assertCanaryNotFound(cleaned, `filesystem grep of ${dir}`);
+      assertCanaryNotFound(r.stdout, `filesystem grep of ${dir}`);
     }
   });
 
   // ── NETWORK SNOOPING ──
 
   it("cannot reach sidecar secrets via HTTP endpoints", () => {
-    // Try various paths that might expose env vars
     const paths = ["/env", "/debug", "/vars", "/_env", "/config", "/secrets", "/proc"];
     for (const path of paths) {
       const r = dockerExec(CLAUDE_CTR, [
@@ -271,12 +262,10 @@ server.listen(9801, () => console.log("sidecar ready"));
   });
 
   it("cannot inspect sidecar container from Claude container", () => {
-    // Docker socket should not be mounted in Claude container
     const r = dockerExec(CLAUDE_CTR, [
       "bash", "-c",
       "docker inspect " + SIDECAR + " 2>&1 || true",
     ]);
-    // Either docker command not found, or socket not available
     assert.ok(
       r.exitCode !== 0 || r.stdout.includes("not found") || r.stderr.includes("not found") ||
       r.stdout.includes("Cannot connect") || r.stderr.includes("Cannot connect") ||
@@ -311,16 +300,10 @@ server.listen(9801, () => console.log("sidecar ready"));
   });
 
   // ── DOCKER-EXEC-AS-ROOT ESCALATION ──
-  // This tests that even if someone does `docker exec --user root`,
-  // the sidecar env vars are still not accessible from the Claude container
 
   it("canary NOT visible even when exec'd as root", () => {
     const r = dockerExec(CLAUDE_CTR, ["env"], { user: "root" });
-    const cleaned = r.stdout
-      .split("\n")
-      .filter(l => !l.startsWith("CI_PASSWORD="))
-      .join("\n");
-    assertCanaryNotFound(cleaned, "root env in Claude container");
+    assertCanaryNotFound(r.stdout, "root env in Claude container");
   });
 
   it("cannot see sidecar process env even as root", () => {
@@ -330,9 +313,7 @@ server.listen(9801, () => console.log("sidecar ready"));
       "bash", "-c",
       "for f in /proc/[0-9]*/environ; do cat $f 2>/dev/null; echo; done",
     ], { user: "root" });
-    const cleaned = r.stdout.replace(/CI_PASSWORD=[^\0]*/g, "");
-    // GH_TOKEN, SLACK_BOT_TOKEN, etc should NOT appear since they're in a different container
-    assertCanaryNotFound(cleaned, "/proc/*/environ as root (checking cross-container leak)");
+    assertCanaryNotFound(r.stdout, "/proc/*/environ as root (checking cross-container leak)");
   });
 
   // ── DOCKER SOCKET ──
