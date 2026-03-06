@@ -11,7 +11,6 @@ import {
   REPO_DIR, DOCKER_IMAGE, CLAUDEBOX_CODE_DIR, CLAUDE_BINARY,
   BASTION_SSH_KEY, GH_TOKEN, SLACK_BOT_TOKEN, HTTP_PORT,
   CLAUDEBOX_HOST, CLAUDEBOX_DIR, CLAUDEBOX_STATS_DIR, API_SECRET,
-  ANTHROPIC_PROXY_PORT,
   buildLogUrl,
   incrActiveSessions, decrActiveSessions,
 } from "./config.ts";
@@ -301,8 +300,6 @@ export class DockerService {
       console.log(`[DOCKER] Sidecar healthy`);
 
       // Build Claude container args (use spawn for streaming output)
-      // Anthropic API proxy: container talks to host proxy instead of api.anthropic.com directly
-      const anthropicProxyUrl = `http://host.docker.internal:${ANTHROPIC_PROXY_PORT}`;
       const claudeArgs: string[] = [
         "run",
         "--name", claudeName,
@@ -320,9 +317,6 @@ export class DockerService {
         "-v", `${realpathSync(CLAUDE_BINARY)}:/usr/local/bin/claude:ro`,
         "-v", `${join(homedir(), ".claude.json")}:${CONTAINER_HOME}/.claude.json:rw`,
         "-v", `${CLAUDEBOX_CODE_DIR}:/opt/claudebox:ro`,
-        // Anthropic API proxy — container sends session token, host proxy injects real credentials
-        "-e", `ANTHROPIC_BASE_URL=${anthropicProxyUrl}`,
-        "-e", `ANTHROPIC_AUTH_TOKEN=${API_SECRET}`,
         "-e", `CLAUDEBOX_MCP_URL=${mcpUrl}`,
         "-e", `SESSION_UUID=${sessionUuid}`,
         "-e", `AZTEC_MCP_SERVER=http://${sidecarName}:9801/creds`,
@@ -562,8 +556,6 @@ export class DockerService {
       if (mountRef) {
         intBinds.push(`${join(REPO_DIR, ".git")}:/reference-repo/.git:ro`);
       }
-      // Anthropic API proxy for interactive containers
-      const intAnthropicProxyUrl = `http://host.docker.internal:${ANTHROPIC_PROXY_PORT}`;
       await this.docker.createContainer({
         name: containerName,
         Image: DOCKER_IMAGE,
@@ -571,9 +563,6 @@ export class DockerService {
         User: uid,
         Env: [
           `HOME=${CONTAINER_HOME}`,
-          // Anthropic API proxy — container sends session token, host proxy injects real credentials
-          `ANTHROPIC_BASE_URL=${intAnthropicProxyUrl}`,
-          `ANTHROPIC_AUTH_TOKEN=${API_SECRET}`,
           `CLAUDEBOX_MCP_URL=${mcpUrl}`,
           `CLAUDEBOX_SESSION_HASH=${hash}`,
           `CLAUDEBOX_LOG_ID=${logId}`,

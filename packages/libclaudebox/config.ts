@@ -22,9 +22,6 @@ export const CLAUDEBOX_CODE_DIR = join(dirname(import.meta.url.replace("file://"
 export const CLAUDE_BINARY = process.env.CLAUDE_BINARY ?? join(homedir(), ".local", "bin", "claude");
 export const BASTION_SSH_KEY = join(homedir(), ".ssh", "build_instance_key");
 
-// ── Anthropic API proxy ──────────────────────────────────────
-export const ANTHROPIC_PROXY_PORT = parseInt(process.env.ANTHROPIC_PROXY_PORT || "8378", 10);
-
 // ── Interactive session config ──────────────────────────────────
 export const CLAUDEBOX_HOST = process.env.CLAUDEBOX_HOST || "localhost:3000";
 export const SESSION_PAGE_USER = process.env.CLAUDEBOX_SESSION_USER || "admin";
