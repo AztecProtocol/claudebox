@@ -155,6 +155,57 @@ async function testValidation() {
     body: JSON.stringify({ channel: "test" }),
   });
   assert(r8.status === 400, `redis-publish missing message → ${r8.status}`);
+
+  // redis-publish with traversal channel
+  const r9 = await fetch(`${PROXY}/redis-publish`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ channel: "../evil", message: "hi" }),
+  });
+  assert(r9.status === 400, `redis-publish traversal channel → ${r9.status}`);
+}
+
+async function testInjectionAttempts() {
+  console.log("\n── injection attempts ──");
+
+  const injectionKeys = [
+    { key: "../../../etc/passwd", desc: "path traversal" },
+    { key: "/absolute/path", desc: "absolute path" },
+    { key: "key; rm -rf /", desc: "command injection semicolon" },
+    { key: "key$(whoami)", desc: "command injection subshell" },
+    { key: "key`id`", desc: "command injection backtick" },
+    { key: "key\nSET evil 1", desc: "redis protocol injection (newline)" },
+    { key: "key\r\nSET evil 1", desc: "redis protocol injection (CRLF)" },
+    { key: "key && cat /etc/shadow", desc: "command injection &&" },
+    { key: "key | cat /etc/shadow", desc: "command injection pipe" },
+    { key: "", desc: "empty key" },
+    { key: "a".repeat(300), desc: "key too long (300 chars)" },
+  ];
+
+  for (const { key, desc } of injectionKeys) {
+    try {
+      const r = await fetch(`${PROXY}/redis-getz`, {
+        headers: { "X-Redis-Key": key },
+      });
+      assert(r.status === 400, `redis-getz rejects ${desc} → ${r.status}`);
+    } catch {
+      // fetch itself rejects invalid header values (e.g. newlines) — that's good
+      assert(true, `redis-getz rejects ${desc} → fetch threw (header rejected)`);
+    }
+  }
+
+  for (const { key, desc } of injectionKeys) {
+    try {
+      const r = await fetch(`${PROXY}/redis-setexz`, {
+        method: "POST",
+        headers: { "X-Redis-Key": key, "X-Redis-Expire": "60" },
+        body: "data",
+      });
+      assert(r.status === 400, `redis-setexz rejects ${desc} → ${r.status}`);
+    } catch {
+      assert(true, `redis-setexz rejects ${desc} → fetch threw (header rejected)`);
+    }
+  }
 }
 
 async function testKeyWithSlashesAndDots() {
@@ -206,6 +257,7 @@ async function main() {
   await testGzippedRoundtrip();
   await testRedisPublish();
   await testValidation();
+  await testInjectionAttempts();
   await testKeyWithSlashesAndDots();
   await cleanup();
 
