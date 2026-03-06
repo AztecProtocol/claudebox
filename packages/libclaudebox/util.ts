@@ -1,13 +1,15 @@
 import type { ParseResult, SessionMeta } from "./types.ts";
-import { CLAUDEBOX_HOST } from "./config.ts";
+import { CLAUDEBOX_HOST, LOG_BASE_URL } from "./config.ts";
+import { discoverProfiles } from "./profile-loader.ts";
 
 export function truncate(s: string, n = 80): string {
   return s.length <= n ? s : s.slice(0, n - 3) + "...";
 }
 
 export function extractHashFromUrl(text: string): string | null {
-  // Match log URLs: ci.aztec-labs.com/<worktreeId>-<seq> or legacy ci.aztec-labs.com/<32hex>
-  const m = text.match(/^<?https?:\/\/ci\.aztec-labs\.com\/([a-f0-9][\w-]+)>?/);
+  // Match log URLs: <LOG_BASE_URL>/<worktreeId>-<seq> or legacy <LOG_BASE_URL>/<32hex>
+  const escaped = LOG_BASE_URL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/^https?/, "https?");
+  const m = text.match(new RegExp(`^<?${escaped}/([a-f0-9][\\w-]+)>?`));
   return m ? m[1] : null;
 }
 
@@ -41,7 +43,8 @@ export interface ParsedKeywords {
   prompt: string;
 }
 
-const PROFILE_KEYWORDS = ["barretenberg-audit", "claudebox-dev"];
+// Profile keywords are derived from discovered profiles (excludes "default")
+const PROFILE_KEYWORDS = discoverProfiles().filter(p => p !== "default");
 
 /** Detect keywords (new-session, quiet, loud, ci-allow, profile names) at start of prompt, in any order. */
 export function parseKeywords(parsed: ParseResult): ParsedKeywords {

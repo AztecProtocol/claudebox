@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
-import { API_SECRET, SESSION_PAGE_USER, SESSION_PAGE_PASS, MAX_CONCURRENT, getActiveSessions, SLACK_BOT_TOKEN, CHANNEL_BASE_BRANCHES, DEFAULT_BASE_BRANCH, GH_TOKEN } from "./config.ts";
+import { API_SECRET, SESSION_PAGE_USER, SESSION_PAGE_PASS, MAX_CONCURRENT, getActiveSessions, SLACK_BOT_TOKEN, getChannelBranches, DEFAULT_BASE_BRANCH, GH_TOKEN } from "./config.ts";
 import { existsSync, readFileSync, readdirSync, statSync, watch } from "fs";
 import { join } from "path";
 import type { SessionStore } from "./session-store.ts";
@@ -494,7 +494,7 @@ const routes: Route[] = [
   {
     method: "GET", pattern: /^\/api\/branches$/, auth: "basic",
     handler: async (_req, res) => {
-      const branches = [DEFAULT_BASE_BRANCH, ...Object.values(CHANNEL_BASE_BRANCHES)];
+      const branches = [DEFAULT_BASE_BRANCH, ...Object.values(getChannelBranches())];
       json(res, 200, { branches: [...new Set(branches)] });
     },
   },
@@ -706,7 +706,7 @@ const routes: Route[] = [
       }
 
       // Scan local barretenberg repo for total file counts per module
-      const repoDir = process.env.CLAUDE_REPO_DIR || join(process.env.HOME || "", "aztec-packages");
+      const repoDir = process.env.CLAUDE_REPO_DIR || join(process.env.HOME || "", "repo");
       const bbSrcDir = join(repoDir, "barretenberg/cpp/src/barretenberg");
       const moduleTotals = new Map<string, string[]>();
       function scanDir(dir: string, relBase: string) {

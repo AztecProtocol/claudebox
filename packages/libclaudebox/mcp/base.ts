@@ -9,7 +9,7 @@
  */
 
 import { createServer as createHttpServer, IncomingMessage, ServerResponse } from "http";
-import { ChildProcess, execFileSync, execSync, spawn } from "child_process";
+import { execFileSync } from "child_process";
 import { createHash } from "crypto";
 import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, readdirSync, statSync, unlinkSync } from "fs";
 import { join } from "path";
@@ -331,7 +331,7 @@ let transcriptInitialized = false;
 let workspaceName = "";
 
 export function startTranscriptPoller(): void {
-  const projDir = join(process.env.HOME || "/home/aztec-dev", ".claude", "projects", "-workspace");
+  const projDir = join(process.env.HOME || "/home/claude", ".claude", "projects", "-workspace");
 
   transcriptPollTimer = setInterval(() => {
     try {
@@ -769,7 +769,7 @@ Channel and thread are locked to this session — you can only read/write your o
           mqLastFail = mqForPr.find((r: any) => r.conclusion === "failure");
         } catch {}
 
-        const ciDashboard = `http://ci.aztec-labs.com/section/prs?filter=${encodeURIComponent(branch)}`;
+        const ciDashboard = SESSION_META.log_url ? `${new URL(SESSION_META.log_url).origin}/section/prs?filter=${encodeURIComponent(branch)}` : "";
 
         const lines: string[] = [];
         lines.push(`## PR #${pr}: ${prData.title}`);
@@ -957,7 +957,7 @@ function buildCompletionSummary(): string {
 
   const parts: string[] = [];
   try {
-    const projDir = join(process.env.HOME || "/home/aztec-dev", ".claude", "projects", "-workspace");
+    const projDir = join(process.env.HOME || "/home/claude", ".claude", "projects", "-workspace");
     if (existsSync(projDir)) {
       const files = readdirSync(projDir)
         .filter(f => f.endsWith(".jsonl"))
@@ -1005,7 +1005,8 @@ async function dmAuthorOnCompletion(): Promise<void> {
     // Context link — where the task was triggered
     const contextLinks: string[] = [];
     if (SESSION_META.slack_channel && SESSION_META.slack_thread_ts) {
-      const threadLink = `https://aztecprotocol.slack.com/archives/${SESSION_META.slack_channel}/p${SESSION_META.slack_thread_ts.replace(".", "")}`;
+      const slackDomain = process.env.SLACK_WORKSPACE_DOMAIN || "slack";
+      const threadLink = `https://${slackDomain}.slack.com/archives/${SESSION_META.slack_channel}/p${SESSION_META.slack_thread_ts.replace(".", "")}`;
       contextLinks.push(`<${threadLink}|thread>`);
     }
     if (SESSION_META.link) {
@@ -1111,142 +1112,6 @@ export function readBody(req: IncomingMessage): Promise<string> {
   });
 }
 
-// ── Credential Proxy ────────────────────────────────────────────
-// HTTP endpoints that proxy credential-needing operations for Claude containers.
-// Scripts in ci3/ detect AZTEC_MCP_SERVER and call these instead of using
-// local credentials (SSH keys, CI_PASSWORD, etc).
-
-const SSH_CONFIG = "/opt/claudebox/ci3-ssh-config";
-const REDIS_HOST = "ci-redis-tiered.lzka0i.ng.0001.use2.cache.amazonaws.com";
-
-let _redisTunnel: ChildProcess | null = null;
-
-function ensureRedisTunnel(): boolean {
-  // Already connected?
-  try { execSync("nc -z localhost 6379", { timeout: 2000, stdio: "ignore" }); return true; } catch {}
-  // Already running but not yet connected?
-  if (_redisTunnel && !_redisTunnel.killed) {
-    try { execSync("nc -z localhost 6379", { timeout: 5000, stdio: "ignore" }); return true; } catch {}
-    return false;
-  }
-  // Open tunnel
-  try {
-    _redisTunnel = spawn("ssh", [
-      "-N", "-L", `6379:${REDIS_HOST}:6379`,
-      "-o", "ControlMaster=auto", "-o", "ControlPath=/tmp/ssh_mux_%h_%p_%r", "-o", "ControlPersist=480m",
-      "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10",
-      "-i", "/home/aztec-dev/.ssh/build_instance_key",
-      "ubuntu@ci-bastion.aztecprotocol.com",
-    ], { stdio: "ignore", detached: true });
-    _redisTunnel.unref();
-    // Wait for tunnel
-    for (let i = 0; i < 10; i++) {
-      try { execSync("nc -z localhost 6379", { timeout: 1000, stdio: "ignore" }); return true; } catch {}
-      execSync("sleep 0.5", { stdio: "ignore" });
-    }
-    console.error("[Creds] Redis tunnel opened but port not reachable");
-    return false;
-  } catch (e: any) {
-    console.error(`[Creds] Failed to open Redis tunnel: ${e.message}`);
-    return false;
-  }
-}
-
-function readRawBody(req: IncomingMessage, maxBytes = 10 * 1024 * 1024): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    let total = 0;
-    req.on("data", (c: Buffer) => {
-      total += c.length;
-      if (total > maxBytes) { req.destroy(); reject(new Error("Body too large")); return; }
-      chunks.push(c);
-    });
-    req.on("end", () => resolve(Buffer.concat(chunks)));
-    req.on("error", reject);
-  });
-}
-
-async function handleCredentialRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const path = req.url!.replace("/creds/", "");
-  // redis-getz is a read — allow GET; everything else requires POST
-  if (path !== "redis-getz" && req.method !== "POST") {
-    res.writeHead(405); res.end('{"error":"method not allowed"}'); return;
-  }
-
-  try {
-    const redisKeyPattern = /^[a-zA-Z0-9:._\/-]+$/;
-    if (path === "redis-setexz") {
-      const key = req.headers["x-redis-key"] as string;
-      const expire = req.headers["x-redis-expire"] as string;
-      if (!key || !expire) { res.writeHead(400); res.end('{"error":"missing key/expire headers"}'); return; }
-      if (!redisKeyPattern.test(key)) { res.writeHead(400); res.end('{"error":"invalid key"}'); return; }
-      const expireNum = parseInt(expire, 10);
-      if (isNaN(expireNum) || expireNum <= 0 || expireNum > 2592000) { res.writeHead(400); res.end('{"error":"invalid expire (must be 1-2592000)"}'); return; }
-      if (!ensureRedisTunnel()) { res.writeHead(502); res.end('{"error":"redis tunnel unavailable"}'); return; }
-      const data = await readRawBody(req);
-      execFileSync("redis-cli", ["--raw", "-x", "SETEX", key, String(expireNum)], { input: data, timeout: 15000, stdio: ["pipe", "ignore", "ignore"] });
-      res.writeHead(200); res.end('{"ok":true}');
-    } else if (path === "redis-publish") {
-      const body = JSON.parse((await readRawBody(req)).toString());
-      if (!body.channel || !body.message) { res.writeHead(400); res.end('{"error":"missing channel/message"}'); return; }
-      if (!redisKeyPattern.test(body.channel)) { res.writeHead(400); res.end('{"error":"invalid channel"}'); return; }
-      if (!ensureRedisTunnel()) { res.writeHead(502); res.end('{"error":"redis tunnel unavailable"}'); return; }
-      execFileSync("redis-cli", ["PUBLISH", body.channel, body.message], { timeout: 5000, stdio: "ignore" });
-      res.writeHead(200); res.end('{"ok":true}');
-    } else if (path === "cache-disk-transfer") {
-      const key = req.headers["x-cache-key"] as string;
-      const subfolder = req.headers["x-cache-subfolder"] as string || undefined;
-      if (!key) { res.writeHead(400); res.end('{"error":"missing key header"}'); return; }
-      // Validate key and subfolder to prevent shell injection in ssh command
-      const safePattern = /^[a-zA-Z0-9._-]+$/;
-      if (!safePattern.test(key)) { res.writeHead(400); res.end('{"error":"invalid key"}'); return; }
-      if (subfolder && !safePattern.test(subfolder)) { res.writeHead(400); res.end('{"error":"invalid subfolder"}'); return; }
-      const data = await readRawBody(req);
-      const dir = subfolder || key.slice(0, 4);
-      const cmd = `mkdir -p /logs-disk/${dir} && cat > /logs-disk/${dir}/${key}.log.gz`;
-      const ssh = spawn("ssh", [
-        "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=5",
-        "-i", "/home/aztec-dev/.ssh/build_instance_key",
-        "ubuntu@ci-bastion.aztecprotocol.com", cmd,
-      ], { stdio: ["pipe", "ignore", "ignore"] });
-      ssh.stdin.end(data);
-      await new Promise<void>((resolve, reject) => {
-        ssh.on("close", (code) => code === 0 ? resolve() : reject(new Error(`ssh exit ${code}`)));
-        ssh.on("error", reject);
-      });
-      res.writeHead(200); res.end('{"ok":true}');
-    } else if (path === "redis-getz") {
-      const key = req.headers["x-redis-key"] as string;
-      if (!key) { res.writeHead(400); res.end('{"error":"missing key header"}'); return; }
-      if (!redisKeyPattern.test(key)) { res.writeHead(400); res.end('{"error":"invalid key"}'); return; }
-      if (!ensureRedisTunnel()) { res.writeHead(502); res.end('{"error":"redis tunnel unavailable"}'); return; }
-      try {
-        const raw = execFileSync("redis-cli", ["--raw", "GET", key], { timeout: 10000 });
-        if (!raw.length || raw.toString().trim() === "") {
-          res.writeHead(404); res.end('{"error":"key not found"}'); return;
-        }
-        // Check if gzipped (magic bytes 1f 8b) and decompress
-        if (raw[0] === 0x1f && raw[1] === 0x8b) {
-          const { gunzipSync } = await import("zlib");
-          const decompressed = gunzipSync(raw.subarray(0, raw.length - 1)); // trim trailing newline from redis-cli
-          res.writeHead(200, { "Content-Type": "text/plain" });
-          res.end(decompressed);
-        } else {
-          res.writeHead(200, { "Content-Type": "text/plain" });
-          res.end(raw);
-        }
-      } catch (e: any) {
-        res.writeHead(500); res.end(JSON.stringify({ error: `redis GET failed: ${e.message}` }));
-      }
-    } else {
-      res.writeHead(404); res.end('{"error":"unknown credential endpoint"}');
-    }
-  } catch (e: any) {
-    console.error(`[Creds] ${path}: ${e.message}`);
-    if (!res.headersSent) { res.writeHead(500); res.end(JSON.stringify({ error: e.message })); }
-  }
-}
-
 // ── HTTP Server scaffold ────────────────────────────────────────
 // Profiles call this to start the MCP HTTP server.
 
@@ -1259,12 +1124,6 @@ export function startMcpHttpServer(createMcpServer: () => McpServer): void {
       res.end('{"ok":true}');
       return;
     }
-
-    // TODO: enable after #21146 merges and AZTEC_MCP_SERVER is wired in docker.ts
-    // if (req.url?.startsWith("/creds/")) {
-    //   await handleCredentialRequest(req, res);
-    //   return;
-    // }
 
     if (req.url === MCP_PATH && req.method === "POST") {
       try {

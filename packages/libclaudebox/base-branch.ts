@@ -1,4 +1,4 @@
-import { CHANNEL_BASE_BRANCHES, DEFAULT_BASE_BRANCH } from "./config.ts";
+import { getChannelBranches, DEFAULT_BASE_BRANCH } from "./config.ts";
 
 // Cache: channelId → { name, numMembers }
 interface ChannelInfo { name: string; numMembers: number; }
@@ -32,7 +32,7 @@ export async function resolveChannelName(client: any, channelId: string): Promis
  */
 export async function resolveBaseBranch(client: any, channelId: string): Promise<string> {
   const channelName = await resolveChannelName(client, channelId);
-  return CHANNEL_BASE_BRANCHES[channelName] ?? DEFAULT_BASE_BRANCH;
+  return getChannelBranches()[channelName] ?? DEFAULT_BASE_BRANCH;
 }
 
 /**

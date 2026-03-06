@@ -8,11 +8,14 @@
  * Max 10 concurrent sessions.
  */
 
+// ── Aztec-specific config must load first (sets env defaults) ──
+import "./aztec/config.ts";
+
 import { App } from "@slack/bolt";
 import { WebSocketServer } from "ws";
 import {
   SLACK_BOT_TOKEN, SLACK_APP_TOKEN, HTTP_PORT, DOCKER_IMAGE, MAX_CONCURRENT,
-  SESSION_PAGE_USER, SESSION_PAGE_PASS,
+  SESSION_PAGE_USER, SESSION_PAGE_PASS, setChannelMaps,
 } from "./packages/libclaudebox/config.ts";
 import { SessionStore } from "./packages/libclaudebox/session-store.ts";
 import { DockerService } from "./packages/libclaudebox/docker.ts";
@@ -20,6 +23,8 @@ import { InteractiveSessionManager } from "./packages/libclaudebox/interactive.t
 import { registerSlackHandlers } from "./packages/libclaudebox/slack/handlers.ts";
 import { createHttpServer } from "./packages/libclaudebox/http-routes.ts";
 import { QuestionStore } from "./packages/libclaudebox/question-store.ts";
+import { setProfilesDir, buildChannelProfileMap, buildChannelBranchMap } from "./packages/libclaudebox/profile-loader.ts";
+import { join, dirname } from "path";
 
 // Prevent unhandled Slack/WebSocket rejections from crashing the process
 process.on("unhandledRejection", (reason: any) => {
@@ -32,6 +37,17 @@ process.on("unhandledRejection", (reason: any) => {
 });
 
 async function main() {
+  // ── Discover profiles and build channel maps ──
+  const rootDir = dirname(import.meta.url.replace("file://", ""));
+  setProfilesDir(join(rootDir, "profiles"));
+
+  const profileMap = await buildChannelProfileMap();
+  const branchMap = await buildChannelBranchMap();
+  setChannelMaps(
+    Object.fromEntries(branchMap),
+    Object.fromEntries(profileMap),
+  );
+
   console.log("ClaudeBox server starting...");
   console.log(`  Image: ${DOCKER_IMAGE}`);
   console.log(`  Slack: Socket Mode`);
@@ -73,17 +89,20 @@ async function main() {
     }
   }, 60_000);
 
-  // ── Worktree GC — keep workspace dirs under 100GB, clean oldest first (daily) ──
+  // ── Worktree GC — keep workspace dirs under 100GB, clean oldest first ──
+  let gcRunning = false;
   const runGC = async () => {
+    if (gcRunning) return;
+    gcRunning = true;
     try {
       const cleaned = await store.gcWorktreesAsync(100, 1); // 100GB budget, min 1 day old
       if (cleaned.length > 0) console.log(`[GC] Cleaned ${cleaned.length} worktrees: ${cleaned.join(", ")}`);
     } catch (e: any) {
       console.error(`[GC] Error: ${e.message}`);
-    }
+    } finally { gcRunning = false; }
   };
   setTimeout(runGC, 30_000);
-  setInterval(runGC, 24 * 60 * 60 * 1000); // then daily
+  setInterval(runGC, 6 * 60 * 60 * 1000); // every 6h
 
   // ── Slack app (non-fatal — HTTP server should work even without Slack) ──
   try {
