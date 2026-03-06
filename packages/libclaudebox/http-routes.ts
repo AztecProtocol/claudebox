@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
+import { SignJWT, jwtVerify, type JWTPayload } from "jose";
 import { API_SECRET, SESSION_PAGE_USER, SESSION_PAGE_PASS, MAX_CONCURRENT, getActiveSessions, SLACK_BOT_TOKEN, getChannelBranches, DEFAULT_BASE_BRANCH, GH_TOKEN } from "./config.ts";
 import { existsSync, readFileSync, readdirSync, statSync, watch } from "fs";
 import { join } from "path";
@@ -40,41 +41,54 @@ function html(res: ServerResponse, status: number, body: string): void {
   res.end(body);
 }
 
-// ── Auth ────────────────────────────────────────────────────────
+// ── Auth (jose JWT) ─────────────────────────────────────────────
+
+const JWT_SECRET = new TextEncoder().encode(API_SECRET || "claudebox-dev-key");
+const JWT_ISSUER = "claudebox";
+const JWT_EXPIRY = "7d";
+const COOKIE_NAME = "cb_session";
 
 function checkApiAuth(req: IncomingMessage): boolean {
   if (!API_SECRET) return true;
   return (req.headers.authorization ?? "") === `Bearer ${API_SECRET}`;
 }
 
-function checkBasicAuth(req: IncomingMessage): boolean {
-  // Check Authorization header first
+async function checkSessionAuth(req: IncomingMessage): Promise<boolean> {
+  // 1. Check JWT cookie (preferred — works with SSE EventSource)
+  const cookies = req.headers.cookie || "";
+  const match = cookies.match(new RegExp(`${COOKIE_NAME}=([^;]+)`));
+  if (match) {
+    try {
+      const { payload } = await jwtVerify(match[1], JWT_SECRET, { issuer: JWT_ISSUER });
+      if (payload.sub === SESSION_PAGE_USER) return true;
+    } catch {}
+  }
+
+  // 2. Fallback: Basic auth header (for API clients)
   const authHeader = req.headers.authorization || "";
   if (authHeader.startsWith("Basic ")) {
     const decoded = Buffer.from(authHeader.slice(6), "base64").toString();
     const idx = decoded.indexOf(":");
     if (idx >= 0) {
-      const u = decoded.slice(0, idx);
-      const p = decoded.slice(idx + 1);
-      if (u === SESSION_PAGE_USER && p === SESSION_PAGE_PASS) return true;
-    }
-  }
-  // Fallback: ?token= query param (for EventSource which can't set headers)
-  const url = new URL(req.url || "/", "http://localhost");
-  const token = url.searchParams.get("token");
-  if (token) {
-    const decoded = Buffer.from(token, "base64").toString();
-    const idx = decoded.indexOf(":");
-    if (idx >= 0) {
       return decoded.slice(0, idx) === SESSION_PAGE_USER && decoded.slice(idx + 1) === SESSION_PAGE_PASS;
     }
   }
+
   return false;
 }
 
-function sendUnauthorized(res: ServerResponse, _type: "api" | "basic"): void {
-  // Never send WWW-Authenticate — all dashboards use custom JS auth overlays.
-  // The browser's native basic auth popup leaks credentials in the URL bar.
+async function issueSessionCookie(): Promise<string> {
+  const token = await new SignJWT({})
+    .setProtectedHeader({ alg: "HS256" })
+    .setSubject(SESSION_PAGE_USER)
+    .setIssuer(JWT_ISSUER)
+    .setIssuedAt()
+    .setExpirationTime(JWT_EXPIRY)
+    .sign(JWT_SECRET);
+  return `${COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`;
+}
+
+function sendUnauthorized(res: ServerResponse, _type: "api" | "session"): void {
   json(res, 401, { error: "unauthorized" });
 }
 
@@ -359,11 +373,39 @@ const routes: Route[] = [
     },
   },
 
-  // POST /auth-check — validate credentials without triggering browser popup
+  // POST /login — validate credentials and set JWT session cookie
+  {
+    method: "POST", pattern: /^\/login$/, auth: "none",
+    handler: async (req, res) => {
+      const body = JSON.parse(await readBody(req));
+      const { username, password } = body;
+      if (username === SESSION_PAGE_USER && password === SESSION_PAGE_PASS) {
+        const cookie = await issueSessionCookie();
+        res.writeHead(200, { "Content-Type": "application/json", "Set-Cookie": cookie });
+        res.end('{"ok":true}');
+      } else {
+        json(res, 401, { error: "invalid credentials" });
+      }
+    },
+  },
+
+  // POST /logout — clear session cookie
+  {
+    method: "POST", pattern: /^\/logout$/, auth: "none",
+    handler: async (_req, res) => {
+      res.writeHead(200, {
+        "Content-Type": "application/json",
+        "Set-Cookie": `${COOKIE_NAME}=; Path=/; HttpOnly; Max-Age=0`,
+      });
+      res.end('{"ok":true}');
+    },
+  },
+
+  // POST /auth-check — validate session (cookie or Basic header)
   {
     method: "POST", pattern: /^\/auth-check$/, auth: "none",
     handler: async (req, res) => {
-      if (checkBasicAuth(req)) {
+      if (await checkSessionAuth(req)) {
         json(res, 200, { ok: true });
       } else {
         json(res, 401, { ok: false, error: "invalid credentials" });
@@ -1168,7 +1210,7 @@ export function createHttpServer(
 
       // Auth check
       if (route.auth === "api" && !checkApiAuth(req)) { sendUnauthorized(res, "api"); return; }
-      if (route.auth === "basic" && !checkBasicAuth(req)) { sendUnauthorized(res, "basic"); return; }
+      if (route.auth === "basic" && !(await checkSessionAuth(req))) { sendUnauthorized(res, "session"); return; }
 
       // Extract regex groups as params
       const params: Record<string, string> = {};

@@ -19,17 +19,8 @@ import * as url from "node:url";
 // Default allowlist
 // ---------------------------------------------------------------------------
 
-const DEFAULT_ALLOWED_DOMAINS = [
-  "github.com",
-  "api.github.com",
-  "raw.githubusercontent.com",
-  "objects.githubusercontent.com",
-  "registry.npmjs.org",
-  "*.s3.amazonaws.com",
-  "*.s3.us-east-2.amazonaws.com",
-  "s3.amazonaws.com",
-  "s3.us-east-2.amazonaws.com",
-];
+// Empty = allow all domains (no filtering)
+const DEFAULT_ALLOWED_DOMAINS: string[] = [];
 
 // ---------------------------------------------------------------------------
 // Domain matching
@@ -60,6 +51,9 @@ export function matchesDomain(
   if (hostname.length === 0) {
     return false;
   }
+
+  // Empty allowlist = allow all domains
+  if (allowlist.length === 0) return true;
 
   const lower = hostname.toLowerCase();
 

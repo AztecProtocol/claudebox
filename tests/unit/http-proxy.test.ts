@@ -46,9 +46,9 @@ describe("matchesDomain", () => {
     );
   });
 
-  it("blocks everything when the allowlist is empty", () => {
-    assert.equal(matchesDomain("github.com", []), false);
-    assert.equal(matchesDomain("anything.example.com", []), false);
+  it("allows everything when the allowlist is empty", () => {
+    assert.equal(matchesDomain("github.com", []), true);
+    assert.equal(matchesDomain("anything.example.com", []), true);
   });
 
   it("performs case-insensitive matching", () => {
