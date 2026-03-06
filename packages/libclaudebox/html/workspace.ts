@@ -133,12 +133,11 @@ export function workspacePageHTML(data: WorkspacePageData): string {
     status: data.session.status || "unknown",
     user: data.session.user || "unknown",
     exitCode: data.session.exit_code,
-    logUrl: data.session.log_url || "",
     baseBranch: data.session.base_branch || "next",
     worktreeAlive: data.worktreeAlive,
     sessions: data.sessions.map(s => ({
       log_id: s._log_id, status: s.status, started: s.started, user: s.user,
-      prompt: s.prompt, log_url: s.log_url,
+      prompt: s.prompt,
     })),
     // Activity comes via SSE after auth, not in HTML
   };
@@ -299,9 +298,9 @@ function UserMessage({text, time, user}){
 
 // ── RunDivider component ────────────────────────────────────────
 
-function RunDivider({index, status, exitCode, logUrl}){
+function RunDivider({index, status, exitCode}){
   const exitStr=exitCode!=null?" exit="+exitCode:"";
-  return html\`<div class="chat-run"><span class="run-line"></span><span class="run-label">Run \${index}</span><span class="status-\${status||"unknown"}">\${status||"?"}\${exitStr}</span>\${logUrl?html\` <a href=\${logUrl} target="_blank" class="link">log</a>\`:null}<span class="run-line"></span></div>\`;
+  return html\`<div class="chat-run"><span class="run-line"></span><span class="run-label">Run \${index}</span><span class="status-\${status||"unknown"}">\${status||"?"}\${exitStr}</span><span class="run-line"></span></div>\`;
 }
 
 // ── TypingIndicator component ───────────────────────────────────
@@ -369,7 +368,7 @@ function SidebarToggle({open, onToggle}){
   return html\`<button class="sidebar-toggle" onClick=\${onToggle} title="Toggle sidebar">\u2630</button>\`;
 }
 
-function Sidebar({open, status, exitCode, user, baseBranch, logUrl, sessions, artifacts}){
+function Sidebar({open, status, exitCode, user, baseBranch, sessions, artifacts}){
   return html\`<div class=\${"sidebar"+(open?"":" collapsed")}>
     <div class="sidebar-section">
       <div class="sidebar-label">Workspace</div>
@@ -378,7 +377,6 @@ function Sidebar({open, status, exitCode, user, baseBranch, logUrl, sessions, ar
       <div class="stat-row"><span class="dim">branch</span> \${baseBranch}</div>
       <div class="stat-row"><span class="dim">runs</span> \${sessions.length}</div>
       \${sessions.length&&sessions[0].started?html\`<div class="stat-row"><span class="dim">started</span> \${timeAgo(sessions[0].started)}</div>\`:null}
-      \${logUrl?html\`<div class="stat-row"><span class="dim">log</span> <a href=\${logUrl} target="_blank" class="link">view</a></div>\`:null}
     </div>
     \${artifacts.length?html\`<div class="sidebar-section">
       <div class="sidebar-label">Artifacts (\${artifacts.length})</div>
@@ -392,7 +390,7 @@ function Sidebar({open, status, exitCode, user, baseBranch, logUrl, sessions, ar
       <div class="sidebar-label">Session History</div>
       \${sessions.map((s,i)=>html\`<div class="session-entry" key=\${s.log_id||i}>
         <span class=\${"status-"+(s.status||"unknown")}>\${s.status||"?"}</span>
-        \${s.log_url?html\`<a href=\${s.log_url} target="_blank">\${s.started?timeAgo(s.started):"#"+(i+1)}</a>\`:html\`<span class="dim">\${s.started?timeAgo(s.started):"#"+(i+1)}</span>\`}
+        <span class="dim">\${s.started?timeAgo(s.started):"#"+(i+1)}</span>
       </div>\`)}
     </div>\`:null}
   </div>\`;
@@ -427,7 +425,7 @@ function ChatArea({timeline, isRunning}){
 
   return html\`<div class="chat-area" ref=\${chatRef}>
     \${timeline.map((entry,i)=>{
-      if(entry.kind==="run")return html\`<\${RunDivider} key=\${"r"+i} index=\${entry.index} status=\${entry.status} exitCode=\${entry.exitCode} logUrl=\${entry.logUrl} />\`;
+      if(entry.kind==="run")return html\`<\${RunDivider} key=\${"r"+i} index=\${entry.index} status=\${entry.status} exitCode=\${entry.exitCode} />\`;
       if(entry.kind==="user")return html\`<\${UserMessage} key=\${"u"+i} text=\${entry.text} time=\${entry.time} user=\${entry.user} />\`;
       if(entry.kind==="activity")return html\`<\${ChatMessage} key=\${"a"+i+"-"+entry.id} entry=\${entry.entry} agentLogUrl=\${entry.agentLogUrl} />\`;
       return null;
@@ -483,7 +481,7 @@ function WorkspacePage(){
       if(s.prompt){
         items.push({kind:"user",text:s.prompt,time:t,user:D.user,ts:s.started?new Date(new Date(s.started).getTime()-1).toISOString():""});
       }
-      items.push({kind:"run",index:i+1,status:s.status,exitCode:s.exit_code,logUrl:s.log_url,ts:s.started||""});
+      items.push({kind:"run",index:i+1,status:s.status,exitCode:s.exit_code,ts:s.started||""});
     }
     return items;
   },[]);
@@ -614,7 +612,7 @@ function WorkspacePage(){
     \${!D.worktreeAlive&&D.worktreeId?html\`<div class="warning">Workspace has been deleted. Resume is unavailable.</div>\`:null}
     <div class="layout" style="position:relative">
       <\${SidebarToggle} open=\${sidebarOpen} onToggle=\${toggleSidebar} />
-      <\${Sidebar} open=\${sidebarOpen} status=\${status} exitCode=\${exitCode} user=\${D.user} baseBranch=\${D.baseBranch} logUrl=\${D.logUrl} sessions=\${D.sessions} artifacts=\${artifacts} />
+      <\${Sidebar} open=\${sidebarOpen} status=\${status} exitCode=\${exitCode} user=\${D.user} baseBranch=\${D.baseBranch} sessions=\${D.sessions} artifacts=\${artifacts} />
       <div class="main-area">
         <\${ChatArea} timeline=\${fullTimeline} isRunning=\${isRunning} />
         <\${QueuedMessages} queue=\${messageQueue} onRemove=\${removeFromQueue} />
