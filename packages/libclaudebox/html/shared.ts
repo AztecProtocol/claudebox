@@ -176,6 +176,8 @@ export function renderActivityEntry(a: ActivityEntry, agentLogUrl?: string): str
     const toolName = spIdx > 0 ? esc(raw.slice(0, spIdx)) : esc(raw);
     const toolArgs = spIdx > 0 ? linkify(raw.slice(spIdx)) : "";
     return `<div class="chat-status" data-msg="${msgHash}"><span class="tool-icon">\u25B8</span><code><span class="tool-name">${toolName}</span><span class="tool-args">${toolArgs}</span></code><span class="ts">${timeStr}</span></div>`;
+  } else if (a.type === "tool_result") {
+    return `<div class="chat-status" data-msg="${msgHash}"><span class="tool-icon">\u25C2</span><code><span class="tool-args">${linked}</span></code><span class="ts">${timeStr}</span></div>`;
   } else if (a.type === "status") {
     return `<div class="chat-status" data-msg="${msgHash}"><span class="tool-icon">\u25CB</span><span>${linked}</span><span class="ts">${timeStr}</span></div>`;
   }

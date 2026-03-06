@@ -28,7 +28,6 @@ import { homedir } from "node:os";
 // ---------------------------------------------------------------------------
 
 const PROXY_PORT = parseInt(process.env.ANTHROPIC_PROXY_PORT || "8378", 10);
-const UPSTREAM_HOST = "api.anthropic.com";
 const UPSTREAM_PORT = 443;
 
 // Allowed session tokens — callers must present one of these
@@ -88,12 +87,12 @@ function getAccessToken(): string {
 // Also support ANTHROPIC_API_KEY on the host as an alternative to OAuth
 const HOST_API_KEY = process.env.ANTHROPIC_API_KEY || "";
 
-function getUpstreamAuth(): { headerName: string; headerValue: string } {
+function getUpstreamAuth(): { headerName: string; headerValue: string; host: string } {
   if (HOST_API_KEY) {
-    return { headerName: "x-api-key", headerValue: HOST_API_KEY };
+    return { headerName: "x-api-key", headerValue: HOST_API_KEY, host: "api.anthropic.com" };
   }
   const token = getAccessToken();
-  return { headerName: "Authorization", headerValue: `Bearer ${token}` };
+  return { headerName: "Authorization", headerValue: `Bearer ${token}`, host: "api.claude.ai" };
 }
 
 // ---------------------------------------------------------------------------
@@ -210,12 +209,12 @@ export function startAnthropicProxy(opts?: {
 
     // Inject real auth
     upstreamHeaders[auth.headerName] = auth.headerValue;
-    upstreamHeaders["host"] = UPSTREAM_HOST;
+    upstreamHeaders["host"] = auth.host;
 
     // Forward to upstream
     const upstreamReq = https.request(
       {
-        hostname: UPSTREAM_HOST,
+        hostname: auth.host,
         port: UPSTREAM_PORT,
         path: path,
         method: method,
@@ -288,8 +287,9 @@ export function startAnthropicProxy(opts?: {
   });
 
   server.listen(port, () => {
+    const upstream = HOST_API_KEY ? "api.anthropic.com" : "api.claude.ai";
     console.log(`[anthropic-proxy] Listening on port ${port}`);
-    console.log(`[anthropic-proxy] Upstream: https://${UPSTREAM_HOST}`);
+    console.log(`[anthropic-proxy] Upstream: https://${upstream}`);
     console.log(`[anthropic-proxy] Auth mode: ${HOST_API_KEY ? "API key" : "OAuth"}`);
     console.log(`[anthropic-proxy] Session tokens: ${allowedTokens.size}`);
   });

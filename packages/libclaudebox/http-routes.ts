@@ -1381,13 +1381,27 @@ export function createHttpServer(
   store: SessionStore,
   docker: DockerService,
   interactive: InteractiveSessionManager,
+  profileRoutes?: import("./profile-types.ts").RouteRegistration[],
 ) {
   const ctx = { store, docker, interactive };
+
+  // Adapt profile routes (RouteContext style) into internal Route format
+  const allRoutes: Route[] = [...routes];
+  if (profileRoutes) {
+    for (const pr of profileRoutes) {
+      allRoutes.push({
+        method: pr.method,
+        pattern: pr.pattern,
+        auth: pr.auth,
+        handler: async (req, res, params) => pr.handler({ req, res, params }),
+      });
+    }
+  }
 
   return createServer(async (req: IncomingMessage, res: ServerResponse) => {
     // Strip query string so route patterns don't need to account for ?key=val
     const pathname = (req.url || "/").split("?")[0];
-    for (const route of routes) {
+    for (const route of allRoutes) {
       if (req.method !== route.method) continue;
       const m = pathname.match(route.pattern);
       if (!m) continue;

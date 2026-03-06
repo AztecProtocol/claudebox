@@ -282,6 +282,9 @@ function ChatMessage({entry, agentLogUrl}){
     const argsHtml=linkify(toolArgs);
     return html\`<div class="chat-status"><span class="tool-icon">\u25B8</span><code><span class="tool-name">\${toolName}</span><span class="tool-args" dangerouslySetInnerHTML=\${{__html:argsHtml}}></span></code><span class="ts">\${t}</span></div>\`;
   }
+  if(entry.type==="tool_result"){
+    return html\`<div class="chat-status"><span class="tool-icon">\u25C2</span><code><span class="tool-args" dangerouslySetInnerHTML=\${{__html:linked}}></span></code><span class="ts">\${t}</span></div>\`;
+  }
   if(entry.type==="status"){
     return html\`<div class="chat-status"><span class="tool-icon">\u25CB</span><span dangerouslySetInnerHTML=\${{__html:linked}}></span><span class="ts">\${t}</span></div>\`;
   }
@@ -485,11 +488,24 @@ function WorkspacePage(){
     return items;
   },[]);
 
-  // Process a single activity entry
+  // Process a single activity entry — returns item to add, or "update" signal
   const processEntry=useCallback((e)=>{
     if(e.type==="agent_log"){
       const m=e.text.match(/(https?:\\/\\/[^\\s]+)/);
-      if(m)agentLogUrlsRef.current.push(m[1]);
+      if(m){
+        // Try to retroactively assign URL to earliest unlinked agent_start
+        setTimeline(prev=>{
+          const idx=prev.findIndex(t=>t.kind==="activity"&&t.entry.type==="agent_start"&&!t.agentLogUrl);
+          if(idx>=0){
+            const next=[...prev];
+            next[idx]={...next[idx],agentLogUrl:m[1]};
+            return next;
+          }
+          // No unlinked agent yet — buffer for future agent_start
+          agentLogUrlsRef.current.push(m[1]);
+          return prev;
+        });
+      }
       return null;
     }
     const id=msgId(e.text);

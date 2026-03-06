@@ -174,6 +174,10 @@ export class SessionStreamer {
             const label = err ? "ERROR" : "RESULT";
             const disp = this.smartTrunc(res, "tool-result");
             this.emit(`  ${label}: ${disp}`);
+            // Write tool results to activity for MCP tools (get_context etc.)
+            if (!isSubagent && res.trim()) {
+              this.writeActivity("tool_result", trunc(res.replace(/\n/g, " "), 300));
+            }
           } else if (item.type === "text" && item.text?.trim()) {
             this.emit(`USER: ${this.smartTrunc(item.text, "user-msg")}`);
           }
@@ -263,7 +267,7 @@ export class SessionStreamer {
     } else if (!["mcp__ide__getDiagnostics", "mcp__ide__executeCode", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet"].includes(name)) {
       // Generic: show tool name + compact args
       const args = Object.entries(inp).filter(([_, v]) => v !== undefined && v !== "").slice(0, 3).map(([k, v]) => {
-        const s = String(v);
+        const s = typeof v === "object" ? JSON.stringify(v) : String(v);
         return `${k}=${s.length > 40 ? s.slice(0, 40) + "…" : s}`;
       }).join(" ");
       this.writeActivity("tool_use", `${name}${args ? " " + args : ""}`);

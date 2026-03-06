@@ -27,28 +27,15 @@ const R = `repos/${REPO}`;
 SESSION_META.repo = REPO;
 
 const UPSTREAM_REPO = "AztecProtocol/barretenberg";
-const UR = `repos/${UPSTREAM_REPO}`;
 
 const GH_WHITELIST = [
   ...buildCommonGhWhitelist(R),
-  // Read-only extras — all writes handled by create_issue, close_issue, add_labels, add_log_link, create_audit_label
+  // Read-only extras for github_api — all writes go through dedicated MCP tools
   { method: "GET",  pattern: new RegExp(`^${R}/labels(\\?.*)?$`) },
   { method: "POST", pattern: new RegExp(`^${R}/issues/\\d+/labels$`) },
-  // Upstream repo (barretenberg) — for create_external_pr (scope-gated)
-  { method: "GET",  pattern: new RegExp(`^${UR}/git/refs(/.*)?$`) },
-  { method: "POST", pattern: new RegExp(`^${UR}/git/refs$`) },
-  { method: "GET",  pattern: new RegExp(`^${UR}/git/trees(/.*)?$`) },
-  { method: "POST", pattern: new RegExp(`^${UR}/git/trees$`) },
-  { method: "GET",  pattern: new RegExp(`^${UR}/git/commits(/.*)?$`) },
-  { method: "POST", pattern: new RegExp(`^${UR}/git/commits$`) },
-  { method: "GET",  pattern: new RegExp(`^${UR}/git/blobs(/.*)?$`) },
-  { method: "POST", pattern: new RegExp(`^${UR}/git/blobs$`) },
-  { method: "POST", pattern: new RegExp(`^${UR}/pulls$`) },
-  { method: "GET",  pattern: new RegExp(`^${UR}/branches(/.*)?$`) },
-  { method: "GET",  pattern: new RegExp(`^${UR}/contents(/.*)?$`) },
 ];
 
-const TOOL_LIST = "clone_repo, respond_to_user, get_context, session_status, github_api, slack_api, create_pr, update_pr, create_external_pr, create_issue, close_issue, add_labels, create_audit_label, add_log_link, self_assess, audit_history, create_gist, list_gists, create_skill, ci_failures, linear_get_issue, linear_create_issue, record_stat";
+const TOOL_LIST = "clone_repo, respond_to_user, get_context, session_status, github_api, slack_api, create_pr, update_pr, create_external_pr, create_issue, close_issue, add_labels, create_audit_label, add_log_link, self_assess, audit_history, create_gist, list_gists, read_gist, update_meta_issue, create_skill, ci_failures, linear_get_issue, linear_create_issue, record_stat";
 
 // ── Auth check at startup ───────────────────────────────────────
 if (GH_TOKEN) {
@@ -581,6 +568,122 @@ crypto-2nd-pass is ONLY valid when a DIFFERENT session already reviewed the file
         return { content: [{ type: "text", text: `**${gists.length} gists** (page ${page}):\n\n${lines.join("\n")}` }] };
       } catch (e: any) {
         return { content: [{ type: "text", text: `list_gists: ${e.message}` }], isError: true };
+      }
+    });
+
+  // ── read_gist — fetch full gist content ────────────────────────
+  server.tool("read_gist",
+    "Read the full content of a gist by ID or URL. Returns all files and their contents.",
+    {
+      gist: z.string().describe("Gist ID (hex string) or full gist URL"),
+    },
+    async ({ gist }) => {
+      if (!GH_TOKEN) return { content: [{ type: "text", text: "No GH_TOKEN" }], isError: true };
+      const id = gist.replace(/.*\/([a-f0-9]+)$/, "$1");
+      try {
+        const res = await fetch(`https://api.github.com/gists/${id}`, {
+          headers: { Authorization: `Bearer ${GH_TOKEN}`, Accept: "application/vnd.github.v3+json" },
+        });
+        if (!res.ok) return { content: [{ type: "text", text: `${res.status}: ${await res.text()}` }], isError: true };
+        const g = await res.json() as any;
+        const parts = [`# ${g.description || "(no description)"}\n`];
+        for (const [name, file] of Object.entries(g.files || {})) {
+          const f = file as any;
+          // For truncated files, fetch raw content
+          let content = f.content || "";
+          if (f.truncated && f.raw_url) {
+            const raw = await fetch(f.raw_url, { headers: { Authorization: `Bearer ${GH_TOKEN}` } });
+            if (raw.ok) content = await raw.text();
+          }
+          parts.push(`## ${name}\n\`\`\`\n${content}\n\`\`\``);
+        }
+        return { content: [{ type: "text", text: parts.join("\n\n") }] };
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `read_gist: ${e.message}` }], isError: true };
+      }
+    });
+
+  // ── update_meta_issue — tracking meta-issue ────────────────────
+  server.tool("update_meta_issue",
+    `Create or update an audit tracking meta-issue. The body you provide is used verbatim — you compose the full markdown.
+
+Two scopes:
+- **session**: Tracks THIS session's work. Label: meta/session/<id>.
+- **module**: Cross-session tracker for a module. Label: meta/module/<name>. Updated incrementally.
+
+For module meta-issues: read the existing issue body first (via github_api), merge your new findings, then call this with the combined body.
+
+See issue #77 for the gold-standard format — tables for findings, gists, PRs, coverage; terse status line; prioritized next steps.`,
+    {
+      scope: z.enum(["session", "module"]).describe("session = this session; module = cross-session module tracker"),
+      module_name: z.string().optional().describe("Required for scope=module. e.g. 'ecc', 'solidity-verifier'"),
+      title: z.string().describe("Issue title, e.g. '[AUDIT META] ECC Module — Tracking Issue'"),
+      body: z.string().describe("Full issue body (Markdown). You compose this — include findings table, gist links, coverage, next steps."),
+      labels: z.array(z.string()).optional().describe("Extra labels beyond the auto-applied meta label"),
+    },
+    async ({ scope, module_name, title, body, labels }) => {
+      if (!GH_TOKEN) return { content: [{ type: "text", text: "No GH_TOKEN" }], isError: true };
+      if (scope === "module" && !module_name) return { content: [{ type: "text", text: "module_name required for scope=module" }], isError: true };
+
+      const headers = {
+        Authorization: `Bearer ${GH_TOKEN}`,
+        Accept: "application/vnd.github.v3+json",
+        "Content-Type": "application/json",
+      };
+
+      const metaLabel = scope === "session"
+        ? `meta/session/${SESSION_META.log_id || WORKTREE_ID}`
+        : `meta/module/${module_name}`;
+
+      try {
+        // Ensure labels exist (fire-and-forget)
+        const ensureLabel = (name: string, color: string) =>
+          fetch(`https://api.github.com/repos/${REPO}/labels`, {
+            method: "POST", headers,
+            body: JSON.stringify({ name, color, description: `Audit meta-issue` }),
+          }).catch(() => {});
+        await Promise.all([
+          ensureLabel(metaLabel, scope === "session" ? "0e8a16" : "1d76db"),
+          ensureLabel("meta-issue", "c5def5"),
+        ]);
+
+        const allLabels = [metaLabel, "meta-issue", ...(labels || [])];
+
+        // Search for existing meta-issue with this label
+        const searchRes = await fetch(
+          `https://api.github.com/repos/${REPO}/issues?labels=${encodeURIComponent(metaLabel)}&state=open&per_page=1`,
+          { headers },
+        );
+        const existing = await searchRes.json() as any[];
+
+        if (existing.length && existing[0]?.number) {
+          // Update existing
+          const num = existing[0].number;
+          const patchRes = await fetch(`https://api.github.com/repos/${REPO}/issues/${num}`, {
+            method: "PATCH", headers,
+            body: JSON.stringify({ title, body }),
+          });
+          if (!patchRes.ok) {
+            const err = await patchRes.json() as any;
+            return { content: [{ type: "text", text: `Update failed: ${err.message}` }], isError: true };
+          }
+          logActivity("artifact", `Updated meta #${num} — ${existing[0].html_url}`);
+          return { content: [{ type: "text", text: `Updated #${num}: ${existing[0].html_url}` }] };
+        } else {
+          // Create new
+          const createRes = await fetch(`https://api.github.com/repos/${REPO}/issues`, {
+            method: "POST", headers,
+            body: JSON.stringify({ title, body, labels: allLabels }),
+          });
+          const issue = await createRes.json() as any;
+          if (!createRes.ok) return { content: [{ type: "text", text: `Create failed: ${issue.message}` }], isError: true };
+          logActivity("artifact", `Created meta #${issue.number} — ${issue.html_url}`);
+          otherArtifacts.push(`- [Meta #${issue.number}](${issue.html_url})`);
+          await updateRootComment();
+          return { content: [{ type: "text", text: `Created #${issue.number}: ${issue.html_url}` }] };
+        }
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `update_meta_issue: ${sanitizeError(e.message)}` }], isError: true };
       }
     });
 
