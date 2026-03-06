@@ -9,6 +9,7 @@ export interface SessionMeta {
   finished?: string;
   worktree_id?: string;
   _log_id?: string;
+  scopes?: string[];
   [key: string]: any;
 }
 
@@ -28,6 +29,7 @@ export interface ContainerSessionOpts {
   quiet?: boolean;
   ciAllow?: boolean;
   profile?: string;
+  scopes?: string[];
 }
 
 export interface InteractiveSession {

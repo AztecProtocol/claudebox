@@ -10,7 +10,8 @@ import { SessionStreamer } from "./session-streamer.ts";
 import {
   REPO_DIR, DOCKER_IMAGE, CLAUDEBOX_CODE_DIR, CLAUDE_BINARY,
   BASTION_SSH_KEY, GH_TOKEN, SLACK_BOT_TOKEN, HTTP_PORT,
-  CLAUDEBOX_HOST, CLAUDEBOX_STATS_DIR, API_SECRET,
+  CLAUDEBOX_HOST, CLAUDEBOX_DIR, CLAUDEBOX_STATS_DIR, API_SECRET,
+  ANTHROPIC_PROXY_PORT,
   buildLogUrl,
   incrActiveSessions, decrActiveSessions,
 } from "./config.ts";
@@ -215,6 +216,7 @@ export class DockerService {
       worktree_id: worktreeId,
       base_branch: baseBranch,
       profile: opts.profile || "",
+      scopes: opts.scopes || [],
       started: new Date().toISOString(),
       status: "running",
     };
@@ -246,6 +248,7 @@ export class DockerService {
         `${CLAUDEBOX_CODE_DIR}:/opt/claudebox:ro`,
         `${BASTION_SSH_KEY}:${CONTAINER_HOME}/.ssh/build_instance_key:ro`,
         `${CLAUDEBOX_STATS_DIR}:/stats:rw`,
+        `${CLAUDEBOX_DIR}:${CONTAINER_HOME}/.claudebox:rw`,
       ];
       if (mountRef) {
         sidecarBinds.push(`${join(REPO_DIR, ".git")}:/reference-repo/.git:ro`);
@@ -284,6 +287,7 @@ export class DockerService {
           `CLAUDEBOX_QUIET=${opts.quiet ? "1" : "0"}`,
           `CLAUDEBOX_CI_ALLOW=${opts.ciAllow ? "1" : "0"}`,
           `CLAUDEBOX_PROFILE=${profileDir}`,
+          `CLAUDEBOX_SCOPES=${(opts.scopes || []).join(",")}`,
         ],
         HostConfig: {
           NetworkMode: networkName,
@@ -499,6 +503,7 @@ export class DockerService {
         `${CLAUDEBOX_CODE_DIR}:/opt/claudebox:ro`,
         `${BASTION_SSH_KEY}:${CONTAINER_HOME}/.ssh/build_instance_key:ro`,
         `${CLAUDEBOX_STATS_DIR}:/stats:rw`,
+        `${CLAUDEBOX_DIR}:${CONTAINER_HOME}/.claudebox:rw`,
       ];
       if (mountRef) {
         sidecarBinds.push(`${join(REPO_DIR, ".git")}:/reference-repo/.git:ro`);
@@ -527,6 +532,7 @@ export class DockerService {
           `CLAUDEBOX_BASE_BRANCH=${session.base_branch || "next"}`,
           `CLAUDEBOX_QUIET=${!(session.slack_channel || "").startsWith("D") ? "1" : "0"}`,
           `CLAUDEBOX_PROFILE=${profileDir}`,
+          `CLAUDEBOX_SCOPES=${(session.scopes || []).join(",")}`,
         ],
         HostConfig: {
           NetworkMode: networkName,

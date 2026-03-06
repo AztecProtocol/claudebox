@@ -14,7 +14,7 @@ import { join } from "path";
 import {
   z, McpServer,
   GH_TOKEN, SESSION_META, WORKTREE_ID, statusPageUrl, STATS_DIR,
-  buildCommonGhWhitelist, sanitizeError,
+  buildCommonGhWhitelist, sanitizeError, hasScope, pushToRemote,
   logActivity, updateRootComment, otherArtifacts,
   registerCommonTools, registerCloneRepo, registerPRTools, startMcpHttpServer,
 } from "../../packages/libclaudebox/mcp/base.ts";
@@ -26,14 +26,29 @@ const R = `repos/${REPO}`;
 
 SESSION_META.repo = REPO;
 
+const UPSTREAM_REPO = "AztecProtocol/barretenberg";
+const UR = `repos/${UPSTREAM_REPO}`;
+
 const GH_WHITELIST = [
   ...buildCommonGhWhitelist(R),
   // Read-only extras — all writes handled by create_issue, close_issue, add_labels, add_log_link, create_audit_label
   { method: "GET",  pattern: new RegExp(`^${R}/labels(\\?.*)?$`) },
   { method: "POST", pattern: new RegExp(`^${R}/issues/\\d+/labels$`) },
+  // Upstream repo (barretenberg) — for create_external_pr (scope-gated)
+  { method: "GET",  pattern: new RegExp(`^${UR}/git/refs(/.*)?$`) },
+  { method: "POST", pattern: new RegExp(`^${UR}/git/refs$`) },
+  { method: "GET",  pattern: new RegExp(`^${UR}/git/trees(/.*)?$`) },
+  { method: "POST", pattern: new RegExp(`^${UR}/git/trees$`) },
+  { method: "GET",  pattern: new RegExp(`^${UR}/git/commits(/.*)?$`) },
+  { method: "POST", pattern: new RegExp(`^${UR}/git/commits$`) },
+  { method: "GET",  pattern: new RegExp(`^${UR}/git/blobs(/.*)?$`) },
+  { method: "POST", pattern: new RegExp(`^${UR}/git/blobs$`) },
+  { method: "POST", pattern: new RegExp(`^${UR}/pulls$`) },
+  { method: "GET",  pattern: new RegExp(`^${UR}/branches(/.*)?$`) },
+  { method: "GET",  pattern: new RegExp(`^${UR}/contents(/.*)?$`) },
 ];
 
-const TOOL_LIST = "clone_repo, respond_to_user, get_context, session_status, github_api, slack_api, create_pr, update_pr, create_issue, close_issue, add_labels, create_audit_label, add_log_link, self_assess, audit_history, create_gist, create_skill, ci_failures, linear_get_issue, linear_create_issue, record_stat";
+const TOOL_LIST = "clone_repo, respond_to_user, get_context, session_status, github_api, slack_api, create_pr, update_pr, create_external_pr, create_issue, close_issue, add_labels, create_audit_label, add_log_link, self_assess, audit_history, create_gist, list_gists, create_skill, ci_failures, linear_get_issue, linear_create_issue, record_stat";
 
 // ── Auth check at startup ───────────────────────────────────────
 if (GH_TOKEN) {
@@ -541,6 +556,85 @@ crypto-2nd-pass is ONLY valid when a DIFFERENT session already reviewed the file
       }
 
       return { content: [{ type: "text", text: lines.join("\n") }] };
+    });
+
+  // ── list_gists — read all audit gists ─────────────────────────
+  server.tool("list_gists",
+    "List all gists created by the audit bot. Returns description, URL, created date, and filenames for each gist. Use github_api to read a specific gist's contents.",
+    {
+      per_page: z.number().default(100).describe("Results per page (max 100)"),
+      page: z.number().default(1).describe("Page number"),
+    },
+    async ({ per_page, page }) => {
+      if (!GH_TOKEN) return { content: [{ type: "text", text: "No GH_TOKEN" }], isError: true };
+      try {
+        const res = await fetch(`https://api.github.com/gists?per_page=${per_page}&page=${page}`, {
+          headers: { Authorization: `Bearer ${GH_TOKEN}`, Accept: "application/vnd.github.v3+json" },
+        });
+        if (!res.ok) return { content: [{ type: "text", text: `${res.status}: ${await res.text()}` }], isError: true };
+        const gists = await res.json() as any[];
+        const lines = gists.map((g: any) => {
+          const files = Object.keys(g.files || {}).join(", ");
+          return `- [${g.description || "(no description)"}](${g.html_url}) — ${files} (${g.created_at})`;
+        });
+        if (!lines.length) return { content: [{ type: "text", text: "No gists found." }] };
+        return { content: [{ type: "text", text: `**${gists.length} gists** (page ${page}):\n\n${lines.join("\n")}` }] };
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `list_gists: ${e.message}` }], isError: true };
+      }
+    });
+
+  // ── create_external_pr — push to upstream barretenberg ──────────
+  server.tool("create_external_pr",
+    `Create a PR on the UPSTREAM repo (AztecProtocol/barretenberg), not the audit fork.
+Requires the "create-external-pr" session scope. Pushes commits from the workspace to a branch on the upstream repo and opens a draft PR.
+Use this for fixes that should go directly to the main barretenberg repo.`,
+    {
+      title: z.string().describe("PR title"),
+      body: z.string().describe("PR description (Markdown)"),
+      base: z.string().default("master").describe("Base branch on upstream (default: master)"),
+      branch: z.string().describe("Branch name to create on upstream (e.g. 'fix/overflow-in-evaluator')"),
+      closes_issues: z.array(z.number()).optional().describe("Issue numbers on the audit fork to cross-reference"),
+    },
+    async ({ title, body, base, branch, closes_issues }) => {
+      if (!hasScope("create-external-pr")) {
+        return { content: [{ type: "text", text: "Permission denied: this session does not have the 'create-external-pr' scope. Ask the operator to grant it." }], isError: true };
+      }
+      if (!GH_TOKEN) return { content: [{ type: "text", text: "No GH_TOKEN" }], isError: true };
+
+      try {
+        // Push to upstream repo
+        pushToRemote(WORKSPACE, UPSTREAM_REPO, branch);
+
+        // Create PR on upstream
+        const prBody = body
+          + (closes_issues?.length ? "\n\n" + closes_issues.map(n => `Audit fork ref: ${REPO}#${n}`).join("\n") : "")
+          + (SESSION_META.log_url ? `\n\nClaudeBox audit log: ${SESSION_META.log_url}` : "");
+
+        const prRes = await fetch(`https://api.github.com/repos/${UPSTREAM_REPO}/pulls`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${GH_TOKEN}`,
+            Accept: "application/vnd.github.v3+json",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ title, base, draft: true, head: branch, body: prBody }),
+        });
+        const pr = await prRes.json() as any;
+        if (!prRes.ok) {
+          const errors = pr.errors?.map((e: any) => e.message || JSON.stringify(e)).join("; ") || "";
+          return { content: [{ type: "text", text: `PR failed (${prRes.status}): ${pr.message || "unknown"}${errors ? ` — ${errors}` : ""}\nBase: ${base}, Head: ${branch}` }], isError: true };
+        }
+
+        otherArtifacts.push(`- [Upstream PR #${pr.number}: ${title}](${pr.html_url})`);
+        logActivity("artifact", `Upstream PR #${pr.number}: ${title} — ${pr.html_url}`);
+        recordArtifact("upstream-pr", pr.html_url, String(pr.number), "code", "medium", [], title);
+        await updateRootComment();
+
+        return { content: [{ type: "text", text: `${pr.html_url}\nBranch: ${branch}\n#${pr.number} (upstream: ${UPSTREAM_REPO})` }] };
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `create_external_pr: ${sanitizeError(e.message)}` }], isError: true };
+      }
     });
 
   return server;

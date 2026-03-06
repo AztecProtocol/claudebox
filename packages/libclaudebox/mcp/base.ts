@@ -46,7 +46,35 @@ export const SESSION_META = {
   base_branch: process.env.CLAUDEBOX_BASE_BRANCH || "next",
 };
 
+// ── Session scopes ───────────────────────────────────────────────
+const _scopes = new Set(
+  (process.env.CLAUDEBOX_SCOPES || "").split(",").filter(Boolean),
+);
+export const sessionScopes = _scopes;
+export function hasScope(name: string): boolean {
+  return _scopes.has(name);
+}
+
 export const statusPageUrl = WORKTREE_ID ? `https://${CLAUDEBOX_HOST}/s/${WORKTREE_ID}` : "";
+
+// ── Per-session metadata directory ───────────────────────────────
+if (WORKTREE_ID) {
+  const sessionDir = join(process.env.HOME || "/home/claude", ".claudebox", "sessions", WORKTREE_ID);
+  try {
+    mkdirSync(sessionDir, { recursive: true });
+    writeFileSync(join(sessionDir, "meta.json"), JSON.stringify({
+      log_id: SESSION_META.log_id,
+      worktree_id: WORKTREE_ID,
+      user: SESSION_META.user,
+      repo: SESSION_META.repo,
+      profile: process.env.CLAUDEBOX_PROFILE || "",
+      scopes: [..._scopes],
+      started: new Date().toISOString(),
+    }, null, 2));
+  } catch (e) {
+    console.warn(`[MCP] Failed to create session dir: ${e}`);
+  }
+}
 
 // ── Server client (initialized lazily, used for Slack/comment/DM) ────
 let _serverClient: ServerClient | null = null;
@@ -888,6 +916,8 @@ Channel and thread are locked to this session — you can only read/write your o
           return { content: [{ type: "text", text: `Gist failed: ${gist.message || JSON.stringify(gist)}` }], isError: true };
 
         logActivity("artifact", `Gist: ${gist.html_url}`);
+        otherArtifacts.push(`- [Gist: ${description}](${gist.html_url})`);
+        await updateRootComment();
         return { content: [{ type: "text", text: `${gist.html_url}\nID: ${gist.id}` }] };
       } catch (e: any) {
         return { content: [{ type: "text", text: `create_gist: ${e.message}` }], isError: true };

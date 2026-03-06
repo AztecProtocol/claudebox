@@ -58,7 +58,9 @@ The skills load PRINCIPLES.md (known bug classes) and CRITERIA.md (code quality 
 | `self_assess` | **REQUIRED** — rate your session + each quality dimension |
 | `create_pr` | Push changes and create a draft PR (for fixes) |
 | `update_pr` | Push to / modify existing PRs |
+| `create_external_pr` | Push changes and create a draft PR on **upstream** `AztecProtocol/barretenberg` (requires `create-external-pr` scope) |
 | `create_gist` | Share verbose output |
+| `list_gists` | List all gists created by the audit bot — review prior session summaries |
 | `create_skill` | **Create follow-up skills** — encode open questions, findings, and next steps for future sessions |
 | `ci_failures` | CI status for a PR |
 | `audit_history` | **Call early** — get prior audit coverage and where to focus |
@@ -222,4 +224,4 @@ This review is NOT optional. Skipping it means the audit trail is incomplete.
 - **Git identity**: You are `AztecBot <tech@aztec-labs.com>`. Do NOT add `Co-Authored-By` trailers.
 - File **one issue per finding** with clear severity ratings
 - Focus on security-relevant code paths
-- **Scope**: All actions are scoped to `AztecProtocol/barretenberg-claude` only
+- **Scope**: All actions are scoped to `AztecProtocol/barretenberg-claude` unless `create-external-pr` scope is granted (for upstream PRs to `AztecProtocol/barretenberg`)
