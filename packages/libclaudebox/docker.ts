@@ -325,6 +325,10 @@ export class DockerService {
         "-e", `CLAUDEBOX_CONTAINER_CLAUDE_MD=${claudeMdPath}`,
         "-e", `PARENT_LOG_ID=${logId}`,
       ];
+      // Profile-specific extra env vars
+      if (dockerConfig.extraEnv) {
+        for (const e of dockerConfig.extraEnv) claudeArgs.push("-e", e);
+      }
       // Mount reference repo for profiles that use local clone
       if (mountRef) {
         claudeArgs.push("-v", `${join(REPO_DIR, ".git")}:/reference-repo/.git:ro`);
@@ -579,6 +583,7 @@ export class DockerService {
           `CLAUDEBOX_SLACK_CHANNEL=${session.slack_channel || ""}`,
           `CLAUDEBOX_SLACK_THREAD_TS=${session.slack_thread_ts || ""}`,
           `CLAUDEBOX_CONTAINER_CLAUDE_MD=${claudeMdPath}`,
+          ...(dockerConfig.extraEnv || []),
         ],
         HostConfig: {
           NetworkMode: networkName,
