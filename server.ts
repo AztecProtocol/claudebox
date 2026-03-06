@@ -59,9 +59,17 @@ async function main() {
   const docker = new DockerService();
   const interactive = new InteractiveSessionManager(docker, store);
 
-  // ── Reconcile stale sessions ──
-  store.reconcile(docker);
-  setInterval(() => store.reconcile(docker), 60_000);
+  // ── Reconcile stale sessions (async — won't block event loop) ──
+  let reconciling = false;
+  const runReconcile = async () => {
+    if (reconciling) return;
+    reconciling = true;
+    try { await store.reconcileAsync(docker); } catch (e: any) {
+      console.error(`[RECONCILE] Error: ${e.message}`);
+    } finally { reconciling = false; }
+  };
+  runReconcile();
+  setInterval(runReconcile, 60_000);
 
   // ── Question expiry timer ──
   const questionStore = new QuestionStore();
@@ -102,7 +110,7 @@ async function main() {
     } finally { gcRunning = false; }
   };
   setTimeout(runGC, 30_000);
-  setInterval(runGC, 6 * 60 * 60 * 1000); // every 6h
+  setInterval(runGC, 6 * 60 * 60 * 1000); // every 6h instead of daily — more gradual
 
   // ── Slack app (non-fatal — HTTP server should work even without Slack) ──
   try {

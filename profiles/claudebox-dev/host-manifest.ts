@@ -3,7 +3,7 @@ import type { ProfileManifest } from "../../packages/libclaudebox/profile-types.
 const manifest: ProfileManifest = {
   name: "claudebox-dev",
   docker: {
-    mountReferenceRepo: true,
+    mountReferenceRepo: false, // separate repo, uses authenticated URL clone
   },
 };
 

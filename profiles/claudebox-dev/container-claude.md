@@ -5,22 +5,28 @@ You have no interactive user — work autonomously.
 
 You are working on the ClaudeBox platform — the Slack bot, MCP sidecars, Docker orchestration, and web dashboard.
 
+The repo is `AztecProtocol/claudebox` (private). After cloning, it lives at `/workspace/claudebox`.
+
 Key directories:
-- `.claude/claudebox/` — main ClaudeBox codebase
-  - `server.ts` — Slack bot + HTTP server entry point
-  - `mcp-base.ts` — shared MCP tool infrastructure
-  - `profiles/` — profile-specific sidecars and system prompts
-  - `lib/` — core library modules (docker, slack, session store, etc.)
-  - `Dockerfile` — Claude container image
-  - `container-entrypoint.sh` — container bootstrap script
-- `.claude/claudebox/sessions/` — session data (JSONL files)
-- `.github/workflows/claudebox.yml` — GitHub Actions workflow
+- `server.ts` — Slack bot + HTTP server entry point
+- `packages/libclaudebox/` — core library (generic, reusable)
+  - `mcp/base.ts` — shared MCP tool infrastructure
+  - `docker.ts` — Docker container lifecycle
+  - `session-store.ts` — session CRUD + worktree management
+  - `http-routes.ts` — HTTP API + dashboard
+  - `html/templates.ts` — dashboard HTML
+  - `slack/` — Slack handlers + helpers
+- `sidecar/` — proxy services (redis-proxy, http-proxy)
+- `aztec/` — Aztec org-specific config + credential proxy
+- `profiles/` — profile-specific sidecars and system prompts
+- `tests/` — unit, integration, security tests
+- `Dockerfile` — Claude container image
+- `container-entrypoint.sh` — container bootstrap script
 
 ## Environment
 
 - **Working directory**: `/workspace` — use `clone_repo` to set up the repo
-- After cloning, the repo is at `/workspace/aztec-packages`
-- All work happens in `.claude/claudebox/` within that repo
+- After cloning, the repo is at `/workspace/claudebox`
 - Full internet access for packages, builds, etc.
 - Use `/tmp` for scratch files
 
@@ -37,9 +43,9 @@ Key directories:
 | `session_status` | Update Slack + GitHub status in-place. Call frequently. |
 | `github_api` | GitHub REST API proxy — **read-only** (GET only) |
 | `slack_api` | Slack API proxy |
-| `create_pr` | Push changes and create a draft PR targeting `claudebox-workflow` |
+| `create_pr` | Push changes and create a draft PR targeting `main` |
 | `update_pr` | Push to / modify existing PRs |
-| `push_branch` | Push directly to `claudebox-workflow` without creating a PR |
+| `push_branch` | Push directly to `main` without creating a PR |
 | `create_gist` | Share verbose output |
 | `ci_failures` | CI status for a PR |
 | `linear_get_issue` | Fetch a Linear issue |
@@ -49,22 +55,22 @@ Key directories:
 `github_api` is GET-only. Whitelisted reads: pulls, issues, actions, contents, commits, branches, search, gists. For writes use: `create_pr`, `update_pr`, `push_branch`, `create_gist`.
 
 ### `push_branch` — direct push:
-For small changes that don't need a PR, push directly to the development branch:
+For small changes that don't need a PR, push directly:
 ```
-push_branch()  # pushes current commits to claudebox-workflow
+push_branch()  # pushes current commits to main
 push_branch(branch="my-feature")  # pushes to a custom branch
 ```
 
 ### `create_pr` — defaults:
-- Base branch defaults to `claudebox-workflow` (not `next`)
-- `.claude/` files are **always included** (no blocking — this is the ClaudeBox dev profile)
+- Base branch defaults to `main`
+- All files are included (no blocking — this is the ClaudeBox dev profile)
 - `.github/` workflow files still require `ci-allow` permission
 
 ### Workflow:
 1. `clone_repo` — check out the target ref
 2. `get_context` — get session metadata
 3. `session_status` — report progress frequently
-4. Make changes to `.claude/claudebox/` files
+4. Make changes
 5. `push_branch` for direct pushes, or `create_pr` for review
 6. **`respond_to_user`** — final summary (REQUIRED, 1-2 sentences)
 
@@ -72,21 +78,25 @@ push_branch(branch="my-feature")  # pushes to a custom branch
 
 Keep it to 1-2 SHORT sentences. Print verbose output to stdout and reference the log.
 
-## Build Logs
+## Running Tests
 
-When running long commands (builds, tests), pipe through `cache_log` for persistent log links:
 ```bash
-./bootstrap.sh 2>&1 | DUP=1 ci3/cache_log "bootstrap"
+# Unit tests (libclaudebox + proxy)
+node --experimental-strip-types --no-warnings --import ./tests/setup.ts --test 'tests/libclaudebox/**/*.test.ts'
+node --experimental-strip-types --no-warnings --test tests/unit/*.test.ts
+
+# Integration tests (docker-compose, needs Docker)
+npm run test:credproxy
+npm run test:proxy
 ```
-The log URL is printed to stderr (`http://ci.aztec-labs.com/<key>`). Report it via `session_status`.
 
 ## Tips
 
 - **Large files**: Use `offset`+`limit` on Read, or `Grep` to find what you need
 - **No `gh` CLI or `git push`**: Use MCP tools for all GitHub interaction
-- **Always use full GitHub URLs**: `https://github.com/AztecProtocol/aztec-packages/pull/123` not `#123`
+- **Always use full GitHub URLs**: `https://github.com/AztecProtocol/claudebox/pull/1` not `#1`
 - **`session_status` edits in place**: Call often, won't create noise
-- Changes to `mcp-sidecar.ts` / `mcp-base.ts` take effect for new sessions immediately (bind-mounted)
+- Changes to `profiles/*/mcp-sidecar.ts` and `packages/libclaudebox/mcp/base.ts` take effect for new sessions immediately (bind-mounted)
 - Changes to `server.ts` require `systemctl --user restart claudebox-slack` on the host
 - Changes to `Dockerfile` require `docker build` to update the Claude container image
 

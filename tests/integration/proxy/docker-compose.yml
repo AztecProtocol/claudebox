@@ -1,0 +1,44 @@
+services:
+  # Real Redis backend
+  redis:
+    image: redis:7-alpine
+
+  # Mock HTTP target (simple echo server for testing HTTP proxy)
+  echo-server:
+    image: node:22-alpine
+    volumes:
+      - ./echo-server.ts:/app/echo-server.ts:ro
+    working_dir: /app
+    command: ["node", "--experimental-strip-types", "--no-warnings", "echo-server.ts"]
+
+  # Sidecar running both proxies
+  sidecar:
+    image: node:22-alpine
+    depends_on:
+      - redis
+      - echo-server
+    volumes:
+      - ../../../:/app/claudebox:ro
+    working_dir: /app/claudebox
+    environment:
+      - REDIS_PROXY_PORT=6379
+      - REDIS_UPSTREAM_HOST=redis
+      - REDIS_UPSTREAM_PORT=6379
+      - HTTP_PROXY_PORT=8080
+      - ALLOWED_DOMAINS=echo-server,github.com,api.github.com
+    command: ["node", "--experimental-strip-types", "--no-warnings", "sidecar/proxy-entrypoint.ts"]
+
+  # Test runner (simulates Claude container)
+  test:
+    image: node:22-alpine
+    depends_on:
+      - sidecar
+    volumes:
+      - ./test.ts:/app/test.ts:ro
+    environment:
+      - CI_REDIS=sidecar
+      - HTTP_PROXY=http://sidecar:8080
+      - HTTPS_PROXY=http://sidecar:8080
+      - SIDECAR_HOST=sidecar
+    working_dir: /app
+    command: ["node", "--experimental-strip-types", "--no-warnings", "test.ts"]

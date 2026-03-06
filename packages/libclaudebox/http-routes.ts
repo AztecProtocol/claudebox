@@ -683,7 +683,7 @@ const routes: Route[] = [
 
       // Dedupe files — keep deepest review per (file_path, dimension)
       const depthOrder: Record<string, number> = { cursory: 0, "line-by-line": 1, deep: 2 };
-      const dims = ["code", "crypto", "test"];
+      const dims = ["code", "crypto", "test", "crypto-2nd-pass"];
 
       // Also keep a flat dedup (any dimension) for backward compat
       const byFile = new Map<string, any>();

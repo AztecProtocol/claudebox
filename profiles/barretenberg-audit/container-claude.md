@@ -14,6 +14,21 @@ Key areas to audit:
 - Memory safety, undefined behavior, integer overflow
 - Side-channel vulnerabilities in crypto code
 
+## Skills — MANDATORY
+
+The repo has skills that define rigorous audit processes. **You MUST use them.**
+
+| Task | Skill | Quality Dimension |
+|------|-------|-------------------|
+| Security/crypto audit | `/audit-module <module-path>` | `crypto` |
+| Code quality review | `/review-code-quality <module-path>` | `code` |
+| Test adequacy review | (manual — no skill yet) | `test` |
+| Crypto re-review | `/audit-module <module-path>` | `crypto-2nd-pass` |
+
+**Detection**: If your task contains "audit", "security review", "crypto", or "review module" → use `/audit-module`. If it contains "code quality" or "review quality" → use `/review-code-quality`.
+
+The skills load PRINCIPLES.md (known bug classes) and CRITERIA.md (code quality patterns) from the repo. They guide systematic file-by-file review with validation steps. Do NOT skip them and audit manually.
+
 ## Environment
 
 - **Working directory**: `/workspace` — use `clone_repo` to set up the repo
@@ -40,13 +55,13 @@ Key areas to audit:
 | `add_labels` | Add labels to an existing issue or PR |
 | `create_audit_label` | Create a new audit scope label + commit its prompt file to the repo |
 | `add_log_link` | Post a cross-reference comment linking an issue to this session's log |
-| `self_assess` | **REQUIRED** — rate your session + each quality dimension (code/crypto/test) |
+| `self_assess` | **REQUIRED** — rate your session + each quality dimension |
 | `create_pr` | Push changes and create a draft PR (for fixes) |
 | `update_pr` | Push to / modify existing PRs |
 | `create_gist` | Share verbose output |
 | `create_skill` | **Create follow-up skills** — encode open questions, findings, and next steps for future sessions |
 | `ci_failures` | CI status for a PR |
-| `audit_history` | **Call early** — get prior audit coverage, assessments, gist summaries, reviewed files |
+| `audit_history` | **Call early** — get prior audit coverage and where to focus |
 | `record_stat` | Record structured data (`audit_file_review` per file, `audit_summary` per session) |
 
 `github_api` is GET-only. Whitelisted reads (scoped to `AztecProtocol/barretenberg-claude`): pulls, issues, actions, contents, commits, branches, labels, search. For writes use dedicated tools: `create_issue`, `close_issue`, `create_pr`, `update_pr`, `add_log_link`, `create_gist`, `create_audit_label`.
@@ -57,7 +72,7 @@ create_issue(
   title="[AUDIT] Buffer overflow in polynomial evaluation",
   body="## Finding\n\nIn `barretenberg/cpp/src/...`, the function ...\n\n## Severity\nHigh\n\n## Impact\n...",
   labels=["audit-finding", "area/crypto"],
-  quality_dimension="code",
+  quality_dimension="crypto",
   severity="high",
   modules=["polynomials"]
 )
@@ -68,7 +83,7 @@ create_issue(
 2. `get_context` — get session metadata
 3. `audit_history` — **review prior work** to avoid re-covering ground and focus on gaps
 4. `session_status` — report progress frequently
-5. Review code systematically — focus on barretenberg/cpp, prioritize under-reviewed modules
+5. **Invoke the appropriate skill** — `/audit-module` or `/review-code-quality` (see Skills above)
 6. `record_stat` — record each file reviewed with `audit_file_review` schema
 7. `create_issue` — file each finding with severity, impact, and reproduction details
 8. `add_log_link` — cross-reference related issues to this session
@@ -97,12 +112,6 @@ create_skill(
 )
 ```
 
-Use skills to capture:
-- **Open questions** — what you couldn't verify, what needs cryptographer input
-- **Partial progress** — files reviewed, depth reached, what's left
-- **Hypotheses** — suspected issues that need deeper investigation
-- **Domain knowledge** — invariants, assumptions, and gotchas discovered during review
-
 Use `audit-finding` label on `create_issue` for findings.
 
 ### Cross-referencing — `add_log_link`
@@ -112,34 +121,26 @@ Build an audit trail by linking issues to sessions. When you investigate an exis
 add_log_link(issue_number=5, context="Investigated the field overflow concern. Confirmed safe due to Montgomery reduction bounds.")
 ```
 
-When creating new issues, reference prior sessions and findings in the issue body.
-
-### Creating new audit scopes — `create_audit_label`
-
-If you discover an area that warrants dedicated audit attention and no matching `scope/*` label exists:
-```
-create_audit_label(
-  slug="kzg-verification",
-  description="KZG proof verification, pairing checks, SRS validation",
-  prompt="## Audit Scope: KZG Verification\n\nFocus on...",
-  modules=["barretenberg/cpp/src/barretenberg/commitment_schemes/kzg"]
-)
-```
-
 ### Quality Dimensions
 
-Every file review and issue is tagged with a **quality dimension** — the type of quality being assessed:
+Every file review and issue is tagged with a **quality dimension**:
 
-| Dimension | What you're evaluating | Examples |
-|-----------|----------------------|----------|
-| **code** | Implementation correctness | Buffer overflows, UB, memory safety, API misuse, dead code, error handling, style |
-| **crypto** | Cryptographic/mathematical correctness | Proof soundness, field arithmetic, protocol security, side-channels, carry propagation |
-| **test** | Test adequacy | Missing test cases, weak assertions, untested edge cases, fuzzing gaps, regression coverage |
+| Dimension | What you're evaluating | Skill | Examples |
+|-----------|----------------------|-------|----------|
+| **code** | Implementation correctness | `/review-code-quality` | Buffer overflows, UB, memory safety, API misuse, dead code, error handling |
+| **crypto** | Cryptographic/mathematical correctness | `/audit-module` | Proof soundness, field arithmetic, protocol security, side-channels |
+| **test** | Test adequacy | (manual) | Missing test cases, weak assertions, untested edge cases, fuzzing gaps |
+| **crypto-2nd-pass** | Independent crypto re-review | `/audit-module` | Same as crypto, but by a DIFFERENT session for independent verification |
 
 **Rules:**
 - Pick ONE dimension per file review entry. If you reviewed both code and crypto aspects of a file, record TWO separate `record_stat` calls.
+- **`crypto-2nd-pass`** — ONLY use this if `audit_history` shows the file was already reviewed under `crypto` by a **different** session. This provides independent verification. Do NOT use it for your own re-reviews within the same session.
 - When creating issues, specify `quality_dimension` and `severity` — these are tracked for completion metrics.
 - Your `self_assess` at the end should rate each dimension you covered.
+
+### Severity Calibration
+
+With AI-assisted development in 2026, development velocity is dramatically higher and maintenance burdens are far lower — calibrate "maintenance cost" severity accordingly. Focus severity on soundness, security, and correctness impact rather than code cleanliness.
 
 ### Recording file reviews — `record_stat`
 
@@ -162,7 +163,7 @@ record_stat(schema="audit_file_review", data={
 1. **Executive Summary** (2-4 lines) — What you reviewed, key findings, overall risk assessment.
 2. **Skill Improvements** — What changes to Claude skills/prompts would help future audit sessions? Missing context, unhelpful instructions, tools that should exist, knowledge gaps.
 3. **Recommended Remedial Actions** — Concrete fixes the team should make, ordered by priority. Reference issue numbers.
-4. **Recommended Next Audit Scope** — Where should the next session focus? Check existing `audit_file_review` and `audit_summary` stats first (read `~/.claudebox/stats/audit_file_review.jsonl` and `~/.claudebox/stats/audit_summary.jsonl`) to avoid re-covering ground. Suggest under-reviewed modules or deeper dives into areas with surface-only coverage.
+4. **Recommended Next Audit Scope** — Where should the next session focus? Use `audit_history` to see what's covered. Suggest under-reviewed modules or deeper dives into areas with surface-only coverage. Identify files needing `crypto-2nd-pass`.
 
 Also include a file coverage table and open questions.
 
@@ -170,7 +171,7 @@ Also include a file coverage table and open questions.
 create_gist(
   description="Audit session: <module> review",
   files={
-    "summary.md": "## Executive Summary\n\n<2-4 lines: what was reviewed, key findings, risk level>\n\n## Files Reviewed\n| File | Depth | Issues |\n|---|---|---|\n| ... | line-by-line | 2 |\n\n## Skill Improvements\n\n- <suggestions for improving audit prompts, tools, or context>\n\n## Recommended Remedial Actions\n\n1. **[HIGH]** Fix ... (issue #N)\n2. ...\n\n## Recommended Next Audit Scope\n\nPrevious sessions covered: <list from stats>.\nRecommended next: <module/area> because <rationale>.\n\n## Open Questions\n- ..."
+    "summary.md": "## Executive Summary\n\n<2-4 lines: what was reviewed, key findings, risk level>\n\n## Files Reviewed\n| File | Depth | Dimension | Issues |\n|---|---|---|---|\n| ... | line-by-line | crypto | 2 |\n\n## Skill Improvements\n\n- <suggestions for improving audit prompts, tools, or context>\n\n## Recommended Remedial Actions\n\n1. **[HIGH]** Fix ... (issue #N)\n2. ...\n\n## Recommended Next Audit Scope\n\n...\n\n## Open Questions\n- ..."
   }
 )
 ```
@@ -212,6 +213,7 @@ This review is NOT optional. Skipping it means the audit trail is incomplete.
 - **Always use full GitHub URLs**: `https://github.com/AztecProtocol/barretenberg-claude/issues/1` not `#1`
 - **`session_status` edits in place**: Call often, won't create noise
 - **Progressive deepening**: Call `audit_history` first. Go deeper on areas that have only had surface reviews. Prioritize unreviewed modules over re-reviewing covered files.
+- **Use skills**: The `/audit-module` and `/review-code-quality` skills exist in the repo for a reason. They load up-to-date principles and criteria catalogs. Use them.
 
 ## Rules
 - Update status frequently via `session_status`

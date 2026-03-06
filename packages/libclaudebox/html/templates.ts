@@ -1713,15 +1713,16 @@ export function auditDashboardHTML(): string {
       // Only show modules that have files (either in repo or reviewed)
       var activeModNames=modNames.filter(function(m){return mods[m].total_files>0||mods[m].files_reviewed>0;});
 
-      var dimColors={code:"#7aa2f7",crypto:"#d876e3",test:"#61D668"};
-      var dimLabels={code:"Code",crypto:"Crypto",test:"Test"};
+      var dimColors={code:"#7aa2f7",crypto:"#d876e3",test:"#61D668","crypto-2nd-pass":"#FAD979"};
+      var dimLabels={code:"Code",crypto:"Crypto",test:"Test","crypto-2nd-pass":"Crypto 2"};
 
       var h='<div class="section"><div class="section-header">Audit Coverage <span class="count">'+totalReviewed+'/'+totalRepo+' files ('+pct+'%)</span></div>';
 
       // Dimension totals bar
       h+='<div class="cov-bar">';
-      ["code","crypto","test"].forEach(function(dim){
+      ["code","crypto","test","crypto-2nd-pass"].forEach(function(dim){
         var dt=dimTotals[dim]||{files:0,issues:0};
+        if(dim==="crypto-2nd-pass"&&!dt.files)return;
         h+='<div class="cov-stat"><span class="count" style="color:'+dimColors[dim]+'">'+dt.files+'</span>'+dimLabels[dim]+'</div>';
       });
       h+='<div class="cov-stat"><span class="count">'+totalRepo+'</span>total files</div>';
@@ -1752,7 +1753,7 @@ export function auditDashboardHTML(): string {
 
         // Three dimension progress bars
         h+='<div style="display:flex;flex-direction:column;gap:2px;margin:6px 0">';
-        ["code","crypto","test"].forEach(function(dim){
+        ["code","crypto","test","crypto-2nd-pass"].forEach(function(dim){
           var d=dims[dim]||{files_reviewed:0};
           var dp=m.total_files?Math.round(d.files_reviewed/m.total_files*100):0;
           h+='<div style="display:flex;align-items:center;gap:6px">';

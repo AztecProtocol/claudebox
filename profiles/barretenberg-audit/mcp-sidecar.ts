@@ -93,7 +93,7 @@ function createServer(): McpServer {
       title: z.string().describe("Issue title — short summary of the finding"),
       body: z.string().describe("Issue body (Markdown) — detailed description, affected code, severity, reproduction steps"),
       labels: z.array(z.string()).optional().describe("Labels, e.g. ['security', 'high-severity']"),
-      quality_dimension: z.enum(["code", "crypto", "test"]).default("code").describe("Quality axis: code (implementation), crypto (mathematical/cryptographic), test (test quality)"),
+      quality_dimension: z.enum(["code", "crypto", "test", "crypto-2nd-pass"]).default("code").describe("Quality axis: code (implementation), crypto (mathematical/cryptographic), test (test quality), crypto-2nd-pass (independent re-review — only if a DIFFERENT session already reviewed this file under 'crypto')"),
       severity: z.enum(["critical", "high", "medium", "low", "info"]).default("medium").describe("Finding severity"),
       modules: z.array(z.string()).optional().describe("Affected barretenberg modules, e.g. ['ecc', 'crypto']"),
     },
@@ -415,11 +415,11 @@ Also rate each quality dimension you covered:
 
   // ── audit_history — read prior audit stats for continuity ───────
   server.tool("audit_history",
-    `Get a summary of all prior audit work: file coverage by module and quality dimension, session assessments, artifacts, and gists.
-Call this EARLY in your session to understand what has already been reviewed and where to focus next.
+    `Get a summary of prior audit work: module coverage by quality dimension, recent sessions, and artifacts.
+Call this EARLY in your session to understand what has been reviewed and where to focus.
 
-Quality dimensions tracked: code (implementation), crypto (cryptographic correctness), test (test quality).
-Each file can be reviewed independently on each dimension. Completion = all three dimensions adequately covered.`,
+Quality dimensions: code, crypto, test, crypto-2nd-pass.
+crypto-2nd-pass is ONLY valid when a DIFFERENT session already reviewed the file under 'crypto'. It provides independent verification of cryptographic correctness.`,
     {},
     async () => {
       const lines: string[] = [];
@@ -441,8 +441,7 @@ Each file can be reviewed independently on each dimension. Completion = all thre
 
       // Dedupe files — keep deepest review per (file_path, dimension) pair
       const depthOrder: Record<string, number> = { cursory: 0, "line-by-line": 1, deep: 2 };
-      const dims = ["code", "crypto", "test"] as const;
-      // Key: "file_path::dimension"
+      const dims = ["code", "crypto", "test", "crypto-2nd-pass"] as const;
       const byFileDim = new Map<string, any>();
       for (const r of reviews) {
         const dim = r.quality_dimension || "code";
@@ -466,79 +465,73 @@ Each file can be reviewed independently on each dimension. Completion = all thre
         modData[dim].issues += r.issues_found || 0;
       }
 
-      // Unique files (any dimension)
       const uniqueFiles = new Set<string>();
       for (const r of byFileDim.values()) uniqueFiles.add(r.file_path);
 
       lines.push(`# Audit History`);
-      lines.push(`Total unique files reviewed: ${uniqueFiles.size}`);
-      lines.push(`Total review entries: ${reviews.length} (${byFileDim.size} deduped across dimensions)`);
-      lines.push(`Total sessions assessed: ${assessments.length}`);
-      lines.push(`Total artifacts: ${artifacts.length} (${artifacts.filter(a => a.artifact_type === "issue").length} issues, ${artifacts.filter(a => a.artifact_type === "pr").length} PRs, ${artifacts.filter(a => a.artifact_type === "gist").length} gists)`);
+      lines.push(`Total: ${uniqueFiles.size} unique files, ${assessments.length} sessions, ${artifacts.filter(a => a.artifact_type === "issue").length} issues filed`);
       lines.push(``);
 
-      // Module coverage with dimension breakdown
-      lines.push(`## Module Coverage (by quality dimension)`);
+      // Module coverage — compact
+      lines.push(`## Module Coverage`);
       const sortedMods = [...byModule.entries()].sort((a, b) => {
         const aTotal = Object.values(a[1]).reduce((s, d) => s + d.files.length, 0);
         const bTotal = Object.values(b[1]).reduce((s, d) => s + d.files.length, 0);
         return bTotal - aTotal;
       });
       for (const [mod, dimData] of sortedMods) {
-        const totalFiles = Object.values(dimData).reduce((s, d) => s + d.files.length, 0);
         const totalIssues = Object.values(dimData).reduce((s, d) => s + d.issues, 0);
-        lines.push(`- **${mod}**: ${totalFiles} reviews, ${totalIssues} issues`);
+        const dimParts: string[] = [];
         for (const dim of dims) {
           const d = dimData[dim];
-          if (!d) { lines.push(`  - ${dim}: not reviewed`); continue; }
-          const depths: Record<string, number> = {};
-          d.files.forEach((f: any) => { depths[f.review_depth] = (depths[f.review_depth] || 0) + 1; });
-          const depthStr = Object.entries(depths).map(([dp, n]) => `${n} ${dp}`).join(", ");
-          lines.push(`  - ${dim}: ${d.files.length} files (${depthStr}), ${d.issues} issues`);
+          if (!d) continue;
+          dimParts.push(`${dim}:${d.files.length}`);
         }
+        lines.push(`- **${mod}** — ${dimParts.join(", ")}${totalIssues ? ` (${totalIssues} issues)` : ""}`);
       }
       lines.push(``);
 
-      // Reviewed files detail (grouped by dimension)
-      lines.push(`## Reviewed Files`);
-      for (const [key, r] of [...byFileDim.entries()].sort()) {
-        const noteStr = r.notes ? ` — ${r.notes}` : "";
-        const issueStr = r.issues_found ? ` [${r.issues_found} issue(s)]` : "";
-        lines.push(`- \`${r.file_path}\` [${r.quality_dimension}] (${r.review_depth})${issueStr}${noteStr}`);
-      }
-      lines.push(``);
-
-      // Artifacts
-      if (artifacts.length) {
-        lines.push(`## Artifacts`);
-        for (const a of artifacts.slice().reverse()) {
-          const date = a._ts ? new Date(a._ts).toISOString().slice(0, 10) : "?";
-          lines.push(`- [${date}] ${a.artifact_type} #${a.artifact_id}: ${a.title} [${a.quality_dimension}/${a.severity}] — ${a.artifact_url}`);
+      // Files eligible for crypto-2nd-pass (reviewed under crypto by a different session)
+      const cryptoReviewed = new Map<string, Set<string>>();
+      for (const r of reviews) {
+        if ((r.quality_dimension || "code") === "crypto") {
+          const sessions = cryptoReviewed.get(r.file_path) || new Set();
+          sessions.add(r._log_id || r._worktree_id || "unknown");
+          cryptoReviewed.set(r.file_path, sessions);
         }
+      }
+      const eligibleFor2ndPass = [...cryptoReviewed.entries()]
+        .filter(([_, sessions]) => sessions.size > 0)
+        .filter(([fp]) => !byFileDim.has(`${fp}::crypto-2nd-pass`))
+        .map(([fp]) => fp);
+      if (eligibleFor2ndPass.length) {
+        lines.push(`## Eligible for crypto-2nd-pass (${eligibleFor2ndPass.length} files)`);
+        lines.push(`These files have had crypto review and are eligible for independent re-review:`);
+        for (const fp of eligibleFor2ndPass.slice(0, 30)) {
+          lines.push(`- \`${fp}\``);
+        }
+        if (eligibleFor2ndPass.length > 30) lines.push(`  ... and ${eligibleFor2ndPass.length - 30} more`);
         lines.push(``);
       }
 
-      // Session assessments (most recent first)
+      // Recent sessions only (last 5)
       if (assessments.length) {
-        lines.push(`## Session Assessments (${assessments.length} sessions)`);
-        for (const a of assessments.slice().reverse().slice(0, 20)) {
+        const recent = assessments.slice().reverse().slice(0, 5);
+        lines.push(`## Recent Sessions (last ${recent.length} of ${assessments.length})`);
+        for (const a of recent) {
           const date = a._ts ? new Date(a._ts).toISOString().slice(0, 10) : "?";
           const dimRatings = [a.code_rating && a.code_rating !== "none" ? `code:${a.code_rating}` : "", a.crypto_rating && a.crypto_rating !== "none" ? `crypto:${a.crypto_rating}` : "", a.test_rating && a.test_rating !== "none" ? `test:${a.test_rating}` : ""].filter(Boolean).join(", ");
-          lines.push(`- [${date}] **${a.rating}** (${Math.round((a.confidence || 0) * 100)}% confidence)${dimRatings ? ` [${dimRatings}]` : ""} — ${a.summary || "no summary"}`);
-          if (a.modules_reviewed?.length) lines.push(`  Modules: ${a.modules_reviewed.join(", ")}`);
-          lines.push(`  Findings: ${a.findings_count || 0}, Questions: ${a.questions_count || 0}, Session: ${a._log_id || "?"}`);
+          lines.push(`- [${date}] **${a.rating}** ${dimRatings ? `[${dimRatings}]` : ""} — ${a.summary || "no summary"}`);
         }
         lines.push(``);
       }
 
-      // Session summaries with gist links
+      // Recent summaries (last 3)
       if (summaries.length) {
-        lines.push(`## Session Summary Gists`);
-        for (const s of summaries.slice().reverse()) {
-          const date = s._ts ? new Date(s._ts).toISOString().slice(0, 10) : "?";
-          lines.push(`- [${date}] ${s.summary || "no summary"}`);
-          if (s.gist_url) lines.push(`  Gist: ${s.gist_url}`);
-          lines.push(`  Files: ${s.files_reviewed || 0}, Issues: ${s.issues_filed || 0}, Session: ${s._log_id || "?"}`);
+        const recent = summaries.slice().reverse().slice(0, 3);
+        lines.push(`## Recent Summary Gists (last ${recent.length} of ${summaries.length})`);
+        for (const s of recent) {
+          lines.push(`- ${s.summary || "no summary"}${s.gist_url ? ` — ${s.gist_url}` : ""}`);
         }
         lines.push(``);
       }

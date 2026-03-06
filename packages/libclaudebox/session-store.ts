@@ -1,9 +1,17 @@
 import { readFileSync, readdirSync, existsSync, writeFileSync, mkdirSync, statSync, rmSync } from "fs";
+import { rm } from "fs/promises";
 import { join, basename, dirname } from "path";
-import { execSync, exec } from "child_process";
+import { execSync, exec, execFile } from "child_process";
 import type { SessionMeta, WorktreeInfo } from "./types.ts";
 import { SESSIONS_DIR, CLAUDEBOX_WORKTREES_DIR, CLAUDEBOX_DIR } from "./config.ts";
 import type { DockerService } from "./docker.ts";
+
+function execFileAsync(cmd: string, args: string[], timeoutMs: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(cmd, args, { encoding: "utf-8", timeout: timeoutMs }, (err, stdout) =>
+      err ? reject(err) : resolve(stdout));
+  });
+}
 
 export class SessionStore {
   sessionsDir: string;
@@ -336,7 +344,7 @@ export class SessionStore {
     return cleaned;
   }
 
-  /** Async version of gcWorktrees — doesn't block the event loop during du. */
+  /** Async version of gcWorktrees — doesn't block the event loop during du or rm. */
   async gcWorktreesAsync(maxSizeGB: number = 100, minAgeDays: number = 1): Promise<string[]> {
     if (!existsSync(this.worktreesDir)) return [];
     const minAgeCutoff = Date.now() - minAgeDays * 24 * 60 * 60 * 1000;
@@ -388,7 +396,8 @@ export class SessionStore {
       const sessions = this.listByWorktree(c.id);
       if (sessions.some(s => s.status === "running")) continue;
       try {
-        rmSync(c.wsDir, { recursive: true, force: true });
+        // Use async rm — doesn't block event loop during multi-GB deletes
+        await rm(c.wsDir, { recursive: true, force: true });
         totalSize -= c.sizeBytes;
         cleaned.push(c.id);
       } catch (e: any) {
@@ -489,7 +498,8 @@ export class SessionStore {
 
   // ── Reconciliation ────────────────────────────────────────────
 
-  reconcile(docker: DockerService): void {
+  /** Async reconcile — uses non-blocking Docker inspect/cleanup. */
+  async reconcileAsync(docker: DockerService): Promise<void> {
     if (!existsSync(this.sessionsDir)) return;
     for (const name of readdirSync(this.sessionsDir).filter((f) => f.endsWith(".json"))) {
       try {
@@ -510,15 +520,23 @@ export class SessionStore {
           console.log(`[RECONCILE] ${logId}: running → cancelled (no container)`);
           continue;
         }
-        const { running, exitCode } = docker.inspectContainerSync(containerName);
+
+        // Async docker inspect
+        const { running, exitCode } = await execFileAsync("docker",
+          ["inspect", "-f", "{{.State.Running}} {{.State.ExitCode}}", containerName], 5_000)
+          .then(out => {
+            const parts = out.trim().split(" ");
+            return { running: parts[0] === "true", exitCode: parseInt(parts[1], 10) || 1 };
+          })
+          .catch(() => ({ running: false, exitCode: 1 }));
         if (running) continue;
 
-        // Clean up orphaned resources
+        // Async cleanup — fire and forget, don't block reconcile loop
         const sidecarName = meta.sidecar || `claudebox-sidecar-${logId}`;
         const networkName = `claudebox-net-${logId}`;
-        docker.forceRemoveSync(containerName);
-        docker.stopAndRemoveSync(sidecarName, 3);
-        docker.removeNetworkSync(networkName);
+        await docker.stopAndRemove(containerName, 3).catch(() => {});
+        await docker.stopAndRemove(sidecarName, 3).catch(() => {});
+        await docker.removeNetwork(networkName).catch(() => {});
 
         // Check if eligible for auto-resume
         const ageMs = meta.started ? Date.now() - new Date(meta.started).getTime() : Infinity;
@@ -542,5 +560,10 @@ export class SessionStore {
         }
       } catch {}
     }
+  }
+
+  /** @deprecated Use reconcileAsync instead */
+  reconcile(docker: DockerService): void {
+    this.reconcileAsync(docker).catch(e => console.error(`[RECONCILE] Error: ${e.message}`));
   }
 }

@@ -3,12 +3,12 @@
  * ClaudeBox Dev Profile Sidecar
  *
  * For working on ClaudeBox infrastructure itself.
- * Repo: AztecProtocol/aztec-packages (public)
- * Clone strategy: local reference repo (/reference-repo/.git)
+ * Repo: AztecProtocol/claudebox (private)
+ * Clone strategy: authenticated URL (no local reference — separate repo)
  * Key differences from default:
  *   - .claude/ files are never blocked
- *   - push_branch tool for direct pushes to claudebox-workflow
- *   - create_pr defaults base to claudebox-workflow
+ *   - push_branch tool for direct pushes to main
+ *   - create_pr defaults base to main
  */
 
 import {
@@ -21,10 +21,10 @@ import {
 } from "../../packages/libclaudebox/mcp/base.ts";
 
 // ── Profile config ──────────────────────────────────────────────
-const REPO = "AztecProtocol/aztec-packages";
-const WORKSPACE = process.env.WORKSPACE || "/workspace/aztec-packages";
+const REPO = "AztecProtocol/claudebox";
+const WORKSPACE = "/workspace/claudebox";
 const R = `repos/${REPO}`;
-const DEV_BRANCH = "claudebox-workflow";
+const DEV_BRANCH = "main";
 
 SESSION_META.repo = REPO;
 
@@ -41,19 +41,18 @@ function createServer(): McpServer {
 
   registerCloneRepo(server, {
     repo: REPO, workspace: WORKSPACE,
-    strategy: "local-reference",
-    remoteUrl: "https://github.com/AztecProtocol/aztec-packages.git",
+    strategy: "authenticated-url",
     refHint: `'origin/${DEV_BRANCH}', 'abc123'`,
   });
 
   registerPRTools(server, {
     repo: REPO, workspace: WORKSPACE,
     branchPrefix: "claudebox/", defaultBase: DEV_BRANCH,
-    blockedBases: /^(master|main)$/,
-    blockGithubFiles: true,
+    blockedBases: /^(master)$/,
+    blockGithubFiles: false,
     label: "claudebox",
-    createDescription: `Push workspace commits and create a draft PR. Base branch defaults to '${DEV_BRANCH}'. .claude/ files are always included (this is the ClaudeBox dev profile).`,
-    updateDescription: "Push workspace commits and/or update an existing PR. Only works on PRs with the 'claudebox' label. .claude/ files always included.",
+    createDescription: `Push workspace commits and create a draft PR. Base branch defaults to '${DEV_BRANCH}'.`,
+    updateDescription: "Push workspace commits and/or update an existing PR.",
   });
 
   // ── push_branch — direct push to dev branch ───────────────────
@@ -68,7 +67,7 @@ function createServer(): McpServer {
       const targetBranch = branch || DEV_BRANCH;
       if (!/^[\w./-]+$/.test(targetBranch))
         return { content: [{ type: "text", text: `Invalid branch name: ${targetBranch}` }], isError: true };
-      if (/^(master|main|next)$/.test(targetBranch))
+      if (/^(master)$/.test(targetBranch))
         return { content: [{ type: "text", text: `Blocked: never push directly to '${targetBranch}'. Use create_pr instead.` }], isError: true };
 
       try {
