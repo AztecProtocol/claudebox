@@ -117,7 +117,16 @@ export function renderActivityEntry(a: ActivityEntry, agentLogUrl?: string): str
       : `Agent: ${linked}`;
     return `<div class="chat-agent" data-msg="${msgHash}"><div class="agent-dot"></div><span>${agentText}</span><span class="dim" style="margin-left:auto;font-size:10px">${timeStr}</span></div>`;
   } else if (a.type === "tool_use") {
-    return `<div class="chat-status" data-msg="${msgHash}"><span class="tool-icon">\u25B8</span><code>${linked}</code><span class="ts">${timeStr}</span></div>`;
+    const raw = a.text || "";
+    const bashMatch = raw.match(/^(?:(.+?):\s*)?\$\s+(.+)$/);
+    if (bashMatch) {
+      const desc = bashMatch[1] ? `<span class="tool-desc">${esc(bashMatch[1])} </span>` : "";
+      return `<div class="chat-status" data-msg="${msgHash}"><span class="tool-icon">\u25B8</span><code>${desc}<span class="tool-bash">$</span> <span class="tool-args">${esc(bashMatch[2])}</span></code><span class="ts">${timeStr}</span></div>`;
+    }
+    const spIdx = raw.indexOf(" ");
+    const toolName = spIdx > 0 ? esc(raw.slice(0, spIdx)) : esc(raw);
+    const toolArgs = spIdx > 0 ? linkify(raw.slice(spIdx)) : "";
+    return `<div class="chat-status" data-msg="${msgHash}"><span class="tool-icon">\u25B8</span><code><span class="tool-name">${toolName}</span><span class="tool-args">${toolArgs}</span></code><span class="ts">${timeStr}</span></div>`;
   } else if (a.type === "status") {
     return `<div class="chat-status" data-msg="${msgHash}"><span class="tool-icon">\u25CB</span><span>${linked}</span><span class="ts">${timeStr}</span></div>`;
   }

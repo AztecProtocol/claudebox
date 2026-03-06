@@ -67,6 +67,10 @@ a{color:inherit;text-decoration:none}a:hover{text-decoration:underline}
 .chat-status{display:flex;align-items:center;gap:6px;font-size:11px;color:#666;padding:2px 12px 2px 36px;font-family:'SF Mono',monospace}
 .chat-status .ts{color:#444;font-size:10px;margin-left:auto;flex-shrink:0}
 .tool-icon{font-size:10px;flex-shrink:0;width:14px;text-align:center}
+.tool-name{color:#FAD979;font-weight:500}
+.tool-args{color:#888}
+.tool-bash{color:#61D668}
+.tool-desc{color:#666;font-style:italic}
 
 /* Agent activity */
 .chat-agent{display:flex;align-items:center;gap:6px;font-size:11px;color:#a78bfa;padding:3px 12px 3px 36px}
@@ -235,7 +239,20 @@ function ChatMessage({entry, agentLogUrl}){
     return html\`<div class="chat-agent"><div class="agent-dot"></div><span dangerouslySetInnerHTML=\${{__html:agentInner}}></span><span class="dim" style="margin-left:auto;font-size:10px">\${t}</span></div>\`;
   }
   if(entry.type==="tool_use"){
-    return html\`<div class="chat-status"><span class="tool-icon">\u25B8</span><code dangerouslySetInnerHTML=\${{__html:linked}}></code><span class="ts">\${t}</span></div>\`;
+    const raw=entry.text||"";
+    // Bash: "description: $ cmd" or "$ cmd"
+    const bashMatch=raw.match(/^(?:(.+?):\s*)?\$\s+(.+)$/);
+    if(bashMatch){
+      const desc=bashMatch[1]||"";
+      const cmd=bashMatch[2];
+      return html\`<div class="chat-status"><span class="tool-icon">\u25B8</span><code>\${desc && html\`<span class="tool-desc">\${desc} </span>\`}<span class="tool-bash">$</span> <span class="tool-args">\${cmd}</span></code><span class="ts">\${t}</span></div>\`;
+    }
+    // Other tools: "toolName arg1=val arg2=val"
+    const spIdx=raw.indexOf(" ");
+    const toolName=spIdx>0?raw.slice(0,spIdx):raw;
+    const toolArgs=spIdx>0?raw.slice(spIdx):"";
+    const argsHtml=linkify(toolArgs);
+    return html\`<div class="chat-status"><span class="tool-icon">\u25B8</span><code><span class="tool-name">\${toolName}</span><span class="tool-args" dangerouslySetInnerHTML=\${{__html:argsHtml}}></span></code><span class="ts">\${t}</span></div>\`;
   }
   if(entry.type==="status"){
     return html\`<div class="chat-status"><span class="tool-icon">\u25CB</span><span dangerouslySetInnerHTML=\${{__html:linked}}></span><span class="ts">\${t}</span></div>\`;
