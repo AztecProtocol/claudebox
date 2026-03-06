@@ -15,7 +15,8 @@ import { App } from "@slack/bolt";
 import { WebSocketServer } from "ws";
 import {
   SLACK_BOT_TOKEN, SLACK_APP_TOKEN, HTTP_PORT, DOCKER_IMAGE, MAX_CONCURRENT,
-  SESSION_PAGE_USER, SESSION_PAGE_PASS, setChannelMaps,
+  SESSION_PAGE_USER, SESSION_PAGE_PASS, setChannelMaps, API_SECRET,
+  ANTHROPIC_PROXY_PORT,
 } from "./packages/libclaudebox/config.ts";
 import { SessionStore } from "./packages/libclaudebox/session-store.ts";
 import { DockerService } from "./packages/libclaudebox/docker.ts";
@@ -23,7 +24,8 @@ import { InteractiveSessionManager } from "./packages/libclaudebox/interactive.t
 import { registerSlackHandlers } from "./packages/libclaudebox/slack/handlers.ts";
 import { createHttpServer } from "./packages/libclaudebox/http-routes.ts";
 import { QuestionStore } from "./packages/libclaudebox/question-store.ts";
-import { setProfilesDir, buildChannelProfileMap, buildChannelBranchMap } from "./packages/libclaudebox/profile-loader.ts";
+import { setProfilesDir, buildChannelProfileMap, buildChannelBranchMap, collectProfileRoutes } from "./packages/libclaudebox/profile-loader.ts";
+import { startAnthropicProxy, addSessionToken as addProxyToken } from "./sidecar/anthropic-proxy.ts";
 import { join, dirname } from "path";
 
 // Prevent unhandled Slack/WebSocket rejections from crashing the process
@@ -150,8 +152,16 @@ async function main() {
     console.warn(`  Slack failed: ${e.message} (HTTP server will still run)`);
   }
 
-  // ── HTTP server ──
-  const httpServer = createHttpServer(store, docker, interactive);
+  // ── Anthropic API proxy (credential isolation for containers) ──
+  if (API_SECRET) {
+    addProxyToken(API_SECRET);
+  }
+  startAnthropicProxy({ port: ANTHROPIC_PROXY_PORT });
+
+  // ── HTTP server (with profile routes) ──
+  const profileRoutes = await collectProfileRoutes(requestedProfiles.length ? requestedProfiles : undefined);
+  if (profileRoutes.length) console.log(`  Profile routes: ${profileRoutes.length} endpoints`);
+  const httpServer = createHttpServer(store, docker, interactive, profileRoutes);
 
   // ── WebSocket upgrade (requires basic auth) ──
   const wss = new WebSocketServer({ noServer: true });

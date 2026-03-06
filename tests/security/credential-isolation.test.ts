@@ -184,6 +184,11 @@ server.listen(9801, () => console.log("sidecar ready"));
     assert.equal(r.stdout.trim(), "AS=", "API_SECRET should be empty");
   });
 
+  it("ANTHROPIC_API_KEY not set in Claude container", () => {
+    const r = dockerExec(CLAUDE_CTR, ["bash", "-c", "echo AK=$ANTHROPIC_API_KEY"]);
+    assert.equal(r.stdout.trim(), "AK=", "ANTHROPIC_API_KEY should be empty");
+  });
+
   it("CLAUDEBOX_SESSION_PASS not set in Claude container", () => {
     const r = dockerExec(CLAUDE_CTR, ["bash", "-c", "echo SP=$CLAUDEBOX_SESSION_PASS"]);
     assert.equal(r.stdout.trim(), "SP=", "CLAUDEBOX_SESSION_PASS should be empty");
