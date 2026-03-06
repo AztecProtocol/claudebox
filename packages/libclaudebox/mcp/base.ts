@@ -1151,29 +1151,13 @@ export function startMcpHttpServer(createMcpServer: () => McpServer): void {
   httpServer.listen(PORT, "0.0.0.0", () => {
     console.log(`[Sidecar] :${PORT} gh=${GH_TOKEN ? "yes" : "no"} slack=${SLACK_BOT_TOKEN ? "yes" : "no"} linear=${LINEAR_API_KEY ? "yes" : "no"} quiet=${QUIET_MODE ? "yes" : "no"} ci_allow=${CI_ALLOW ? "yes" : "no"}`);
     initSlackFromPermalink();
-    startTranscriptPoller();
+    // Transcript poller removed — host-side SessionStreamer handles JSONL → activity.jsonl
 
-    // Start proxy services — Claude connects to sidecar instead of having direct credentials
-    import("../../sidecar/redis-proxy.ts").then(({ startRedisProxy }) => {
-      startRedisProxy({
-        proxyPort: 6379,
-        upstreamHost: process.env.REDIS_HOST || "localhost",
-        upstreamPort: parseInt(process.env.REDIS_PORT || "6379"),
-      });
-      console.log("[Sidecar] Redis proxy started on :6379");
-    }).catch(e => console.warn(`[Sidecar] Redis proxy failed to start: ${e.message}`));
-
-    import("../../sidecar/http-proxy.ts").then(({ startHttpProxy }) => {
-      startHttpProxy({
-        port: 8080,
-      });
-      console.log("[Sidecar] HTTP proxy started on :8080");
-    }).catch(e => console.warn(`[Sidecar] HTTP proxy failed to start: ${e.message}`));
+    // Proxies removed — containers have direct internet access
   });
 
   process.on("SIGTERM", async () => {
     try {
-      stopTranscriptPoller();
       httpServer.close();
 
       if (!respondToUserCalled) {

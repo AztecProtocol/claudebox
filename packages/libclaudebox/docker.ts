@@ -6,6 +6,7 @@ import { homedir } from "os";
 import { randomUUID } from "crypto";
 import type { ContainerSessionOpts, WorktreeInfo, SessionMeta } from "./types.ts";
 import type { SessionStore } from "./session-store.ts";
+import { SessionStreamer } from "./session-streamer.ts";
 import {
   REPO_DIR, DOCKER_IMAGE, CLAUDEBOX_CODE_DIR, CLAUDE_BINARY,
   BASTION_SSH_KEY, GH_TOKEN, SLACK_BOT_TOKEN, HTTP_PORT,
@@ -307,10 +308,6 @@ export class DockerService {
         "-v", `${CLAUDEBOX_CODE_DIR}:/opt/claudebox:ro`,
         "-e", `CLAUDEBOX_MCP_URL=${mcpUrl}`,
         "-e", `SESSION_UUID=${sessionUuid}`,
-        "-e", `CI_REDIS=${sidecarName}`,
-        "-e", `HTTP_PROXY=http://${sidecarName}:8080`,
-        "-e", `HTTPS_PROXY=http://${sidecarName}:8080`,
-        "-e", `NO_PROXY=localhost,127.0.0.1,${sidecarName}`,
         "-e", `AZTEC_MCP_SERVER=http://${sidecarName}:9801/creds`,
         "-e", `CLAUDEBOX_SIDECAR_HOST=${sidecarName}`,
         "-e", `CLAUDEBOX_SIDECAR_PORT=9801`,
@@ -340,13 +337,15 @@ export class DockerService {
           stdio: ["ignore", "pipe", "pipe"],
         });
 
-        // Set up cache_log streaming
+        // Set up unified session streamer + cache_log
         let cacheLogProc: ChildProcess | null = null;
-        let streamSessionProc: ChildProcess | null = null;
+        let streamer: SessionStreamer | null = null;
         try {
           const cacheLogBin = join(REPO_DIR, "ci3", "cache_log");
-          const streamSessionBin = join(CLAUDEBOX_CODE_DIR, "stream-session.ts");
-          if (existsSync(cacheLogBin) && existsSync(streamSessionBin)) {
+          const activityLog = join(workspaceDir, "activity.jsonl");
+
+          // Start cache_log process if available
+          if (existsSync(cacheLogBin)) {
             const slackLink = opts.slackChannel && opts.slackThreadTs
               ? `https://${process.env.SLACK_WORKSPACE_DOMAIN || "slack"}.slack.com/archives/${opts.slackChannel}/p${(opts.slackMessageTs || opts.slackThreadTs).replace(".", "")}?thread_ts=${opts.slackThreadTs}&cid=${opts.slackChannel}`
               : "";
@@ -363,18 +362,19 @@ export class DockerService {
               env: { ...process.env, DUP: "1", PARENT_LOG_ID: parentLogId },
             });
             cacheLogProc.stdin?.write(headerLines.join("\n"));
-
-            const activityLog = join(workspaceDir, "activity.jsonl");
-            streamSessionProc = spawn(streamSessionBin, ["--dir", claudeProjectsDir], {
-              stdio: ["ignore", "pipe", "inherit"],
-              env: { ...process.env, PARENT_LOG_ID: logId, ACTIVITY_LOG: activityLog },
-            });
-            streamSessionProc.stdout?.on("data", (d: Buffer) => {
-              cacheLogProc?.stdin?.write(d);
-            });
           }
+
+          // Start unified session streamer (replaces stream-session.ts + transcript poller)
+          streamer = new SessionStreamer({
+            projectDir: claudeProjectsDir,
+            activityLog,
+            repoDir: REPO_DIR,
+            parentLogId: logId,
+            onOutput: (text) => { cacheLogProc?.stdin?.write(text); },
+          });
+          streamer.start().catch(() => {});
         } catch (e) {
-          console.warn(`[DOCKER] cache_log setup failed: ${e}`);
+          console.warn(`[DOCKER] session streamer setup failed: ${e}`);
         }
 
         container.stdout?.on("data", (d: Buffer) => {
@@ -395,16 +395,10 @@ export class DockerService {
           const exitCode = code ?? 1;
           console.log(`[DOCKER] Claude container ${claudeName} exited: ${exitCode}`);
 
-          // Drain stream-session
-          if (streamSessionProc) {
-            streamSessionProc.kill("SIGTERM");
-            streamSessionProc.on("close", () => {
-              setTimeout(() => { cacheLogProc?.stdin?.end(); }, 500);
-            });
-            setTimeout(() => {
-              streamSessionProc?.kill("SIGKILL");
-              setTimeout(() => { cacheLogProc?.stdin?.end(); }, 500);
-            }, 15_000);
+          // Stop streamer and close cache_log
+          if (streamer) {
+            streamer.stop();
+            setTimeout(() => { cacheLogProc?.stdin?.end(); }, 500);
           } else {
             setTimeout(() => { cacheLogProc?.stdin?.end(); }, 500);
           }
@@ -560,10 +554,6 @@ export class DockerService {
           `CLAUDEBOX_USER=${session.user || ""}`,
           `CLAUDEBOX_RESUME_ID=${resumeId}`,
           `CLAUDEBOX_KEEPALIVE_URL=${keepaliveUrl}`,
-          `CI_REDIS=${sidecarName}`,
-          `HTTP_PROXY=http://${sidecarName}:8080`,
-          `HTTPS_PROXY=http://${sidecarName}:8080`,
-          `NO_PROXY=localhost,127.0.0.1,${sidecarName}`,
           `AZTEC_MCP_SERVER=http://${sidecarName}:9801/creds`,
           `CLAUDEBOX_SIDECAR_HOST=${sidecarName}`,
           `CLAUDEBOX_SIDECAR_PORT=9801`,
