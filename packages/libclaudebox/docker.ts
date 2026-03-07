@@ -267,6 +267,7 @@ export class DockerService {
         User: uid,
         Env: [
           `HOME=${CONTAINER_HOME}`,
+          `GIT_CONFIG_GLOBAL=/tmp/.gitconfig`,
           `MCP_PORT=9801`,
           `GH_TOKEN=${GH_TOKEN}`,
           `SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}`,
@@ -529,6 +530,7 @@ export class DockerService {
         User: uid,
         Env: [
           `HOME=${CONTAINER_HOME}`,
+          `GIT_CONFIG_GLOBAL=/tmp/.gitconfig`,
           `MCP_PORT=9801`,
           `GH_TOKEN=${GH_TOKEN}`,
           `SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}`,

@@ -59,13 +59,14 @@ echo ""
 
 cd /workspace
 
-# ── Step 4: Run Claude ───────────────────────────────────────────
+# ── Step 4: Run Claude (or CLAUDE_BINARY override) ────────────────
+CLAUDE_BIN="${CLAUDE_BINARY:-claude}"
 COMMON_ARGS=(--print --dangerously-skip-permissions --mcp-config /tmp/mcp.json -p "$PROMPT")
 [ -n "$MODEL" ] && COMMON_ARGS+=(--model "$MODEL")
 
 set +e
 if [ -n "$RESUME_ID" ]; then
-    claude "${COMMON_ARGS[@]}" --resume "$RESUME_ID" --fork-session
+    "$CLAUDE_BIN" "${COMMON_ARGS[@]}" --resume "$RESUME_ID" --fork-session
     exit_code=$?
     # Fall back to fresh session if resume fails (e.g. JSONL from old mount path)
     if [ "$exit_code" -ne 0 ]; then
@@ -76,7 +77,7 @@ if [ -n "$RESUME_ID" ]; then
     fi
 fi
 if [ -z "$RESUME_ID" ]; then
-    claude "${COMMON_ARGS[@]}" --session-id "$SESSION_UUID"
+    "$CLAUDE_BIN" "${COMMON_ARGS[@]}" --session-id "$SESSION_UUID"
     exit_code=$?
 fi
 set -e
