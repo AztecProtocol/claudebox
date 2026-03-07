@@ -227,7 +227,7 @@ export function registerAuditRoutes(ctx: PluginContext): void {
     try { body = JSON.parse(await readBody(req)); }
     catch { jsonResponse(res, 400, { error: "invalid JSON" }); return; }
 
-    const questionId = params.id || params[0 as any];
+    const questionId = params.id;
     const selectedOption = body.selected_option;
     const freeformAnswer = body.freeform_answer || "";
     const answeredBy = body.answered_by || "web";

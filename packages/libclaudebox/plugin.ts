@@ -90,7 +90,7 @@ export interface PluginContext {
 export interface Plugin {
   name: string;
 
-  /** Docker sandbox config (replaces host-manifest.ts docker field) */
+  /** Docker sandbox config */
   docker?: DockerConfig;
 
   /** Stat schemas this plugin provides */

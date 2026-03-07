@@ -5,7 +5,14 @@ import { homedir } from "os";
 export const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN!;
 export const SLACK_APP_TOKEN = process.env.SLACK_APP_TOKEN!;
 export const GH_TOKEN = process.env.GH_TOKEN || "";
-export const API_SECRET = process.env.CLAUDEBOX_API_SECRET || "";
+export const API_SECRET = (() => {
+  const v = process.env.CLAUDEBOX_API_SECRET;
+  if (!v && !process.env.CLAUDEBOX_HTTP_ONLY) {
+    console.error("[FATAL] CLAUDEBOX_API_SECRET must be set (or set CLAUDEBOX_HTTP_ONLY=1 for dev mode)");
+    process.exit(1);
+  }
+  return v || "";
+})();
 export const HTTP_PORT = parseInt(process.env.CLAUDEBOX_PORT || "3000", 10);
 export const MAX_CONCURRENT = 10;
 

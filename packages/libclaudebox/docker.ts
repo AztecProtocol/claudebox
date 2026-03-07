@@ -173,8 +173,11 @@ export class DockerService {
     // Fix ownership
     try { execSync(`chown -R ${process.getuid!()}:${process.getgid!()} "${workspaceDir}"`, { timeout: 10_000 }); } catch {}
 
-    // Profile-aware paths
+    // Profile-aware paths (validate name to prevent path traversal)
     const profileDir = opts.profile || "default";
+    if (!/^[a-z0-9][a-z0-9._-]*$/i.test(profileDir)) {
+      throw new Error(`Invalid profile name: ${profileDir}`);
+    }
     const sidecarEntrypoint = `/opt/claudebox/profiles/${profileDir}/mcp-sidecar.ts`;
     const claudeMdPath = `/opt/claudebox/profiles/${profileDir}/container-claude.md`;
     const dockerConfig = await getDockerConfig(profileDir);
@@ -327,9 +330,12 @@ export class DockerService {
         "-e", `PARENT_LOG_ID=${logId}`,
         "-e", `CLAUDEBOX_MODEL=${opts.model || ""}`,
       ];
-      // Profile-specific extra env vars
+      // Profile-specific extra env vars and bind mounts
       if (dockerConfig.extraEnv) {
         for (const e of dockerConfig.extraEnv) claudeArgs.push("-e", e);
+      }
+      if (dockerConfig.extraBinds) {
+        for (const b of dockerConfig.extraBinds) claudeArgs.push("-v", b);
       }
       // Mount reference repo for profiles that use local clone
       if (mountRef) {
@@ -591,7 +597,7 @@ export class DockerService {
         HostConfig: {
           NetworkMode: networkName,
           ExtraHosts: ["host.docker.internal:host-gateway"],
-          Binds: intBinds,
+          Binds: [...intBinds, ...(dockerConfig.extraBinds || [])],
         },
       }).then(c => c.start());
       console.log(`[INTERACTIVE] Container started: ${containerName}`);

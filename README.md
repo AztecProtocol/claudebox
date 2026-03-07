@@ -52,34 +52,48 @@ A profile is a directory with some combination of:
 
 ```
 my-profile/
+  plugin.ts            # Docker config, channels, routes, schemas (optional)
   mcp-sidecar.ts       # MCP tools (runs inside container)
-  plugin.ts            # Server-side routes and handlers (optional)
-  host-manifest.ts     # Legacy: docker config only (optional)
   container-claude.md  # System prompt for Claude (optional)
 ```
 
 ### Creating a Profile
 
-Profiles live in `profiles/` in the repo, or in directories listed in your user settings.
+Profiles live in `profiles/` in the repo.
 
 **Example: Adding Notion MCP access**
 
-Create `~/.claude/claudebox/profiles/with-notion/mcp-sidecar.ts`:
+Create `profiles/with-notion/plugin.ts`:
+
+```typescript
+import type { Plugin } from "../../packages/libclaudebox/plugin.ts";
+
+const plugin: Plugin = {
+  name: "with-notion",
+  docker: {
+    extraEnv: ["NOTION_TOKEN"],  // pass through from host env
+  },
+  requiredCredentials: ["NOTION_TOKEN"],
+  setup() {},
+};
+
+export default plugin;
+```
+
+Create `profiles/with-notion/mcp-sidecar.ts`:
 
 ```typescript
 #!/usr/bin/env -S node --experimental-strip-types --no-warnings
 import {
   registerCommonTools, startMcpHttpServer,
-} from "claudebox/packages/libclaudebox/mcp/base.ts";
+} from "../../packages/libclaudebox/mcp/base.ts";
 
 function createServer() {
   const { McpServer } = await import("@modelcontextprotocol/sdk/server/mcp.js");
   const server = new McpServer({ name: "with-notion", version: "1.0.0" });
 
-  // Register the standard ClaudeBox tools (github, slack, status, etc.)
   registerCommonTools(server, { tools: "respond_to_user, session_status, github_api" });
 
-  // Add your Notion tools here
   server.tool("notion_search", "Search Notion pages", { query: z.string() }, async ({ query }) => {
     const res = await fetch("https://api.notion.com/v1/search", {
       method: "POST",
@@ -98,26 +112,6 @@ function createServer() {
 }
 
 startMcpHttpServer(createServer);
-```
-
-Create `~/.claude/claudebox/profiles/with-notion/host-manifest.ts`:
-
-```typescript
-export default {
-  name: "with-notion",
-  docker: {
-    extraEnv: ["NOTION_TOKEN"],  // pass through from host env
-  },
-};
-```
-
-Then in your settings, add the profile directory and optionally set it as default:
-
-```json
-{
-  "profileDirs": ["~/.claude/claudebox/profiles"],
-  "defaultProfile": "with-notion"
-}
 ```
 
 Run with: `claudebox run --profile with-notion "summarize my Notion workspace"`

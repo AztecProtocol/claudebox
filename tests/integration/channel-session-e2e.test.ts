@@ -29,7 +29,7 @@ process.env.CLAUDEBOX_SESSION_PASS ||= TEST_PASS; // ensure set
 process.env.MAX_CONCURRENT = "5";
 process.env.SLACK_BOT_TOKEN = ""; // empty but defined — prevents crashes
 
-// The barretenberg-audit channel ID from the profile's host-manifest.ts
+// The barretenberg-audit channel ID from the profile's plugin.ts
 const BB_AUDIT_CHANNEL = "C0AJCUKUNGP";
 
 // ── Mock Slack App ───────────────────────────────────────────────

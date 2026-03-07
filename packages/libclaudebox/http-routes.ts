@@ -43,7 +43,7 @@ function html(res: ServerResponse, status: number, body: string): void {
 
 // ── Auth (jose JWT) ─────────────────────────────────────────────
 
-const JWT_SECRET = new TextEncoder().encode(API_SECRET || "claudebox-dev-key");
+const JWT_SECRET = new TextEncoder().encode(API_SECRET || SESSION_PAGE_PASS);
 const JWT_ISSUER = "claudebox";
 const JWT_EXPIRY = "7d";
 const COOKIE_NAME = "cb_session";
@@ -239,6 +239,7 @@ interface Route {
   method: string;
   pattern: RegExp;
   auth: "api" | "basic" | "none";
+  paramNames?: string[];
   handler: RouteHandler;
 }
 
@@ -324,7 +325,7 @@ const routes: Route[] = [
         console.error(`[HTTP] Session error: ${e}`);
         if (!responded) {
           responded = true;
-          json(res, 500, { error: e.message });
+          console.error(`[HTTP] ${e.message}`); json(res, 500, { error: "internal error" });
         }
       });
     },
@@ -1281,7 +1282,7 @@ const routes: Route[] = [
         const d = await slackRes.json();
         json(res, 200, d);
       } catch (e: any) {
-        json(res, 500, { ok: false, error: e.message });
+        console.error(`[HTTP] ${e.message}`); json(res, 500, { ok: false, error: "internal error" });
       }
     },
   },
@@ -1429,7 +1430,7 @@ const routes: Route[] = [
 
         json(res, 200, { ok: true, user: slackUser.id });
       } catch (e: any) {
-        json(res, 500, { ok: false, error: e.message });
+        console.error(`[HTTP] ${e.message}`); json(res, 500, { ok: false, error: "internal error" });
       }
     },
   },
@@ -1490,11 +1491,16 @@ export function createHttpServer(
     for (const pr of pluginRuntime.getRoutes()) {
       // Convert Express-style path to regex: "/audit/coverage" → /^\/audit\/coverage$/
       // Handle :param patterns: "/questions/:id/answer" → /^\/questions\/([^/]+)\/answer$/
-      const regexStr = pr.path.replace(/:([a-zA-Z_]+)/g, "([^/]+)").replace(/\//g, "\\/");
+      const paramNames: string[] = [];
+      const regexStr = pr.path.replace(/:([a-zA-Z_]+)/g, (_m, name) => {
+        paramNames.push(name);
+        return "([^/]+)";
+      }).replace(/\//g, "\\/");
       allRoutes.push({
         method: pr.method,
         pattern: new RegExp(`^${regexStr}$`),
         auth: pr.auth,
+        paramNames,
         handler: async (req, res, params) => pr.handler({ req, res, params, store, docker }),
       });
     }
@@ -1512,9 +1518,12 @@ export function createHttpServer(
       if (route.auth === "api" && !checkApiAuth(req)) { sendUnauthorized(res, "api"); return; }
       if (route.auth === "basic" && !(await checkSessionAuth(req))) { sendUnauthorized(res, "session"); return; }
 
-      // Extract regex groups as params
+      // Extract regex groups as params (use named keys from plugin routes, numeric otherwise)
       const params: Record<string, string> = {};
-      for (let i = 1; i < m.length; i++) params[i - 1] = m[i];
+      for (let i = 1; i < m.length; i++) {
+        params[i - 1] = m[i];
+        if (route.paramNames?.[i - 1]) params[route.paramNames[i - 1]] = m[i];
+      }
 
       try {
         await route.handler(req, res, params, ctx);
