@@ -20,10 +20,30 @@ import { mkdirSync, writeFileSync, appendFileSync, existsSync } from "fs";
 import { join } from "path";
 import { randomUUID } from "crypto";
 
+// ── CLI arg parsing (mimics real claude flags) ──────────────────
+const args = process.argv.slice(2);
+let cliPrompt = "";
+let cliResume = "";
+let cliModel = "";
+let cliPrint = false;
+let cliSessionId = "";
+for (let i = 0; i < args.length; i++) {
+  const a = args[i];
+  if (a === "-p" && i + 1 < args.length) { cliPrompt = args[++i]; continue; }
+  if (a === "--print") { cliPrint = true; continue; }
+  if (a === "--resume" && i + 1 < args.length) { cliResume = args[++i]; continue; }
+  if (a === "--model" && i + 1 < args.length) { cliModel = args[++i]; continue; }
+  if (a === "--session-id" && i + 1 < args.length) { cliSessionId = args[++i]; continue; }
+  if (a === "--dangerously-skip-permissions" || a === "--mcp-config" || a === "--fork-session") {
+    if (a === "--mcp-config") i++; // skip next arg (config path)
+    continue;
+  }
+}
+
 const WORKSPACE = process.env.CLAUDEBOX_WORKSPACE || "/workspace";
-const SESSION_ID = process.env.SESSION_UUID || randomUUID();
-const PROMPT = process.env.CLAUDEBOX_PROMPT || "test prompt";
-const RESUME_ID = process.env.CLAUDEBOX_RESUME_ID || "";
+const SESSION_ID = cliSessionId || process.env.SESSION_UUID || randomUUID();
+const PROMPT = cliPrompt || process.env.CLAUDEBOX_PROMPT || "test prompt";
+const RESUME_ID = cliResume || process.env.CLAUDEBOX_RESUME_ID || "";
 const EXIT_CODE = parseInt(process.env.MOCK_EXIT_CODE || "0", 10);
 const DELAY_MS = parseInt(process.env.MOCK_DELAY_MS || "100", 10);
 
@@ -34,6 +54,7 @@ const projectsDir = process.env.CLAUDEBOX_PROJECTS_DIR
 mkdirSync(projectsDir, { recursive: true });
 
 const sessionFile = join(projectsDir, `${SESSION_ID}.jsonl`);
+try { mkdirSync(WORKSPACE, { recursive: true }); } catch {}
 const activityFile = join(WORKSPACE, "activity.jsonl");
 
 function writeJsonl(file: string, obj: any): void {
@@ -41,11 +62,13 @@ function writeJsonl(file: string, obj: any): void {
 }
 
 function writeActivity(type: string, text: string): void {
-  writeJsonl(activityFile, {
-    ts: new Date().toISOString(),
-    type,
-    text,
-  });
+  try {
+    writeJsonl(activityFile, {
+      ts: new Date().toISOString(),
+      type,
+      text,
+    });
+  } catch {}
 }
 
 async function sleep(ms: number): Promise<void> {
@@ -56,61 +79,91 @@ async function main() {
   console.log(`[mock-claude] Session ${SESSION_ID}`);
   console.log(`[mock-claude] Prompt: ${PROMPT.slice(0, 100)}`);
   if (RESUME_ID) console.log(`[mock-claude] Resuming: ${RESUME_ID}`);
+  if (cliModel) console.log(`[mock-claude] Model: ${cliModel}`);
 
   // Write init event
   writeJsonl(sessionFile, {
     type: "init",
     session_id: SESSION_ID,
     timestamp: new Date().toISOString(),
-    model: "mock-claude-test",
+    model: cliModel || "mock-claude-test",
     resume_from: RESUME_ID || undefined,
   });
 
   writeActivity("status", "Starting mock session...");
   await sleep(DELAY_MS);
 
-  // Simulate reading files
-  writeJsonl(sessionFile, {
-    type: "tool_use",
-    tool: "Read",
-    input: { file_path: "/workspace/prompt.txt" },
-    timestamp: new Date().toISOString(),
-  });
+  // Detect guide mode — prompt contains "review" and "question"
+  const isGuide = PROMPT.toLowerCase().includes("review") && PROMPT.toLowerCase().includes("question");
 
-  writeJsonl(sessionFile, {
-    type: "tool_result",
-    tool: "Read",
-    output: PROMPT,
-    timestamp: new Date().toISOString(),
-  });
+  if (isGuide) {
+    // Guide mode: output session review + questions
+    const guideResponse = [
+      "## Session Review",
+      "",
+      "I've reviewed the conversation history. Here's what happened:",
+      "- The session started with a code review request",
+      "- Several files were analyzed and issues identified",
+      "- A PR was drafted but needs direction on scope",
+      "",
+      "## Questions for Direction",
+      "",
+      "1. **Scope**: Should we focus on just the critical bugs, or also address code style issues?",
+      "2. **Testing**: Should I write unit tests for the fixes, or rely on existing integration tests?",
+      "3. **PR Strategy**: Single large PR or multiple small PRs?",
+      "",
+      "Please provide your answers so the session can continue with clear direction.",
+    ].join("\n");
 
-  await sleep(DELAY_MS);
-  writeActivity("status", "Processing...");
+    console.log(guideResponse);
 
-  // Simulate assistant response
-  writeJsonl(sessionFile, {
-    type: "assistant",
-    text: `I've analyzed the request: "${PROMPT.slice(0, 50)}". Here is my response.`,
-    timestamp: new Date().toISOString(),
-  });
+    writeJsonl(sessionFile, {
+      type: "assistant",
+      text: guideResponse,
+      timestamp: new Date().toISOString(),
+    });
+    writeActivity("response", guideResponse);
+  } else {
+    // Normal mode: simulate reading files and responding
+    writeJsonl(sessionFile, {
+      type: "tool_use",
+      tool: "Read",
+      input: { file_path: "/workspace/prompt.txt" },
+      timestamp: new Date().toISOString(),
+    });
 
-  await sleep(DELAY_MS);
-  writeActivity("response", `Mock response to: ${PROMPT.slice(0, 80)}`);
+    writeJsonl(sessionFile, {
+      type: "tool_result",
+      tool: "Read",
+      output: PROMPT,
+      timestamp: new Date().toISOString(),
+    });
 
-  // Simulate creating a file
-  const testFile = join(WORKSPACE, "mock-output.txt");
-  writeFileSync(testFile, `Mock output for session ${SESSION_ID}\n`);
+    await sleep(DELAY_MS);
+    writeActivity("status", "Processing...");
 
-  writeJsonl(sessionFile, {
-    type: "tool_use",
-    tool: "Write",
-    input: { file_path: testFile, content: "Mock output" },
-    timestamp: new Date().toISOString(),
-  });
+    writeJsonl(sessionFile, {
+      type: "assistant",
+      text: `I've analyzed the request: "${PROMPT.slice(0, 50)}". Here is my response.`,
+      timestamp: new Date().toISOString(),
+    });
+
+    await sleep(DELAY_MS);
+    writeActivity("response", `Mock response to: ${PROMPT.slice(0, 80)}`);
+
+    const testFile = join(WORKSPACE, "mock-output.txt");
+    try { writeFileSync(testFile, `Mock output for session ${SESSION_ID}\n`); } catch {}
+
+    writeJsonl(sessionFile, {
+      type: "tool_use",
+      tool: "Write",
+      input: { file_path: testFile, content: "Mock output" },
+      timestamp: new Date().toISOString(),
+    });
+  }
 
   writeActivity("status", "Session complete");
 
-  // Write completion event
   writeJsonl(sessionFile, {
     type: "result",
     session_id: SESSION_ID,

@@ -1,6 +1,7 @@
 import type { App } from "@slack/bolt";
 import type { SessionStore } from "../session-store.ts";
 import type { DockerService } from "../docker.ts";
+import type { DmRegistry } from "../dm-registry.ts";
 import { MAX_CONCURRENT, getActiveSessions, getChannelProfiles } from "../config.ts";
 import { parseMessage, parseKeywords, validateResumeSession, truncate, extractHashFromUrl, sessionUrl } from "../util.ts";
 import {
@@ -8,6 +9,7 @@ import {
   startNewSession, startReplySession,
 } from "./helpers.ts";
 import { resolveBaseBranch, resolveQuietMode, resolveChannelName } from "../base-branch.ts";
+import { proxyDmToServer } from "../dm-registry.ts";
 
 /** Normalized incoming Slack message — unifies app_mention, DM, and slash command. */
 interface IncomingMessage {
@@ -89,7 +91,7 @@ async function handleIncomingMessage(msg: IncomingMessage, store: SessionStore, 
 }
 
 /** Register all Slack event handlers on the Bolt app. */
-export function registerSlackHandlers(app: App, store: SessionStore, docker: DockerService): void {
+export function registerSlackHandlers(app: App, store: SessionStore, docker: DockerService, dmRegistry?: DmRegistry): void {
 
   // ── @mention in channels ──────────────────────────────────────
   app.event("app_mention", async ({ event, client, say }) => {
@@ -120,12 +122,32 @@ export function registerSlackHandlers(app: App, store: SessionStore, docker: Doc
     const text = (event as any).text ?? "";
     const isReply = !!(event as any).thread_ts;
     const threadTs = (event as any).thread_ts ?? (event as any).ts;
+    const userId = (event as any).user ?? "";
 
-    console.log(`[DM] channel=${channel} isReply=${isReply} text=${text.slice(0, 100)}`);
+    console.log(`[DM] channel=${channel} user=${userId} isReply=${isReply} text=${text.slice(0, 100)}`);
+
+    // Check DM registry — proxy to personal server if registered
+    if (dmRegistry && userId) {
+      const registration = dmRegistry.lookup(userId);
+      if (registration) {
+        const userName = await resolveUserName(client, userId);
+        console.log(`[DM_PROXY] Routing DM from ${userName} (${userId}) to ${registration.serverUrl}`);
+        const result = await proxyDmToServer(registration, {
+          text: text.trim(), userId, userName, channel, threadTs, isReply,
+        });
+        if (result.ok) {
+          await say({ text: `_Routed to your personal server._`, thread_ts: threadTs } as any);
+          return;
+        }
+        console.warn(`[DM_PROXY] Proxy failed for ${userId}: ${result.error}`);
+        await say({ text: `_Your personal server didn't respond. Handling locally._`, thread_ts: threadTs } as any);
+        // Fall through to local handling
+      }
+    }
 
     await handleIncomingMessage({
       channel, text: text.trim(), isReply, threadTs,
-      userId: (event as any).user ?? "",
+      userId,
       respond: (msg) => say({ ...msg, thread_ts: msg.thread_ts || threadTs }) as any,
       client,
     }, store, docker);

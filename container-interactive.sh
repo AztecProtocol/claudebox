@@ -14,8 +14,8 @@ LOG_URL="${CLAUDEBOX_LOG_URL:-}"
 KEEPALIVE_URL="${CLAUDEBOX_KEEPALIVE_URL:-}"
 
 # ── Ensure writable bin dir + cargo on PATH ──────────────────────
-mkdir -p /home/aztec-dev/bin
-export PATH="/home/aztec-dev/bin:$HOME/.cargo/bin:$PATH"
+mkdir -p "$HOME/bin"
+export PATH="$HOME/bin:$HOME/.cargo/bin:$PATH"
 
 cd /workspace
 
@@ -25,7 +25,7 @@ cat > /tmp/mcp.json <<EOF
 EOF
 
 # ── MCP helper: call a tool via JSON-RPC ──────────────────────────
-cat > /home/aztec-dev/bin/_cb-call << 'SCRIPT'
+cat > $HOME/bin/_cb-call << 'SCRIPT'
 #!/bin/bash
 # Usage: _cb-call <tool_name> <json_arguments>
 TOOL="$1"; shift
@@ -35,10 +35,10 @@ PAYLOAD=$(jq -n --arg tool "$TOOL" --argjson args "$ARGS" \
 RESULT=$(curl -sf -X POST "$CLAUDEBOX_MCP_URL" -H "Content-Type: application/json" -d "$PAYLOAD" 2>/dev/null)
 echo "$RESULT" | jq -r '.result.content[]?.text // .error.message // "No response"' 2>/dev/null || echo "$RESULT"
 SCRIPT
-chmod +x /home/aztec-dev/bin/_cb-call
+chmod +x $HOME/bin/_cb-call
 
 # ── Shell wrappers ────────────────────────────────────────────────
-cat > /home/aztec-dev/bin/cb-github << 'SCRIPT'
+cat > $HOME/bin/cb-github << 'SCRIPT'
 #!/bin/bash
 # Usage: cb-github GET repos/AztecProtocol/aztec-packages/pulls/123
 #        cb-github POST repos/AztecProtocol/aztec-packages/issues/123/comments '{"body":"hello"}'
@@ -51,39 +51,39 @@ else
   _cb-call github_api "{\"method\":\"$METHOD\",\"path\":\"$PATH_ARG\",\"body\":$BODY}"
 fi
 SCRIPT
-chmod +x /home/aztec-dev/bin/cb-github
+chmod +x $HOME/bin/cb-github
 
-cat > /home/aztec-dev/bin/cb-slack << 'SCRIPT'
+cat > $HOME/bin/cb-slack << 'SCRIPT'
 #!/bin/bash
 # Usage: cb-slack chat.postMessage '{"text":"hello"}'
 METHOD="${1:?usage: cb-slack method args_json}"
 ARGS="${2:-{}}"
 _cb-call slack_api "{\"method\":\"$METHOD\",\"args\":$ARGS}"
 SCRIPT
-chmod +x /home/aztec-dev/bin/cb-slack
+chmod +x $HOME/bin/cb-slack
 
-cat > /home/aztec-dev/bin/cb-status << 'SCRIPT'
+cat > $HOME/bin/cb-status << 'SCRIPT'
 #!/bin/bash
 # Usage: cb-status "Working on it..."
 _cb-call session_status "{\"status\":\"$*\"}"
 SCRIPT
-chmod +x /home/aztec-dev/bin/cb-status
+chmod +x $HOME/bin/cb-status
 
-cat > /home/aztec-dev/bin/cb-context << 'SCRIPT'
+cat > $HOME/bin/cb-context << 'SCRIPT'
 #!/bin/bash
 _cb-call get_context "{}"
 SCRIPT
-chmod +x /home/aztec-dev/bin/cb-context
+chmod +x $HOME/bin/cb-context
 
-cat > /home/aztec-dev/bin/cb-respond << 'SCRIPT'
+cat > $HOME/bin/cb-respond << 'SCRIPT'
 #!/bin/bash
 # Usage: cb-respond "Here's what I found..."
 _cb-call respond_to_user "{\"message\":\"$*\"}"
 SCRIPT
-chmod +x /home/aztec-dev/bin/cb-respond
+chmod +x $HOME/bin/cb-respond
 
 # ── Keepalive command ─────────────────────────────────────────────
-cat > /home/aztec-dev/bin/keepalive << SCRIPT
+cat > $HOME/bin/keepalive << SCRIPT
 #!/bin/bash
 MINS="\${1:-5}"
 if [ -n "$KEEPALIVE_URL" ]; then
@@ -93,7 +93,7 @@ else
   echo "Keepalive not available (no URL configured)"
 fi
 SCRIPT
-chmod +x /home/aztec-dev/bin/keepalive
+chmod +x $HOME/bin/keepalive
 
 # ── Banner ────────────────────────────────────────────────────────
 echo ""

@@ -16,6 +16,7 @@ export PATH="$HOME/.cargo/bin:$PATH"
 MCP_URL="${CLAUDEBOX_MCP_URL:?required}"
 SESSION_UUID="${SESSION_UUID:?required}"
 RESUME_ID="${CLAUDEBOX_RESUME_ID:-}"
+MODEL="${CLAUDEBOX_MODEL:-}"
 PROMPT_FILE="/workspace/prompt.txt"
 CLAUDE_MD_TEMPLATE="${CLAUDEBOX_CONTAINER_CLAUDE_MD:-/opt/claudebox/container-claude.md}"
 
@@ -23,6 +24,7 @@ echo "━━━ Container Bootstrap ━━━"
 echo "MCP:     $MCP_URL"
 echo "Session: $SESSION_UUID"
 [ -n "$RESUME_ID" ] && echo "Resume:  $RESUME_ID"
+[ -n "$MODEL" ] && echo "Model:   $MODEL"
 
 # ── Step 1: MCP config ──────────────────────────────────────────
 cat > /tmp/mcp.json <<EOF
@@ -59,6 +61,7 @@ cd /workspace
 
 # ── Step 4: Run Claude ───────────────────────────────────────────
 COMMON_ARGS=(--print --dangerously-skip-permissions --mcp-config /tmp/mcp.json -p "$PROMPT")
+[ -n "$MODEL" ] && COMMON_ARGS+=(--model "$MODEL")
 
 set +e
 if [ -n "$RESUME_ID" ]; then

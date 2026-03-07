@@ -29,6 +29,7 @@ export interface ContainerSessionOpts {
   quiet?: boolean;
   ciAllow?: boolean;
   profile?: string;
+  model?: string;
   scopes?: string[];
 }
 

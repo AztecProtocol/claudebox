@@ -15,7 +15,7 @@ import {
   z, McpServer,
   GH_TOKEN, SESSION_META, WORKTREE_ID, statusPageUrl, STATS_DIR,
   buildCommonGhWhitelist, sanitizeError, hasScope, pushToRemote,
-  logActivity, updateRootComment, otherArtifacts,
+  logActivity, updateRootComment, otherArtifacts, getServerClient,
   registerCommonTools, registerCloneRepo, registerPRTools, startMcpHttpServer,
 } from "../../packages/libclaudebox/mcp/base.ts";
 
@@ -737,6 +737,59 @@ Use this for fixes that should go directly to the main barretenberg repo.`,
         return { content: [{ type: "text", text: `${pr.html_url}\nBranch: ${branch}\n#${pr.number} (upstream: ${UPSTREAM_REPO})` }] };
       } catch (e: any) {
         return { content: [{ type: "text", text: `create_external_pr: ${sanitizeError(e.message)}` }], isError: true };
+      }
+    });
+
+  // ── ask_user_question — post questions to server for human operator ──
+  server.tool("ask_user_question",
+    "Ask the human operator a question. The session will pause until all questions are answered. " +
+    "Use this when you need human direction, approval, or clarification before proceeding. " +
+    "You can batch multiple questions in one call.",
+    {
+      questions: z.array(z.object({
+        description: z.string().describe("Short summary of the question (one line)"),
+        body: z.string().describe("Detailed context: reasoning, code references, implementation plan"),
+        text: z.string().describe("The actual question to ask"),
+        context: z.string().describe("Why this decision matters"),
+        options: z.array(z.object({
+          label: z.string().describe("Option label (e.g. 'Option A', 'Yes', 'Skip')"),
+          description: z.string().describe("What this option means"),
+        })).min(2).max(5).describe("Multiple-choice options (2-5)"),
+        urgency: z.enum(["critical", "important", "nice-to-have"])
+          .describe("critical=30min, important=2h, nice-to-have=24h before auto-expiry"),
+      })).min(1).max(10).describe("Questions to ask the operator"),
+    },
+    async ({ questions }) => {
+      const client = getServerClient();
+      if (!client.hasServer) {
+        return {
+          content: [{ type: "text", text: "No server configured — cannot post questions." }],
+          isError: true,
+        };
+      }
+      if (!WORKTREE_ID) {
+        return {
+          content: [{ type: "text", text: "No worktree ID — cannot post questions outside a session." }],
+          isError: true,
+        };
+      }
+      try {
+        const result = await client.postQuestions(WORKTREE_ID, questions);
+        const ids = result?.question_ids || [];
+        logActivity("status", `Asked ${questions.length} question(s) — waiting for answers`);
+        return {
+          content: [{
+            type: "text",
+            text: `Posted ${questions.length} question(s) (IDs: ${ids.join(", ")}). ` +
+              `The session will be auto-resumed when all questions are answered or expired. ` +
+              `You should now exit cleanly — the operator will see these questions in the dashboard or CLI.`,
+          }],
+        };
+      } catch (e: any) {
+        return {
+          content: [{ type: "text", text: `Failed to post questions: ${sanitizeError(e.message)}` }],
+          isError: true,
+        };
       }
     });
 

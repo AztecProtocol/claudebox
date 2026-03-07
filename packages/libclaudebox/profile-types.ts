@@ -5,6 +5,8 @@ import type { SessionMeta } from "./types.ts";
  * Docker sandbox configuration for a profile.
  */
 export interface DockerConfig {
+  /** Docker image to use (overrides global default) */
+  image?: string;
   /** Mount the local .git as reference repo (default: true) */
   mountReferenceRepo?: boolean;
   /** Extra bind mounts: ["host:container:mode", ...] */

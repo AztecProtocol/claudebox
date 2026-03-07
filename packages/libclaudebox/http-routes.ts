@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
 import { SignJWT, jwtVerify, type JWTPayload } from "jose";
 import { API_SECRET, SESSION_PAGE_USER, SESSION_PAGE_PASS, MAX_CONCURRENT, getActiveSessions, SLACK_BOT_TOKEN, getChannelBranches, DEFAULT_BASE_BRANCH, GH_TOKEN } from "./config.ts";
-import { existsSync, readFileSync, readdirSync, statSync, watch } from "fs";
+import { existsSync, readFileSync, readdirSync, statSync, watch, mkdirSync } from "fs";
 import { join } from "path";
 import type { SessionStore } from "./session-store.ts";
 import type { DockerService } from "./docker.ts";
@@ -313,11 +313,12 @@ const routes: Route[] = [
         targetRef: body.target_ref || undefined,
         ciAllow,
         profile: (resumedSession?.profile || runProfile) || undefined,
+        model: body.model || undefined,
       }, store, undefined, (logUrl, newWorktreeId) => {
         if (prKey) store.bindPr(prKey, newWorktreeId);
         if (!responded) {
           responded = true;
-          json(res, 202, { log_url: logUrl, status: "started" });
+          json(res, 202, { log_url: logUrl, worktree_id: newWorktreeId, status: "started" });
         }
       }).catch((e) => {
         console.error(`[HTTP] Session error: ${e}`);
@@ -345,6 +346,65 @@ const routes: Route[] = [
         exit_code: session.exit_code,
         worktree_id: session.worktree_id || "",
       });
+    },
+  },
+
+  // GET /session/:id/bundle — download session JSONL bundle (tar)
+  {
+    method: "GET", pattern: /^\/session\/([a-f0-9][\w-]+)\/bundle$/, auth: "api",
+    handler: async (_req, res, params, { store }) => {
+      const resolved = resolveSession(params[0], store);
+      if (!resolved?.worktreeId) { json(res, 404, { error: "not found or no worktree" }); return; }
+      const claudeProjectsDir = join(store.worktreesDir, resolved.worktreeId, "claude-projects");
+      if (!existsSync(claudeProjectsDir)) { json(res, 404, { error: "no session data" }); return; }
+
+      // Stream tar of claude-projects dir
+      const { execFileSync } = await import("child_process");
+      try {
+        const tarData = execFileSync("tar", ["-c", "-C", claudeProjectsDir, "."], { maxBuffer: 50 * 1024 * 1024 });
+        res.writeHead(200, {
+          "Content-Type": "application/x-tar",
+          "Content-Disposition": `attachment; filename="${resolved.worktreeId}-session.tar"`,
+          "X-Worktree-Id": resolved.worktreeId,
+          "X-Session-Profile": resolved.session.profile || "",
+        });
+        res.end(tarData);
+      } catch (e: any) {
+        json(res, 500, { error: `tar failed: ${e.message}` });
+      }
+    },
+  },
+
+  // POST /session/:id/bundle — upload session JSONL bundle (tar), enqueue resume
+  {
+    method: "POST", pattern: /^\/session\/([a-f0-9][\w-]+)\/bundle$/, auth: "api",
+    handler: async (req, res, params, { store }) => {
+      const resolved = resolveSession(params[0], store);
+      if (!resolved?.worktreeId) { json(res, 404, { error: "not found or no worktree" }); return; }
+      const claudeProjectsDir = join(store.worktreesDir, resolved.worktreeId, "claude-projects");
+      mkdirSync(claudeProjectsDir, { recursive: true });
+
+      // Read tar from request body
+      const chunks: Buffer[] = [];
+      let total = 0;
+      const MAX = 50 * 1024 * 1024; // 50MB
+      await new Promise<void>((resolve, reject) => {
+        req.on("data", (c: Buffer) => {
+          total += c.length;
+          if (total > MAX) { req.destroy(); reject(new Error("bundle too large")); return; }
+          chunks.push(c);
+        });
+        req.on("end", resolve);
+        req.on("error", reject);
+      });
+
+      const { execFileSync } = await import("child_process");
+      try {
+        execFileSync("tar", ["-x", "-C", claudeProjectsDir], { input: Buffer.concat(chunks) });
+        json(res, 200, { ok: true, worktree_id: resolved.worktreeId });
+      } catch (e: any) {
+        json(res, 500, { error: `untar failed: ${e.message}` });
+      }
     },
   },
 
@@ -1382,11 +1442,50 @@ export function createHttpServer(
   docker: DockerService,
   interactive: InteractiveSessionManager,
   profileRoutes?: import("./profile-types.ts").RouteRegistration[],
+  dmRegistry?: import("./dm-registry.ts").DmRegistry,
 ) {
   const ctx = { store, docker, interactive };
 
+  // DM registry routes (only if registry provided)
+  const dmRoutes: Route[] = [];
+  if (dmRegistry) {
+    dmRoutes.push(
+      {
+        method: "GET", pattern: /^\/api\/dm-registry$/, auth: "api",
+        handler: async (_req, res) => {
+          json(res, 200, Object.fromEntries(dmRegistry.list()));
+        },
+      },
+      {
+        method: "POST", pattern: /^\/api\/dm-registry$/, auth: "api",
+        handler: async (req, res) => {
+          let body: any;
+          try { body = JSON.parse(await readBody(req)); }
+          catch { json(res, 400, { error: "invalid JSON" }); return; }
+          const { user_id, server_url, token, label } = body;
+          if (!user_id || !server_url) { json(res, 400, { error: "user_id and server_url required" }); return; }
+          dmRegistry.register(user_id, {
+            serverUrl: server_url,
+            token: token || undefined,
+            label: label || undefined,
+            registeredAt: new Date().toISOString(),
+          });
+          json(res, 200, { ok: true, user_id });
+        },
+      },
+      {
+        method: "DELETE", pattern: /^\/api\/dm-registry\/([A-Z0-9]+)$/, auth: "api",
+        handler: async (_req, res, params) => {
+          const userId = params[0];
+          const removed = dmRegistry.unregister(userId);
+          json(res, 200, { ok: true, removed });
+        },
+      },
+    );
+  }
+
   // Adapt profile routes (RouteContext style) into internal Route format
-  const allRoutes: Route[] = [...routes];
+  const allRoutes: Route[] = [...routes, ...dmRoutes];
   if (profileRoutes) {
     for (const pr of profileRoutes) {
       allRoutes.push({

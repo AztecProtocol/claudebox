@@ -12,7 +12,7 @@ export const MAX_CONCURRENT = 10;
 // ── Paths ───────────────────────────────────────────────────────
 export const REPO_DIR = process.env.CLAUDE_REPO_DIR ?? join(homedir(), "repo");
 export const SESSIONS_DIR = join(REPO_DIR, ".claude", "claudebox", "sessions");
-export const DOCKER_IMAGE = process.env.CLAUDEBOX_DOCKER_IMAGE || "claudebox:latest";
+export const DOCKER_IMAGE = process.env.CLAUDEBOX_DOCKER_IMAGE || "devbox:latest";
 export const CLAUDEBOX_DIR = join(homedir(), ".claudebox");
 export const CLAUDEBOX_SESSIONS_DIR = join(CLAUDEBOX_DIR, "sessions"); // legacy
 export const CLAUDEBOX_WORKTREES_DIR = join(CLAUDEBOX_DIR, "worktrees");

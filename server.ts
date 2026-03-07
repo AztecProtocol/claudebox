@@ -2,27 +2,29 @@
 /**
  * ClaudeBox Server — combined Slack listener + HTTP API.
  *
- * Slack: Socket Mode (app_mention, /claudebox slash command, DM)
- * HTTP:  POST /run, GET /session/:id, interactive session pages
+ * Modes:
+ *   Full:      Slack Socket Mode + HTTP API (default)
+ *   HTTP-only: node server.ts --http-only  (no Slack tokens required)
  *
  * Max 10 concurrent sessions.
  */
 
-// ── Aztec-specific config must load first (sets env defaults) ──
+// ── Aztec-specific config (sets env defaults before config.ts evaluates) ──
 import "./aztec/config.ts";
 
-import { App } from "@slack/bolt";
+const HTTP_ONLY = process.argv.includes("--http-only") || process.env.CLAUDEBOX_HTTP_ONLY === "1";
+
 import { WebSocketServer } from "ws";
 import {
   SLACK_BOT_TOKEN, SLACK_APP_TOKEN, HTTP_PORT, DOCKER_IMAGE, MAX_CONCURRENT,
-  SESSION_PAGE_USER, SESSION_PAGE_PASS, setChannelMaps,
+  SESSION_PAGE_USER, SESSION_PAGE_PASS, CLAUDEBOX_DIR, setChannelMaps,
 } from "./packages/libclaudebox/config.ts";
 import { SessionStore } from "./packages/libclaudebox/session-store.ts";
 import { DockerService } from "./packages/libclaudebox/docker.ts";
 import { InteractiveSessionManager } from "./packages/libclaudebox/interactive.ts";
-import { registerSlackHandlers } from "./packages/libclaudebox/slack/handlers.ts";
 import { createHttpServer } from "./packages/libclaudebox/http-routes.ts";
 import { QuestionStore } from "./packages/libclaudebox/question-store.ts";
+import { DmRegistry } from "./packages/libclaudebox/dm-registry.ts";
 import { setProfilesDir, buildChannelProfileMap, buildChannelBranchMap, collectProfileRoutes } from "./packages/libclaudebox/profile-loader.ts";
 import { join, dirname } from "path";
 
@@ -64,7 +66,7 @@ async function main() {
   console.log("ClaudeBox server starting...");
   console.log(`  Image: ${DOCKER_IMAGE}`);
   console.log(`  Profiles: ${requestedProfiles.length ? requestedProfiles.join(", ") : "(all)"}`);
-  console.log(`  Slack: Socket Mode`);
+  console.log(`  Mode: ${HTTP_ONLY ? "HTTP-only" : "Slack + HTTP"}`);
   console.log(`  HTTP:  port ${HTTP_PORT}`);
   console.log(`  Max concurrent: ${MAX_CONCURRENT}`);
 
@@ -84,6 +86,9 @@ async function main() {
   };
   runReconcile();
   setInterval(runReconcile, 60_000);
+
+  // ── DM registry ──
+  const dmRegistry = new DmRegistry(join(CLAUDEBOX_DIR, "dm-registry.json"));
 
   // ── Question expiry timer ──
   const questionStore = new QuestionStore();
@@ -126,34 +131,40 @@ async function main() {
   setTimeout(runGC, 30_000);
   setInterval(runGC, 6 * 60 * 60 * 1000); // every 6h instead of daily — more gradual
 
-  // ── Slack app (non-fatal — HTTP server should work even without Slack) ──
-  try {
-    const slackApp = new App({
-      token: SLACK_BOT_TOKEN,
-      appToken: SLACK_APP_TOKEN,
-      socketMode: true,
-      port: HTTP_PORT + 1, // Bolt creates its own HTTP server; avoid conflicting with ours
-    });
-    slackApp.error(async (error) => {
-      console.error(`[SLACK_ERROR] ${error.message || error}`);
-    });
-    slackApp.use(async ({ body, next }) => {
-      const eventType = (body as any)?.event?.type || (body as any)?.type || "unknown";
-      const channelType = (body as any)?.event?.channel_type || "";
-      console.log(`[SLACK_RAW] type=${eventType} channel_type=${channelType}`);
-      await next();
-    });
-    registerSlackHandlers(slackApp, store, docker);
-    await slackApp.start();
-    console.log("  Slack connected.");
-  } catch (e: any) {
-    console.warn(`  Slack failed: ${e.message} (HTTP server will still run)`);
+  // ── Slack app (skipped in HTTP-only mode) ──
+  if (!HTTP_ONLY) {
+    try {
+      const { App } = await import("@slack/bolt");
+      const { registerSlackHandlers } = await import("./packages/libclaudebox/slack/handlers.ts");
+      const slackApp = new App({
+        token: SLACK_BOT_TOKEN,
+        appToken: SLACK_APP_TOKEN,
+        socketMode: true,
+        port: HTTP_PORT + 1, // Bolt creates its own HTTP server; avoid conflicting with ours
+      });
+      slackApp.error(async (error) => {
+        console.error(`[SLACK_ERROR] ${error.message || error}`);
+      });
+      slackApp.use(async ({ body, next }) => {
+        const eventType = (body as any)?.event?.type || (body as any)?.type || "unknown";
+        const channelType = (body as any)?.event?.channel_type || "";
+        console.log(`[SLACK_RAW] type=${eventType} channel_type=${channelType}`);
+        await next();
+      });
+      registerSlackHandlers(slackApp, store, docker, dmRegistry);
+      await slackApp.start();
+      console.log("  Slack connected.");
+    } catch (e: any) {
+      console.warn(`  Slack failed: ${e.message} (HTTP server will still run)`);
+    }
+  } else {
+    console.log("  Slack: skipped (HTTP-only mode)");
   }
 
   // ── HTTP server (with profile routes) ──
   const profileRoutes = await collectProfileRoutes(requestedProfiles.length ? requestedProfiles : undefined);
   if (profileRoutes.length) console.log(`  Profile routes: ${profileRoutes.length} endpoints`);
-  const httpServer = createHttpServer(store, docker, interactive, profileRoutes);
+  const httpServer = createHttpServer(store, docker, interactive, profileRoutes, dmRegistry);
 
   // ── WebSocket upgrade (requires basic auth) ──
   const wss = new WebSocketServer({ noServer: true });

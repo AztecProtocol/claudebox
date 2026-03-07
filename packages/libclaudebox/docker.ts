@@ -178,6 +178,7 @@ export class DockerService {
     const sidecarEntrypoint = `/opt/claudebox/profiles/${profileDir}/mcp-sidecar.ts`;
     const claudeMdPath = `/opt/claudebox/profiles/${profileDir}/container-claude.md`;
     const dockerConfig = await getDockerConfig(profileDir);
+    const containerImage = dockerConfig.image || DOCKER_IMAGE;
     const mountRef = dockerConfig.mountReferenceRepo !== false; // default true
 
     console.log(`[DOCKER] Starting session ${logId} (worktree=${worktreeId} profile=${profileDir})`);
@@ -258,7 +259,7 @@ export class DockerService {
 
       await this.docker.createContainer({
         name: sidecarName,
-        Image: DOCKER_IMAGE,
+        Image: containerImage,
         Entrypoint: [sidecarEntrypoint],
         User: uid,
         Env: [
@@ -324,6 +325,7 @@ export class DockerService {
         "-e", `CLAUDEBOX_SIDECAR_PORT=9801`,
         "-e", `CLAUDEBOX_CONTAINER_CLAUDE_MD=${claudeMdPath}`,
         "-e", `PARENT_LOG_ID=${logId}`,
+        "-e", `CLAUDEBOX_MODEL=${opts.model || ""}`,
       ];
       // Profile-specific extra env vars
       if (dockerConfig.extraEnv) {
@@ -343,7 +345,7 @@ export class DockerService {
         }
       }
 
-      claudeArgs.push("--entrypoint", "bash", DOCKER_IMAGE, "/opt/claudebox/container-entrypoint.sh");
+      claudeArgs.push("--entrypoint", "bash", containerImage, "/opt/claudebox/container-entrypoint.sh");
       console.log(`[DOCKER] Starting Claude container: ${claudeName}`);
 
       // Run Claude container (blocking, stream output)
@@ -484,6 +486,7 @@ export class DockerService {
     const sidecarEntrypoint = `/opt/claudebox/profiles/${profileDir}/mcp-sidecar.ts`;
     const claudeMdPath = `/opt/claudebox/profiles/${profileDir}/container-claude.md`;
     const dockerConfig = await getDockerConfig(profileDir);
+    const containerImage = dockerConfig.image || DOCKER_IMAGE;
     const mountRef = dockerConfig.mountReferenceRepo !== false;
 
     console.log(`[INTERACTIVE] Network: ${networkName}`);
@@ -515,7 +518,7 @@ export class DockerService {
       const intServerUrl = `http://host.docker.internal:${HTTP_PORT}`;
       await this.docker.createContainer({
         name: sidecarName,
-        Image: DOCKER_IMAGE,
+        Image: containerImage,
         Entrypoint: [sidecarEntrypoint],
         User: uid,
         Env: [
@@ -562,7 +565,7 @@ export class DockerService {
       }
       await this.docker.createContainer({
         name: containerName,
-        Image: DOCKER_IMAGE,
+        Image: containerImage,
         Entrypoint: ["bash", "/opt/claudebox/container-interactive.sh"],
         User: uid,
         Env: [

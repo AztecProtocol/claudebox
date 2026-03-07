@@ -180,6 +180,25 @@ export class ServerClient {
     });
   }
 
+  // ── Questions (sidecar → server) ──────────────────────────────
+
+  /**
+   * Post questions to the server's question store.
+   * Returns { question_ids: string[] } on success.
+   */
+  async postQuestions(worktreeId: string, questions: any[]): Promise<{ question_ids: string[] }> {
+    if (!this.hasServer) {
+      throw new Error("No server configured — cannot post questions");
+    }
+    return this.serverFetch("/api/internal/questions", {
+      body: {
+        worktree_id: worktreeId,
+        questions,
+        session: this.sessionMeta,
+      },
+    });
+  }
+
   // ── Session metadata ─────────────────────────────────────────
 
   updateSessionMeta(meta: Record<string, string>): void {
