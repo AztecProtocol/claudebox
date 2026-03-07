@@ -8,6 +8,6 @@
     ".": "./index.ts",
     "./mcp": "./mcp/base.ts",
     "./config": "./config.ts",
-    "./profile-types": "./profile-types.ts"
+    "./plugin": "./plugin.ts"
   }
 }

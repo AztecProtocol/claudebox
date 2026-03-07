@@ -1,6 +1,6 @@
 import type { ParseResult, SessionMeta } from "./types.ts";
 import { CLAUDEBOX_HOST, LOG_BASE_URL } from "./config.ts";
-import { discoverProfiles } from "./profile-loader.ts";
+import { discoverPlugins } from "./plugin-loader.ts";
 
 export function truncate(s: string, n = 80): string {
   return s.length <= n ? s : s.slice(0, n - 3) + "...";
@@ -44,7 +44,7 @@ export interface ParsedKeywords {
 }
 
 // Profile keywords are derived from discovered profiles (excludes "default")
-const PROFILE_KEYWORDS = discoverProfiles().filter(p => p !== "default");
+const PROFILE_KEYWORDS = discoverPlugins().filter(p => p !== "default");
 
 /** Detect keywords (new-session, quiet, loud, ci-allow, profile names) at start of prompt, in any order. */
 export function parseKeywords(parsed: ParseResult): ParsedKeywords {

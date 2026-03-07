@@ -14,8 +14,8 @@ import {
   buildLogUrl,
   incrActiveSessions, decrActiveSessions,
 } from "./config.ts";
-import { getDockerConfig } from "./profile-loader.ts";
-import type { DockerConfig } from "./profile-types.ts";
+import { getDockerConfig } from "./plugin-loader.ts";
+import type { DockerConfig } from "./plugin.ts";
 
 // Container user — determined by the Docker image
 const CONTAINER_USER = process.env.CLAUDEBOX_CONTAINER_USER || "claude";

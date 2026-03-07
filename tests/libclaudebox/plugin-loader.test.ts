@@ -40,22 +40,24 @@ describe("plugin-loader", () => {
     assert.equal(plugin.name, "bare");
   });
 
-  it("loads legacy host-manifest as plugin shim", async () => {
-    mkdirSync(join(TEST_DIR, "legacy"));
-    writeFileSync(join(TEST_DIR, "legacy", "mcp-sidecar.ts"), "// sidecar");
-    writeFileSync(join(TEST_DIR, "legacy", "host-manifest.ts"), `
+  it("loads plugin.ts with full config", async () => {
+    mkdirSync(join(TEST_DIR, "full"));
+    writeFileSync(join(TEST_DIR, "full", "plugin.ts"), `
       export default {
-        name: "legacy",
+        name: "full",
         docker: { mountReferenceRepo: false },
         channels: ["C123"],
         branchOverrides: { "C123": "develop" },
+        requiredCredentials: ["GH_TOKEN"],
+        setup() {},
       };
     `);
-    const plugin = await loadPlugin("legacy");
-    assert.equal(plugin.name, "legacy");
+    const plugin = await loadPlugin("full");
+    assert.equal(plugin.name, "full");
     assert.equal(plugin.docker?.mountReferenceRepo, false);
     assert.deepEqual(plugin.channels, ["C123"]);
     assert.deepEqual(plugin.branchOverrides, { "C123": "develop" });
+    assert.deepEqual(plugin.requiredCredentials, ["GH_TOKEN"]);
   });
 
   it("returns empty list for nonexistent dir", () => {

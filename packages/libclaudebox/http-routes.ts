@@ -1441,7 +1441,7 @@ export function createHttpServer(
   store: SessionStore,
   docker: DockerService,
   interactive: InteractiveSessionManager,
-  profileRoutes?: import("./profile-types.ts").RouteRegistration[],
+  pluginRuntime?: import("./plugin.ts").PluginRuntime,
   dmRegistry?: import("./dm-registry.ts").DmRegistry,
 ) {
   const ctx = { store, docker, interactive };
@@ -1484,15 +1484,18 @@ export function createHttpServer(
     );
   }
 
-  // Adapt profile routes (RouteContext style) into internal Route format
+  // Adapt plugin routes into internal Route format
   const allRoutes: Route[] = [...routes, ...dmRoutes];
-  if (profileRoutes) {
-    for (const pr of profileRoutes) {
+  if (pluginRuntime) {
+    for (const pr of pluginRuntime.getRoutes()) {
+      // Convert Express-style path to regex: "/audit/coverage" → /^\/audit\/coverage$/
+      // Handle :param patterns: "/questions/:id/answer" → /^\/questions\/([^/]+)\/answer$/
+      const regexStr = pr.path.replace(/:([a-zA-Z_]+)/g, "([^/]+)").replace(/\//g, "\\/");
       allRoutes.push({
         method: pr.method,
-        pattern: pr.pattern,
+        pattern: new RegExp(`^${regexStr}$`),
         auth: pr.auth,
-        handler: async (req, res, params) => pr.handler({ req, res, params }),
+        handler: async (req, res, params) => pr.handler({ req, res, params, store, docker }),
       });
     }
   }

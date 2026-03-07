@@ -25,7 +25,8 @@ import { InteractiveSessionManager } from "./packages/libclaudebox/interactive.t
 import { createHttpServer } from "./packages/libclaudebox/http-routes.ts";
 import { QuestionStore } from "./packages/libclaudebox/question-store.ts";
 import { DmRegistry } from "./packages/libclaudebox/dm-registry.ts";
-import { setProfilesDir, buildChannelProfileMap, buildChannelBranchMap, collectProfileRoutes } from "./packages/libclaudebox/profile-loader.ts";
+import { setPluginsDir, buildChannelProfileMap, buildChannelBranchMap, loadAllPlugins } from "./packages/libclaudebox/plugin-loader.ts";
+import { PluginRuntime } from "./packages/libclaudebox/plugin.ts";
 import { join, dirname } from "path";
 
 // Prevent unhandled Slack/WebSocket rejections from crashing the process
@@ -46,7 +47,7 @@ async function main() {
 
   // ── Discover profiles and build channel maps ──
   const rootDir = dirname(import.meta.url.replace("file://", ""));
-  setProfilesDir(join(rootDir, "profiles"));
+  setPluginsDir(join(rootDir, "profiles"));
 
   const profileMap = await buildChannelProfileMap();
   const branchMap = await buildChannelBranchMap();
@@ -161,10 +162,17 @@ async function main() {
     console.log("  Slack: skipped (HTTP-only mode)");
   }
 
-  // ── HTTP server (with profile routes) ──
-  const profileRoutes = await collectProfileRoutes(requestedProfiles.length ? requestedProfiles : undefined);
-  if (profileRoutes.length) console.log(`  Profile routes: ${profileRoutes.length} endpoints`);
-  const httpServer = createHttpServer(store, docker, interactive, profileRoutes, dmRegistry);
+  // ── Load plugins and set up runtime ──
+  const plugins = await loadAllPlugins(requestedProfiles.length ? requestedProfiles : undefined);
+  const pluginRuntime = new PluginRuntime(docker, store);
+  for (const plugin of plugins) {
+    await pluginRuntime.loadPlugin(plugin);
+  }
+  const pluginRoutes = pluginRuntime.getRoutes();
+  if (pluginRoutes.length) console.log(`  Plugin routes: ${pluginRoutes.length} endpoints`);
+
+  // ── HTTP server ──
+  const httpServer = createHttpServer(store, docker, interactive, pluginRuntime, dmRegistry);
 
   // ── WebSocket upgrade (requires basic auth) ──
   const wss = new WebSocketServer({ noServer: true });

@@ -9,7 +9,26 @@ import type { IncomingMessage, ServerResponse } from "http";
 import type { SessionStore } from "./session-store.ts";
 import type { DockerService } from "./docker.ts";
 import type { SessionMeta, ContainerSessionOpts } from "./types.ts";
-import type { DockerConfig, StatSchema } from "./profile-types.ts";
+
+// ── Shared types ──────────────────────────────────────────────────
+
+/** Docker sandbox configuration for a plugin/profile. */
+export interface DockerConfig {
+  /** Docker image to use (overrides global default) */
+  image?: string;
+  /** Mount the local .git as reference repo (default: true) */
+  mountReferenceRepo?: boolean;
+  /** Extra bind mounts: ["host:container:mode", ...] */
+  extraBinds?: string[];
+  /** Extra env vars: ["KEY=value", ...] */
+  extraEnv?: string[];
+}
+
+export interface StatSchema {
+  name: string;
+  description: string;
+  fields: Array<{ name: string; type: string; description: string }>;
+}
 
 // ── Slack event types ─────────────────────────────────────────────
 
@@ -82,6 +101,9 @@ export interface Plugin {
 
   /** Channel-specific base branch overrides */
   branchOverrides?: Record<string, string>;
+
+  /** Environment variables this plugin requires (e.g. ["GH_TOKEN", "LINEAR_API_KEY"]) */
+  requiredCredentials?: string[];
 
   /** Whether this plugin requires a server (can't run locally) */
   requiresServer?: boolean;
