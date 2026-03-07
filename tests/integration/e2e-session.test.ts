@@ -33,6 +33,7 @@ const REF_REPO_DIR = join(TEST_DIR, "reference-repo");
 
 // Set env vars BEFORE any imports that might trigger config.ts
 process.env.CLAUDE_REPO_DIR = REF_REPO_DIR;
+process.env.CLAUDEBOX_USE_MOCK = "1";
 if (!process.env.CLAUDEBOX_DOCKER_IMAGE) {
   process.env.CLAUDEBOX_DOCKER_IMAGE = "aztecprotocol/devbox:3.0";
 }
