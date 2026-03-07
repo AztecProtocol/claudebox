@@ -123,7 +123,7 @@ describe("local session lifecycle", () => {
     assert.match(readme, /Test Repo/);
   });
 
-  it("mock-claude runs in workspace and produces session artifacts", async () => {
+  it("mock-claude runs in workspace and sees repo files", async () => {
     const { SessionStore } = await import("../../packages/libclaudebox/session-store.ts");
     const store = new SessionStore(SESSIONS_DIR, WORKTREES_DIR);
     const wt = store.getOrCreateWorktree();
@@ -137,9 +137,13 @@ describe("local session lifecycle", () => {
     });
 
     assert.equal(r.status, 0, `mock-claude failed. stderr: ${r.stderr}`);
-    assert.match(r.stdout, /mock-claude/, "should see mock-claude output");
 
-    // mock-claude writes output files
+    // mock-claude lists workspace files — verify it sees the repo
+    assert.match(r.stdout, /workspace files:.*README\.md/, "mock-claude sees README.md in workspace");
+    assert.match(r.stdout, /workspace files:.*src/, "mock-claude sees src/ in workspace");
+    assert.match(r.stdout, /workspace files:.*\.git/, "mock-claude sees .git in workspace");
+
+    // mock-claude writes output files into workspace
     assert.ok(existsSync(join(wt.workspaceDir, "mock-output.txt")), "mock-output.txt exists");
     assert.ok(existsSync(join(wt.workspaceDir, "activity.jsonl")), "activity.jsonl exists");
 

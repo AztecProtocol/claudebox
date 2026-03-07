@@ -16,7 +16,7 @@
  * init, tool_use, assistant, and result messages.
  */
 
-import { mkdirSync, writeFileSync, appendFileSync, existsSync } from "fs";
+import { mkdirSync, writeFileSync, appendFileSync, existsSync, readdirSync } from "fs";
 import { join } from "path";
 import { randomUUID } from "crypto";
 
@@ -78,8 +78,15 @@ async function sleep(ms: number): Promise<void> {
 async function main() {
   console.log(`[mock-claude] Session ${SESSION_ID}`);
   console.log(`[mock-claude] Prompt: ${PROMPT.slice(0, 100)}`);
+  console.log(`[mock-claude] cwd: ${process.cwd()}`);
   if (RESUME_ID) console.log(`[mock-claude] Resuming: ${RESUME_ID}`);
   if (cliModel) console.log(`[mock-claude] Model: ${cliModel}`);
+
+  // List workspace files so tests can verify repo is mounted
+  try {
+    const files = readdirSync(process.cwd());
+    console.log(`[mock-claude] workspace files: ${files.join(", ")}`);
+  } catch {}
 
   // Write init event
   writeJsonl(sessionFile, {
