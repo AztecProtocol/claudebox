@@ -258,6 +258,18 @@ export class SessionStore {
     writeFileSync(metaPath, JSON.stringify(meta, null, 2));
   }
 
+  /** Collect all distinct tags across all worktrees. */
+  allTags(): string[] {
+    const tags = new Set<string>();
+    try {
+      for (const d of readdirSync(this.worktreesDir, { withFileTypes: true })) {
+        if (!d.isDirectory()) continue;
+        for (const t of this.getWorktreeTags(d.name)) tags.add(t);
+      }
+    } catch {}
+    return [...tags].sort();
+  }
+
   /** Delete a worktree directory to free disk space. Does NOT delete session JSON records. */
   deleteWorktree(worktreeId: string): void {
     this.validateId(worktreeId, "worktreeId");

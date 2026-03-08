@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
 import { SignJWT, jwtVerify, type JWTPayload } from "jose";
-import { API_SECRET, SESSION_PAGE_USER, SESSION_PAGE_PASS, MAX_CONCURRENT, getActiveSessions, SLACK_BOT_TOKEN, getChannelBranches, DEFAULT_BASE_BRANCH, GH_TOKEN } from "./config.ts";
+import { API_SECRET, SESSION_PAGE_USER, SESSION_PAGE_PASS, MAX_CONCURRENT, getActiveSessions, SLACK_BOT_TOKEN, getChannelBranches, DEFAULT_BASE_BRANCH, GH_TOKEN, CLAUDEBOX_DIR } from "./config.ts";
 import { existsSync, readFileSync, readdirSync, statSync, watch, mkdirSync } from "fs";
 import { join } from "path";
 import type { SessionStore } from "./session-store.ts";
@@ -9,9 +9,9 @@ import type { SessionMeta, Artifact, EnrichedWorkspace, ThreadGroup, ChannelGrou
 import { workspacePageHTML, dashboardHTML, auditDashboardHTML, personalDashboardHTML, taggedDashboardHTML, type WorkspaceCard } from "./html/templates.ts";
 import { parseMessage, parseKeywords, validateResumeSession, truncate, prKeyFromUrl } from "./util.ts";
 import { QuestionStore } from "./question-store.ts";
-import { generateTags } from "./tagger.ts";
+import { tagBatch } from "./tagger.ts";
 import { updateSlackStatus } from "./slack/helpers.ts";
-import { getAllTagCategories } from "./plugin-loader.ts";
+import { getAllTagCategories, discoverPlugins } from "./plugin-loader.ts";
 
 // ── Helpers ─────────────────────────────────────────────────────
 
@@ -96,40 +96,34 @@ function sendUnauthorized(res: ServerResponse, _type: "api" | "session"): void {
 
 interface SlackChannelInfo {
   name: string;
-  isDm: boolean;  // DM or MPIM (group DM)
+  isDm: boolean;
 }
-const channelInfoCache = new Map<string, SlackChannelInfo>();
 
-async function getSlackChannelInfo(channelId: string): Promise<SlackChannelInfo> {
-  if (channelInfoCache.has(channelId)) return channelInfoCache.get(channelId)!;
+// Static channel name map — loaded from ~/.claudebox/channel-cache.json
+// Populate via: scripts/resolve-channels.sh or manually edit the JSON file
+const channelNameMap = new Map<string, SlackChannelInfo>();
+try {
+  const data = JSON.parse(readFileSync(join(CLAUDEBOX_DIR, "channel-cache.json"), "utf-8"));
+  for (const [k, v] of Object.entries(data)) channelNameMap.set(k, v as SlackChannelInfo);
+  console.log(`[CHANNELS] Loaded ${channelNameMap.size} channel names`);
+} catch {}
 
-  // D-prefix channels are always DMs
-  if (channelId.startsWith("D")) {
-    const info = { name: "", isDm: true };
-    channelInfoCache.set(channelId, info);
-    return info;
+function getSlackChannelInfo(channelId: string): SlackChannelInfo | null {
+  if (channelNameMap.has(channelId)) return channelNameMap.get(channelId)!;
+  if (channelId.startsWith("D")) return { name: "", isDm: true };
+  return null; // unknown channel — no info
+}
+
+/** Strip "Slack thread context..." suffix from prompts for display */
+function stripSlackContext(prompt: string): string {
+  // Match any variant: "Slack thread context:", "Slack thread context (recent):", etc.
+  const match = prompt.match(/\n*Slack thread context[^\n]*:/);
+  if (match && match.index != null && match.index > 0) {
+    return prompt.slice(0, match.index).trim();
   }
-
-  if (!SLACK_BOT_TOKEN) {
-    return { name: channelId, isDm: false };
-  }
-
-  try {
-    const r = await fetch(`https://slack.com/api/conversations.info?channel=${channelId}`, {
-      headers: { Authorization: `Bearer ${SLACK_BOT_TOKEN}` },
-    });
-    const d = await r.json() as any;
-    if (d.ok && d.channel) {
-      const info: SlackChannelInfo = {
-        name: d.channel.name || channelId,
-        isDm: !!(d.channel.is_im || d.channel.is_mpim),
-      };
-      channelInfoCache.set(channelId, info);
-      return info;
-    }
-  } catch {}
-
-  return { name: channelId, isDm: false };
+  // Also strip if it starts with it (no user message before context)
+  if (prompt.startsWith("Slack thread context")) return "";
+  return prompt;
 }
 
 // ── Dashboard builder ──────────────────────────────────────────
@@ -143,10 +137,13 @@ async function buildDashboardData(store: SessionStore, profileFilter?: string): 
     // Profile filtering: when profileFilter is set, only include matching sessions;
     // when unset (default dashboard), exclude audit sessions
     const sessionProfile = s.profile || "";
-    if (profileFilter) {
+    if (profileFilter === "*") {
+      // show all
+    } else if (profileFilter === "default" || !profileFilter) {
+      // "default" catches sessions with no profile or profile="default"
+      if (sessionProfile && sessionProfile !== "default") continue;
+    } else if (profileFilter) {
       if (sessionProfile !== profileFilter) continue;
-    } else {
-      if (sessionProfile) continue; // exclude profiled sessions from default dashboard
     }
     const key = s.worktree_id || `_single_${s._log_id}`;
     if (!worktreeMap.has(key)) worktreeMap.set(key, { sessions: [], worktreeId: s.worktree_id || "" });
@@ -160,9 +157,7 @@ async function buildDashboardData(store: SessionStore, profileFilter?: string): 
     if (channelId) channelIds.add(channelId);
   }
   const channelInfoMap = new Map<string, SlackChannelInfo>();
-  await Promise.all([...channelIds].map(async (id) => {
-    channelInfoMap.set(id, await getSlackChannelInfo(id));
-  }));
+  for (const id of channelIds) channelInfoMap.set(id, getSlackChannelInfo(id));
 
   // Build flat workspace list
   const workspaces: WorkspaceCard[] = [];
@@ -171,8 +166,22 @@ async function buildDashboardData(store: SessionStore, profileFilter?: string): 
     const channelId = latest.slack_channel || "";
 
     const info = channelInfoMap.get(channelId);
+    if (info?.isDm) continue; // skip DMs and group DMs
     const meta = worktreeId ? store.getWorktreeMeta(worktreeId) : {};
-    const channelName = (info?.isDm ? "DM" : info?.name) || latest.slack_channel_name || "";
+    const channelName = info?.name || latest.slack_channel_name || "";
+
+    // Determine origin
+    const slackChannel = latest.slack_channel || "";
+    const slackThread = latest.slack_thread_ts || "";
+    const link = latest.link || "";
+    let origin = "http";
+    let threadKey: string | undefined;
+    if (slackChannel && slackThread) {
+      origin = "slack";
+      threadKey = `${slackChannel}:${slackThread}`;
+    } else if (link) {
+      origin = "github";
+    }
 
     workspaces.push({
       worktreeId: worktreeId || latest._log_id || "?",
@@ -182,12 +191,15 @@ async function buildDashboardData(store: SessionStore, profileFilter?: string): 
       status: latest.status || "unknown",
       exitCode: latest.exit_code ?? null,
       user: latest.user || "unknown",
-      prompt: (latest.prompt || "").slice(0, 120),
+      prompt: stripSlackContext(latest.prompt || ""),
       started: latest.started || null,
       baseBranch: latest.base_branch || "next",
       channelName,
       runCount: sessions.length,
       profile: latest.profile || "",
+      origin,
+      threadKey,
+      link: link || undefined,
     });
   }
 
@@ -599,6 +611,67 @@ const routes: Route[] = [
     handler: async (_req, res) => {
       const branches = [DEFAULT_BASE_BRANCH, ...Object.values(getChannelBranches())];
       json(res, 200, { branches: [...new Set(branches)] });
+    },
+  },
+
+  // GET /api/profiles — available profile names
+  {
+    method: "GET", pattern: /^\/api\/profiles$/, auth: "basic",
+    handler: async (_req, res) => {
+      json(res, 200, { profiles: discoverPlugins() });
+    },
+  },
+
+  // GET /api/tags — all known tags
+  {
+    method: "GET", pattern: /^\/api\/tags$/, auth: "basic",
+    handler: async (_req, res, _params, { store }) => {
+      json(res, 200, { tags: store.allTags() });
+    },
+  },
+
+  // POST /api/tags — tag untagged workspaces via claude. ?limit=N to cap (default: all)
+  {
+    method: "POST", pattern: /^\/api\/tags$/, auth: "basic",
+    handler: async (req, res, _params, { store }) => {
+      const url = new URL(req.url || "", "http://localhost");
+      const limit = parseInt(url.searchParams.get("limit") || "0", 10) || 0;
+
+      const all = store.listAll();
+      const untagged: { id: string; prompt: string }[] = [];
+      const seen = new Set<string>();
+      for (const s of all) {
+        const wid = s.worktree_id;
+        if (!wid || seen.has(wid)) continue;
+        seen.add(wid);
+        if (store.getWorktreeTags(wid).length > 0) continue;
+        if (!s.prompt) continue;
+        untagged.push({ id: wid, prompt: s.prompt });
+        if (limit > 0 && untagged.length >= limit) break;
+      }
+
+      if (untagged.length === 0) { json(res, 200, { tagged: 0, remaining: 0 }); return; }
+
+      const existing = store.allTags();
+      let tagged = 0;
+      const results = await tagBatch(untagged, existing);
+      for (const [wid, tags] of results) {
+        store.setWorktreeTags(wid, tags);
+        tagged++;
+      }
+
+      // Count remaining untagged
+      let remaining = 0;
+      const seenAll = new Set<string>();
+      for (const s of all) {
+        const wid = s.worktree_id;
+        if (!wid || seenAll.has(wid)) continue;
+        seenAll.add(wid);
+        if (store.getWorktreeTags(wid).length === 0 && s.prompt) remaining++;
+      }
+
+      console.log(`[TAGGER] Tagged ${tagged}, ${remaining} remaining`);
+      json(res, 200, { tagged, remaining });
     },
   },
 
@@ -1029,10 +1102,7 @@ const routes: Route[] = [
       for (const s of all) {
         if (s.slack_channel) channelIds.add(s.slack_channel);
       }
-      const channelNameMap = new Map<string, SlackChannelInfo>();
-      await Promise.all([...channelIds].map(async (id) => {
-        channelNameMap.set(id, await getSlackChannelInfo(id));
-      }));
+      // Channel names resolved from static cache via getSlackChannelInfo()
 
       // Group by worktree first (like buildDashboardData), then enrich
       const worktreeMap = new Map<string, SessionMeta[]>();
@@ -1048,7 +1118,7 @@ const routes: Route[] = [
         const oldest = sessions[sessions.length - 1]; // original session
         const worktreeId = latest.worktree_id || latest._log_id || "";
         const channelId = (oldest || latest).slack_channel || "";
-        const info = channelNameMap.get(channelId);
+        const info = getSlackChannelInfo(channelId);
         const channelName = (info?.isDm ? "DM" : info?.name) || (oldest || latest).slack_channel_name || "";
         const meta = worktreeId && latest.worktree_id ? store.getWorktreeMeta(worktreeId) : {};
 
@@ -1182,17 +1252,12 @@ const routes: Route[] = [
         return;
       }
 
-      // Build context for tagging
       const session = store.findByWorktreeId(worktreeId);
       const prompt = session?.prompt || "";
-      const activity = store.readActivity(worktreeId);
-      const activitySummary = activity
-        .filter(a => a.type === "response" || a.type === "artifact")
-        .slice(0, 5)
-        .map(a => `[${a.type}] ${a.text.slice(0, 200)}`)
-        .join("\n");
+      if (!prompt) { json(res, 200, { tags: [], cached: false }); return; }
 
-      const tags = await generateTags(prompt, activitySummary);
+      const results = await tagBatch([{ id: worktreeId, prompt }], store.allTags());
+      const tags = results.get(worktreeId) || [];
       store.setWorktreeTags(worktreeId, tags);
       json(res, 200, { tags, cached: false });
     },

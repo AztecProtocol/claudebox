@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 
 import {
   truncate, extractHashFromUrl, parseMessage, parseKeywords,
-  validateResumeSession, sessionUrl, worktreeIdFromLogUrl,
+  validateResumeSession, sessionUrl,
   hashFromLogUrl, prKeyFromUrl,
 } from "../../packages/libclaudebox/util.ts";
 import type { SessionMeta, ParseResult } from "../../packages/libclaudebox/types.ts";
@@ -196,22 +196,6 @@ describe("validateResumeSession", () => {
 describe("sessionUrl", () => {
   it("builds URL from worktree ID", () => {
     assert.equal(sessionUrl("abc123"), "https://claudebox.test/s/abc123");
-  });
-});
-
-describe("worktreeIdFromLogUrl", () => {
-  it("extracts worktree ID from new format", () => {
-    assert.equal(
-      worktreeIdFromLogUrl("http://ci.example.com/d9441073aae158ae-3"),
-      "d9441073aae158ae",
-    );
-  });
-
-  it("returns empty string for legacy format", () => {
-    assert.equal(
-      worktreeIdFromLogUrl("http://ci.example.com/" + "a".repeat(32)),
-      "",
-    );
   });
 });
 

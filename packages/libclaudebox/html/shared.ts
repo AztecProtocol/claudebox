@@ -198,4 +198,10 @@ export interface WorkspaceCard {
   channelName: string;
   runCount: number;
   profile?: string;
+  /** Origin type: "slack", "github", "http" */
+  origin: string;
+  /** Slack thread key "channel:ts" for grouping */
+  threadKey?: string;
+  /** GitHub link (PR or action run URL) */
+  link?: string;
 }

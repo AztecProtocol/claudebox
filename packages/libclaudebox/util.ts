@@ -92,14 +92,6 @@ export function sessionUrl(worktreeId: string): string {
   return `https://${CLAUDEBOX_HOST}/s/${worktreeId}`;
 }
 
-/** Extract worktree ID from a log URL. Handles both new (worktreeId-seq) and legacy (32hex) formats. */
-export function worktreeIdFromLogUrl(logUrl: string): string {
-  // New format: ci.aztec-labs.com/<worktreeId>-<seq>
-  const m1 = logUrl.match(/\/([a-f0-9]{16})-\d+$/);
-  if (m1) return m1[1];
-  // Legacy: ci.aztec-labs.com/<32hex> — no worktree ID embedded
-  return "";
-}
 
 /** Extract the full log ID from a log URL. */
 export function hashFromLogUrl(logUrl: string): string {

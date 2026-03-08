@@ -1,48 +1,71 @@
 /**
- * Auto-tagging module — uses Claude Haiku to generate tags for workspaces.
- * Tags are cached in worktree meta.json so Haiku is only called once per workspace.
+ * Auto-tagging — uses `claude -p` (no tools, stdin only) to tag workspaces.
+ * Tags are cached in worktree meta.json.
  */
 
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";
+import { spawn } from "child_process";
+import { CLAUDE_BINARY } from "./config.ts";
 
-export async function generateTags(prompt: string, activitySummary: string): Promise<string[]> {
-  if (!ANTHROPIC_API_KEY) return ["untagged"];
+/** Run claude -p with prompt on stdin. No shell, no tools, no argument injection. */
+function runClaudeNoTools(prompt: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    const proc = spawn(CLAUDE_BINARY, [
+      "-p",
+      "--model", "haiku",
+      "--output-format", "text",
+      "--tools", "",
+      "--no-session-persistence",
+    ], {
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: 30_000,
+      env: { ...process.env, CLAUDECODE: undefined, CLAUDE_CODE_ENTRYPOINT: undefined },
+    });
+    proc.stdout.on("data", (d: Buffer) => chunks.push(d));
+    proc.on("error", reject);
+    proc.on("close", (code) => {
+      const out = Buffer.concat(chunks).toString().trim();
+      if (code !== 0) return reject(new Error(`claude exited ${code}: ${out.slice(0, 200)}`));
+      resolve(out);
+    });
+    proc.stdin.end(prompt);
+  });
+}
+
+const CLEAN = (s: string) => s.toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 30);
+
+/**
+ * Tag a batch of sessions. Reuses existing tags when appropriate, invents new ones when needed.
+ * Returns a map of id → tags array.
+ */
+export async function tagBatch(
+  items: { id: string; prompt: string }[],
+  existingTags: string[],
+): Promise<Map<string, string[]>> {
+  const result = new Map<string, string[]>();
+  if (items.length === 0) return result;
+
+  const tagList = existingTags.length > 0
+    ? `Existing tags (prefer reusing these): ${existingTags.join(", ")}\n`
+    : "";
+
+  const promptList = items.map((it, i) => `${i + 1}. ${it.prompt.slice(0, 200)}`).join("\n");
 
   try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "x-api-key": ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 200,
-        system: "Generate 2-5 short lowercase tags for this coding session. Tags should categorize the work area (e.g. crypto, ci, docs, tests) and task type (e.g. bug, feature, refactor, cleanup). Return ONLY a JSON array of strings, nothing else.",
-        messages: [{
-          role: "user",
-          content: `Task: ${prompt}\n\nRecent activity:\n${activitySummary}`,
-        }],
-      }),
+    const text = await runClaudeNoTools(
+      `Tag each numbered coding task with 1-3 short lowercase tags for dashboard grouping.\n${tagList}You may also invent new tags. Return ONLY a JSON array of arrays (one inner array per task, same order). Example: [["ci","testing"],["crypto","bug-fix"]]\n\n${promptList}`
+    );
+    const parsed: string[][] = JSON.parse(text);
+    items.forEach((it, i) => {
+      const tags = (parsed[i] || [])
+        .filter((t: any): t is string => typeof t === "string")
+        .map(CLEAN)
+        .filter(t => t.length > 0)
+        .slice(0, 3);
+      if (tags.length > 0) result.set(it.id, tags);
     });
-
-    if (!res.ok) {
-      console.warn(`[TAGGER] Haiku API returned ${res.status}`);
-      return ["untagged"];
-    }
-
-    const data = await res.json() as any;
-    const text = data.content?.[0]?.text || "[]";
-    const tags = JSON.parse(text);
-    if (!Array.isArray(tags) || tags.length === 0) return ["untagged"];
-    return tags
-      .filter((t: any): t is string => typeof t === "string")
-      .map((t: string) => t.toLowerCase().replace(/[^a-z0-9-]/g, ""))
-      .filter((t: string) => t.length > 0)
-      .slice(0, 5);
   } catch (e) {
-    console.warn(`[TAGGER] Failed to generate tags: ${e}`);
-    return ["untagged"];
+    console.warn(`[TAGGER] Batch tagging failed: ${e}`);
   }
+  return result;
 }
