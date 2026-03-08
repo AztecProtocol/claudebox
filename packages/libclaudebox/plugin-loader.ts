@@ -104,6 +104,18 @@ export async function buildChannelProfileMap(): Promise<Map<string, string>> {
   return map;
 }
 
+/** Get summaryPrompt for a profile (queued after session completes). */
+export async function getSummaryPrompt(name: string): Promise<string> {
+  const plugin = await loadPlugin(name);
+  return plugin.summaryPrompt || "";
+}
+
+/** Get promptSuffix for a profile (appended to every session prompt). */
+export async function getPromptSuffix(name: string): Promise<string> {
+  const plugin = await loadPlugin(name);
+  return plugin.promptSuffix || "";
+}
+
 /** Build channel→branch map from all discovered plugins. */
 export async function buildChannelBranchMap(): Promise<Map<string, string>> {
   const map = new Map<string, string>();

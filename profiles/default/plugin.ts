@@ -33,6 +33,18 @@ const plugin: Plugin = {
       { name: "confidence", type: "number", description: "0-1 confidence in the categorization" },
     ],
   }],
+  promptSuffix: `## Response Style
+When you finish, always create a GitHub gist with your detailed analysis, reasoning, and any verbose output.
+Then call respond_to_user with a terse 1-2 sentence summary that links to the gist for details.
+Keep the Slack message short — all depth goes in the gist.`,
+
+  summaryPrompt: `Write a session summary. Call respond_to_user with a short one-line summary of what was accomplished.
+Then create a gist titled "Session Summary" with a detailed breakdown:
+- What was requested
+- What was done (files changed, PRs created, issues found)
+- Key decisions and reasoning
+- Any follow-up items`,
+
   setup() {
     for (const s of plugin.schemas || []) register(s);
   },

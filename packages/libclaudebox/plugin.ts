@@ -108,6 +108,12 @@ export interface Plugin {
   /** Whether this plugin requires a server (can't run locally) */
   requiresServer?: boolean;
 
+  /** Prompt appended to every session prompt (e.g. gist instructions, response style) */
+  promptSuffix?: string;
+
+  /** Prompt queued as a follow-up after session completes (e.g. "write a summary") */
+  summaryPrompt?: string;
+
   /** Called once at startup to register handlers and routes */
   setup(ctx: PluginContext): void | Promise<void>;
 }

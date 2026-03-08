@@ -81,7 +81,10 @@ export class ServerClient {
       }
     }
     try {
-      appendFileSync(this.activityLog, JSON.stringify({ ts: new Date().toISOString(), type, text }) + "\n");
+      const entry: Record<string, string> = { ts: new Date().toISOString(), type, text };
+      const logId = this.sessionMeta?.log_id;
+      if (logId) entry.log_id = logId;
+      appendFileSync(this.activityLog, JSON.stringify(entry) + "\n");
     } catch {}
   }
 
@@ -133,6 +136,7 @@ export class ServerClient {
    */
   async updateComment(body: {
     status?: string;
+    logId?: string;
     sections: CommentSections;
     trackedPRs: Array<{ num: number; title: string; url: string; action: string }>;
     otherArtifacts: string[];

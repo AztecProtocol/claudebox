@@ -4,6 +4,7 @@ import type { SessionStore } from "../session-store.ts";
 import type { DockerService } from "../docker.ts";
 import { truncate, extractHashFromUrl, sessionUrl } from "../util.ts";
 import { toTargetRef } from "../base-branch.ts";
+import { getSummaryPrompt } from "../plugin-loader.ts";
 
 /**
  * Convert Markdown-style links and bare URLs to Slack mrkdwn format.
@@ -48,13 +49,36 @@ export async function getThreadContext(client: any, channel: string, threadTs: s
   }
 }
 
-/** Build final Slack message from activity log — the single source of truth. */
+/** Extract compact artifact links from activity entries. */
+function extractArtifactLinks(artifacts: { text: string }[]): string[] {
+  const seenUrls = new Set<string>();
+  const linkParts: string[] = [];
+  for (const a of artifacts) {
+    const urlMatch = a.text.match(/(https?:\/\/[^\s)>\]]+)/);
+    if (!urlMatch) continue;
+    const url = urlMatch[1].replace(/[.,;:!?]+$/, '');
+    if (seenUrls.has(url)) continue;
+    seenUrls.add(url);
+
+    const prMatch = url.match(/\/pull\/(\d+)/);
+    if (prMatch) { linkParts.push(`<${url}|#${prMatch[1]}>`); continue; }
+    if (url.includes("gist.github")) { linkParts.push(`<${url}|gist>`); continue; }
+    const issueMatch = url.match(/\/issues\/(\d+)/);
+    if (issueMatch) { linkParts.push(`<${url}|#${issueMatch[1]}>`); continue; }
+    linkParts.push(`<${url}|link>`);
+  }
+  return linkParts;
+}
+
+/** Build final Slack message from activity log — the single source of truth.
+ *  Only shows artifacts from the current resume (scoped by logId). */
 export function buildSlackStatusFromActivity(
-  activity: { ts: string; type: string; text: string }[],
+  activity: { ts: string; type: string; text: string; log_id?: string }[],
   prompt: string,
   status: string,
   logUrl: string,
   worktreeId?: string,
+  logId?: string,
 ): string {
   const parts: string[] = [];
 
@@ -66,32 +90,10 @@ export function buildSlackStatusFromActivity(
     parts.push(markdownToSlack(text));
   }
 
-  // Artifacts (PRs, gists) — compact, deduplicated, short labels
-  const artifacts = activity.filter(a => a.type === "artifact");
-  const seenUrls = new Set<string>();
-  const linkParts: string[] = [];
-  for (const a of artifacts) {
-    // Extract URL from the artifact text
-    const urlMatch = a.text.match(/(https?:\/\/[^\s)>\]]+)/);
-    if (!urlMatch) continue;
-    const url = urlMatch[1].replace(/[.,;:!?]+$/, '');
-    if (seenUrls.has(url)) continue;
-    seenUrls.add(url);
-
-    // PR: #NNN
-    const prMatch = url.match(/\/pull\/(\d+)/);
-    if (prMatch) { linkParts.push(`<${url}|#${prMatch[1]}>`); continue; }
-
-    // Gist: short label
-    if (url.includes("gist.github")) { linkParts.push(`<${url}|gist>`); continue; }
-
-    // Issue: #NNN
-    const issueMatch = url.match(/\/issues\/(\d+)/);
-    if (issueMatch) { linkParts.push(`<${url}|#${issueMatch[1]}>`); continue; }
-
-    // Other: short domain label
-    linkParts.push(`<${url}|link>`);
-  }
+  // Artifacts scoped to current resume (by log_id), deduplicated
+  const currentLogId = logId || (activity.length > 0 ? activity[activity.length - 1].log_id : undefined);
+  const artifacts = activity.filter(a => a.type === "artifact" && (!currentLogId || !a.log_id || a.log_id === currentLogId));
+  const linkParts = extractArtifactLinks(artifacts);
 
   // Footer: artifacts + status link + status
   const footer: string[] = [];
@@ -120,6 +122,7 @@ async function setReaction(channel: string, ts: string, emoji: string, removeEmo
 export async function updateSlackStatus(
   channel: string, messageTs: string, status: string, logUrl: string,
   worktreeId: string | undefined, store: SessionStore, prompt: string,
+  logId?: string,
 ): Promise<void> {
   // Build from activity log — never read back from Slack
   const activity = worktreeId ? store.readActivity(worktreeId).reverse() : []; // oldest first
@@ -133,7 +136,7 @@ export async function updateSlackStatus(
     }
   }
 
-  const text = buildSlackStatusFromActivity(activity, prompt, status, logUrl, worktreeId);
+  const text = buildSlackStatusFromActivity(activity, prompt, status, logUrl, worktreeId, logId);
 
   await fetch("https://slack.com/api/chat.update", {
     method: "POST",
@@ -190,24 +193,40 @@ export async function handleTerminalCommand(
 }
 
 /** Drain queued Slack messages for a worktree and auto-resume if any exist. */
-function drainQueueAndResume(
+async function drainQueueAndResume(
   client: any, channel: string, threadTs: string | null,
   worktreeId: string, store: SessionStore, docker: DockerService,
   baseBranch: string, channelName: string,
-): void {
+): Promise<void> {
   try {
     const session = store.findByWorktreeId(worktreeId);
     if (!session?._log_id) return;
     const queued = store.drainQueue(session._log_id);
-    if (!queued.length) return;
 
-    const combined = queued.map(q => `[${q.user}]: ${q.text}`).join("\n\n");
-    console.log(`[QUEUE] Draining ${queued.length} queued message(s) for worktree ${worktreeId}`);
+    if (queued.length) {
+      const combined = queued.map(q => `[${q.user}]: ${q.text}`).join("\n\n");
+      console.log(`[QUEUE] Draining ${queued.length} queued message(s) for worktree ${worktreeId}`);
+      startReplySession(
+        client, channel, threadTs, combined, session,
+        queued[0].user, store, docker, baseBranch, false, channelName, false, session.profile || "",
+      );
+      return;
+    }
 
-    startReplySession(
-      client, channel, threadTs, combined, session,
-      queued[0].user, store, docker, baseBranch, false, channelName, false, session.profile || "",
-    );
+    // No user messages queued — check for plugin summary prompt (only on first session, not on resumes)
+    const profile = session.profile || "";
+    const sessions = store.listByWorktree(worktreeId);
+    const isFirstSession = sessions.length <= 1;
+    if (profile && isFirstSession) {
+      const summaryPrompt = await getSummaryPrompt(profile);
+      if (summaryPrompt) {
+        console.log(`[SUMMARY] Queueing summary prompt for worktree ${worktreeId} (profile=${profile})`);
+        startReplySession(
+          client, channel, threadTs, summaryPrompt, session,
+          "system", store, docker, baseBranch, true, channelName, false, profile,
+        );
+      }
+    }
   } catch (e: any) {
     console.error(`[QUEUE] Failed to drain queue for ${worktreeId}: ${e.message}`);
   }
@@ -263,9 +282,11 @@ export async function startNewSession(
       if (threadTs) store.bindThread(channel, threadTs, worktreeId);
       client.chat.update({ channel, ts: messageTs, text: `_working\u2026_ <${sessionUrl(worktreeId)}|status>` }).catch(() => {});
     }).then((exitCode) => {
+      const latestSession = capturedWorktreeId ? store.findByWorktreeId(capturedWorktreeId) : null;
+      const capturedLogId = latestSession?._log_id || "";
       if (SLACK_BOT_TOKEN && messageTs && capturedLogUrl) {
         const statusSuffix = exitCode === 0 ? "completed" : `error (exit ${exitCode})`;
-        updateSlackStatus(channel, messageTs, statusSuffix, capturedLogUrl, capturedWorktreeId, store, prompt)
+        updateSlackStatus(channel, messageTs, statusSuffix, capturedLogUrl, capturedWorktreeId, store, prompt, capturedLogId)
           .catch((e) => console.warn(`[WARN] Slack status update failed: ${e}`));
       }
       if (capturedWorktreeId) {
@@ -331,9 +352,11 @@ export async function startReplySession(
       capturedWorktreeId = wtId;
       client.chat.update({ channel, ts: messageTs, text: `_working\u2026_ <${sessionUrl(wtId)}|status>` }).catch(() => {});
     }).then((exitCode) => {
+      const latestSession = capturedWorktreeId ? store.findByWorktreeId(capturedWorktreeId) : null;
+      const capturedLogId = latestSession?._log_id || "";
       if (SLACK_BOT_TOKEN && messageTs && capturedLogUrl) {
         const statusSuffix = exitCode === 0 ? "completed" : `error (exit ${exitCode})`;
-        updateSlackStatus(channel, messageTs, statusSuffix, capturedLogUrl, capturedWorktreeId, store, message)
+        updateSlackStatus(channel, messageTs, statusSuffix, capturedLogUrl, capturedWorktreeId, store, message, capturedLogId)
           .catch((e) => console.warn(`[WARN] Slack status update failed: ${e}`));
       }
       if (capturedWorktreeId) {

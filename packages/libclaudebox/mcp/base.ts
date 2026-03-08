@@ -285,22 +285,20 @@ function buildGhBody(_latestStatus: string): string {
 
 export function buildSlackText(status: string): string {
   const parts: string[] = [];
-  // Response is the main content; status goes in footer
+  // Response is the main content; status goes as body text
   if (commentSections.response) {
     parts.push(truncateForSlack(commentSections.response));
-  } else {
+  } else if (status) {
     parts.push(truncateForSlack(status));
   }
-  // Footer: artifacts | status-page | completion state
+  // Footer: artifacts | status-page | state
   const footer: string[] = [];
   const artifacts = buildArtifactsSlack();
   if (artifacts) footer.push(artifacts);
   if (statusPageUrl) footer.push(`<${statusPageUrl}|status>`);
   if (commentSections.response) {
-    // Show compact completion state (strip the response prefix if embedded in status)
     const tag = status.includes("completed") ? "completed"
-      : status.includes("error") ? status.replace(commentSections.response, "").replace(/^\s*—?\s*/, "").trim() || "error"
-      : "";
+      : status.includes("error") ? "error" : "";
     if (tag) footer.push(`_${tag}_`);
   }
   if (footer.length) parts.push(footer.join("  \u2502  "));
@@ -316,6 +314,7 @@ export async function updateRootComment(status?: string): Promise<string[]> {
     try {
       return await client.updateComment({
         status: s,
+        logId: SESSION_META.log_id,
         sections: { ...commentSections },
         trackedPRs: [...trackedPRs.entries()].map(([num, pr]) => ({ num, ...pr })),
         otherArtifacts: [...otherArtifacts],

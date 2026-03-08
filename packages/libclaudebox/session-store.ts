@@ -135,7 +135,7 @@ export class SessionStore {
   }
 
   /** Read activity.jsonl entries from a worktree's workspace directory. */
-  readActivity(worktreeId: string): { ts: string; type: string; text: string }[] {
+  readActivity(worktreeId: string): { ts: string; type: string; text: string; log_id?: string }[] {
     this.validateId(worktreeId, "worktreeId");
     const activityPath = join(this.worktreesDir, worktreeId, "workspace", "activity.jsonl");
     if (!existsSync(activityPath)) return [];

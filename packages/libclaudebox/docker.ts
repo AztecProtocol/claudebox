@@ -14,7 +14,7 @@ import {
   buildLogUrl,
   incrActiveSessions, decrActiveSessions,
 } from "./config.ts";
-import { getDockerConfig } from "./plugin-loader.ts";
+import { getDockerConfig, getPromptSuffix, getSummaryPrompt } from "./plugin-loader.ts";
 import type { DockerConfig } from "./plugin.ts";
 
 // Container user — determined by the Docker image
@@ -155,7 +155,7 @@ export class DockerService {
     console.log(`[DOCKER]   Profile:   ${profileDir}`);
     console.log(`[DOCKER]   Log URL:   ${logUrl}`);
 
-    // Write prompt file
+    // Write prompt file (with plugin promptSuffix appended)
     const baseBranch = opts.targetRef?.replace("origin/", "") || "next";
     let fullPrompt = opts.prompt;
     fullPrompt += `\n\nLog URL: ${logUrl}`;
@@ -163,6 +163,8 @@ export class DockerService {
     fullPrompt += `\nTarget ref: ${opts.targetRef || "origin/next"}`;
     if (opts.runUrl) fullPrompt += `\nRun URL: ${opts.runUrl}`;
     if (opts.link) fullPrompt += `\nLink: ${opts.link}`;
+    const promptSuffix = await getPromptSuffix(profileDir);
+    if (promptSuffix) fullPrompt += `\n\n${promptSuffix}`;
     writeFileSync(join(workspaceDir, "prompt.txt"), fullPrompt);
 
     // Write session metadata
