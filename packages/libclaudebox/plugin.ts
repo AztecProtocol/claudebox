@@ -114,6 +114,9 @@ export interface Plugin {
   /** Prompt queued as a follow-up after session completes (e.g. "write a summary") */
   summaryPrompt?: string;
 
+  /** Fixed tag categories for session classification (used by set_tag tool and dashboard) */
+  tagCategories?: string[];
+
   /** Called once at startup to register handlers and routes */
   setup(ctx: PluginContext): void | Promise<void>;
 }

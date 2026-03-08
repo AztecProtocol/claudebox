@@ -401,6 +401,7 @@ function Header({ view, onViewChange, searchTerm, onSearchChange, selectedUser, 
     <div class="header">
       <span class="header-title">MY SESSIONS</span>
       <a href="/dashboard" class="header-link">\\u2190 Dashboard</a>
+      <a href="/tagged" class="header-link">By Tag</a>
       <span class="header-spacer"></span>
       <input class="search-input" type="text" placeholder="Search sessions..." onInput=\${handleSearch} />
       <div class="view-toggle">

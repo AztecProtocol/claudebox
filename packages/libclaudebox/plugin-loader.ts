@@ -116,6 +116,22 @@ export async function getPromptSuffix(name: string): Promise<string> {
   return plugin.promptSuffix || "";
 }
 
+/** Get tag categories from a profile (for set_tag tool and dashboard). */
+export async function getTagCategories(name: string): Promise<string[]> {
+  const plugin = await loadPlugin(name);
+  return plugin.tagCategories || [];
+}
+
+/** Collect tag categories from all discovered plugins. */
+export async function getAllTagCategories(): Promise<string[]> {
+  const all = new Set<string>();
+  for (const name of discoverPlugins()) {
+    const plugin = await loadPlugin(name);
+    for (const cat of plugin.tagCategories || []) all.add(cat);
+  }
+  return [...all];
+}
+
 /** Build channel→branch map from all discovered plugins. */
 export async function buildChannelBranchMap(): Promise<Map<string, string>> {
   const map = new Map<string, string>();

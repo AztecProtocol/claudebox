@@ -6,11 +6,12 @@ import { join } from "path";
 import type { SessionStore } from "./session-store.ts";
 import type { DockerService } from "./docker.ts";
 import type { SessionMeta, Artifact, EnrichedWorkspace, ThreadGroup, ChannelGroup } from "./types.ts";
-import { workspacePageHTML, dashboardHTML, auditDashboardHTML, personalDashboardHTML, type WorkspaceCard } from "./html/templates.ts";
+import { workspacePageHTML, dashboardHTML, auditDashboardHTML, personalDashboardHTML, taggedDashboardHTML, type WorkspaceCard } from "./html/templates.ts";
 import { parseMessage, parseKeywords, validateResumeSession, truncate, prKeyFromUrl } from "./util.ts";
 import { QuestionStore } from "./question-store.ts";
 import { generateTags } from "./tagger.ts";
 import { updateSlackStatus } from "./slack/helpers.ts";
+import { getAllTagCategories } from "./plugin-loader.ts";
 
 // ── Helpers ─────────────────────────────────────────────────────
 
@@ -997,6 +998,23 @@ const routes: Route[] = [
     method: "GET", pattern: /^\/me$/, auth: "none",
     handler: async (_req, res) => {
       html(res, 200, personalDashboardHTML());
+    },
+  },
+
+  // GET /tagged — sessions grouped by tag
+  {
+    method: "GET", pattern: /^\/tagged$/, auth: "none",
+    handler: async (_req, res) => {
+      html(res, 200, taggedDashboardHTML());
+    },
+  },
+
+  // GET /api/tag-categories — tag categories from all loaded plugins
+  {
+    method: "GET", pattern: /^\/api\/tag-categories$/, auth: "basic",
+    handler: async (_req, res) => {
+      const categories = await getAllTagCategories();
+      json(res, 200, { categories });
     },
   },
 

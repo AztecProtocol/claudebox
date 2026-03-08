@@ -4,6 +4,14 @@ import { register } from "../../packages/libclaudebox/stat-schemas.ts";
 const plugin: Plugin = {
   name: "default",
   docker: { mountReferenceRepo: true },
+  tagCategories: [
+    "backports",
+    "merge-train/barretenberg",
+    "merge-train/spartan",
+    "merge-train/fairies",
+    "ci",
+    "general",
+  ],
   branchOverrides: {
     "honk-team": "merge-train/barretenberg",
     "team-crypto": "merge-train/barretenberg",

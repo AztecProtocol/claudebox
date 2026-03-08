@@ -127,12 +127,19 @@ export async function updateSlackStatus(
   // Build from activity log — never read back from Slack
   const activity = worktreeId ? store.readActivity(worktreeId).reverse() : []; // oldest first
 
-  // Auto-set workspace name from Claude's set_workspace_name tool
+  // Auto-set workspace name and tags from activity
   if (worktreeId) {
     const nameEntry = activity.find(a => a.type === "name");
     if (nameEntry?.text) {
       const meta = store.getWorktreeMeta(worktreeId);
       if (!meta.name) store.setWorktreeName(worktreeId, nameEntry.text);
+    }
+    const tagEntry = activity.find(a => a.type === "tag");
+    if (tagEntry?.text) {
+      const existing = store.getWorktreeTags(worktreeId);
+      if (!existing.includes(tagEntry.text)) {
+        store.setWorktreeTags(worktreeId, [...existing, tagEntry.text]);
+      }
     }
   }
 

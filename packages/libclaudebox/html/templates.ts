@@ -5,3 +5,4 @@ export { workspacePageHTML } from "./workspace.ts";
 export { dashboardHTML } from "./dashboard.ts";
 export { auditDashboardHTML } from "./audit-dashboard.ts";
 export { personalDashboardHTML } from "./personal-dashboard.ts";
+export { taggedDashboardHTML } from "./tagged-dashboard.ts";

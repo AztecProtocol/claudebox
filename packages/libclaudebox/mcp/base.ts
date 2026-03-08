@@ -529,6 +529,21 @@ The name is used as the git branch name and appears in the dashboard and Slack.`
       return { content: [{ type: "text", text: `Workspace named: ${slug}` }] };
     });
 
+  // ── set_tag ────────────────────────────────────────────────────
+  const tagCatsEnv = process.env.CLAUDEBOX_TAG_CATEGORIES || "";
+  if (tagCatsEnv) {
+    const TAG_CATEGORIES = tagCatsEnv.split(",").filter(Boolean);
+    server.tool("set_tag",
+      `Categorize this session into one of the fixed tags. Call this early (after reading the prompt).
+Tags: ${TAG_CATEGORIES.join(", ")}
+Choose the tag that best describes the work being done.`,
+      { tag: z.enum(TAG_CATEGORIES as [string, ...string[]]).describe("Session category tag") },
+      async ({ tag }) => {
+        logActivity("tag", tag);
+        return { content: [{ type: "text", text: `Tagged: ${tag}` }] };
+      });
+  }
+
   // ── respond_to_user ───────────────────────────────────────────
   server.tool("respond_to_user",
     `Send your final response to the user. Updates the Slack message inline. You MUST call this before ending.

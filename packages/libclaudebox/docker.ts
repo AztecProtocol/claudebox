@@ -14,7 +14,7 @@ import {
   buildLogUrl,
   incrActiveSessions, decrActiveSessions,
 } from "./config.ts";
-import { getDockerConfig, getPromptSuffix, getSummaryPrompt } from "./plugin-loader.ts";
+import { getDockerConfig, getPromptSuffix, getSummaryPrompt, getTagCategories } from "./plugin-loader.ts";
 import type { DockerConfig } from "./plugin.ts";
 
 // Container user — determined by the Docker image
@@ -304,6 +304,9 @@ export class DockerService {
         "-e", `PARENT_LOG_ID=${logId}`,
         "-e", `CLAUDEBOX_MODEL=${opts.model || ""}`,
       ];
+      // Pass tag categories to sidecar
+      const tagCats = await getTagCategories(profileDir);
+      if (tagCats.length) claudeArgs.push("-e", `CLAUDEBOX_TAG_CATEGORIES=${tagCats.join(",")}`);
       // Profile-specific extra env vars and bind mounts
       if (dockerConfig.extraEnv) {
         for (const e of dockerConfig.extraEnv) claudeArgs.push("-e", e);
