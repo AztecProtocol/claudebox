@@ -183,7 +183,7 @@ export async function handleTerminalCommand(
   const url = sessionUrl(wtId);
   const statusEmoji = session.status === "completed" && session.exit_code === 0 ? ":white_check_mark:" : ":warning:";
   await respond({
-    text: `${statusEmoji} <${url}|Join interactive session>\nWorkspace \`${wtId.slice(0, 8)}\` \u2014 ${session.status}${session.exit_code != null ? ` (exit ${session.exit_code})` : ""}`,
+    text: `${statusEmoji} <${url}|View session>\nWorkspace \`${wtId.slice(0, 8)}\` \u2014 ${session.status}${session.exit_code != null ? ` (exit ${session.exit_code})` : ""}`,
     thread_ts: threadTs,
   });
   return true;

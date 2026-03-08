@@ -16,14 +16,12 @@ import "./aztec/config.ts";
 if (process.argv.includes("--http-only")) process.env.CLAUDEBOX_HTTP_ONLY = "1";
 const HTTP_ONLY = process.env.CLAUDEBOX_HTTP_ONLY === "1";
 
-import { WebSocketServer } from "ws";
 import {
   SLACK_BOT_TOKEN, SLACK_APP_TOKEN, HTTP_PORT, DOCKER_IMAGE, MAX_CONCURRENT,
-  SESSION_PAGE_USER, SESSION_PAGE_PASS, CLAUDEBOX_DIR, setChannelMaps,
+  CLAUDEBOX_DIR, setChannelMaps,
 } from "./packages/libclaudebox/config.ts";
 import { SessionStore } from "./packages/libclaudebox/session-store.ts";
 import { DockerService } from "./packages/libclaudebox/docker.ts";
-import { InteractiveSessionManager } from "./packages/libclaudebox/interactive.ts";
 import { createHttpServer } from "./packages/libclaudebox/http-routes.ts";
 import { QuestionStore } from "./packages/libclaudebox/question-store.ts";
 import { DmRegistry } from "./packages/libclaudebox/dm-registry.ts";
@@ -76,7 +74,6 @@ async function main() {
   // ── Instantiate services ──
   const store = new SessionStore();
   const docker = new DockerService();
-  const interactive = new InteractiveSessionManager(docker, store);
 
   // ── Reconcile stale sessions (async — won't block event loop) ──
   let reconciling = false;
@@ -174,24 +171,7 @@ async function main() {
   if (pluginRoutes.length) console.log(`  Plugin routes: ${pluginRoutes.length} endpoints`);
 
   // ── HTTP server ──
-  const httpServer = createHttpServer(store, docker, interactive, pluginRuntime, dmRegistry);
-
-  // ── WebSocket upgrade (requires basic auth) ──
-  const wss = new WebSocketServer({ noServer: true });
-  httpServer.on("upgrade", (req, socket, head) => {
-    const m = req.url?.match(/^\/s\/([a-f0-9][\w-]+)\/ws$/);
-    if (!m) { socket.destroy(); return; }
-    const auth = req.headers.authorization || "";
-    if (!auth.startsWith("Basic ")) { socket.destroy(); return; }
-    const [u, p] = Buffer.from(auth.slice(6), "base64").toString().split(":");
-    if (u !== SESSION_PAGE_USER || p !== SESSION_PAGE_PASS) { socket.destroy(); return; }
-    wss.handleUpgrade(req, socket as any, head, (ws) => {
-      interactive.handleWs(m[1], ws).catch((e) => {
-        console.error(`[INTERACTIVE] WS error: ${e.message}`);
-        ws.close(1011, (e.message || "error").slice(0, 120));
-      });
-    });
-  });
+  const httpServer = createHttpServer(store, docker, pluginRuntime, dmRegistry);
 
   httpServer.listen(HTTP_PORT, () => {
     console.log(`  HTTP listening on :${HTTP_PORT}`);

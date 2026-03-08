@@ -19,7 +19,6 @@ export function timeAgo(iso: string): string {
 
 export function statusColor(s: string): string {
   if (s === "running") return "#61D668";
-  if (s === "interactive") return "#FAD979";
   if (s === "completed") return "#61D668";
   if (s === "error") return "#E94560";
   if (s === "cancelled") return "#888";

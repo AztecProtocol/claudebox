@@ -183,7 +183,7 @@ export function registerSlackHandlers(app: App, store: SessionStore, docker: Doc
       }
       const wtId = session.worktree_id || hash;
       const url = sessionUrl(wtId);
-      await ack({ text: `<${url}|Join interactive session> \u2014 ${session.status}${session.exit_code != null ? ` (exit ${session.exit_code})` : ""}` });
+      await ack({ text: `<${url}|View session> \u2014 ${session.status}${session.exit_code != null ? ` (exit ${session.exit_code})` : ""}` });
       return;
     }
 

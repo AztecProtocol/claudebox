@@ -188,8 +188,6 @@ class MockDockerService {
     return 0;
   }
 
-  // Stubs for interactive container support
-  isRunning() { return false; }
 }
 
 // ── HTTP helpers ─────────────────────────────────────────────────
@@ -261,8 +259,7 @@ describe("Channel → Session → HTTP (e2e)", () => {
 
     // Start HTTP server with the mock store
     const { createHttpServer } = await import("../../packages/libclaudebox/http-routes.ts");
-    const mockInteractive = { list: () => [], get: () => undefined, has: () => false } as any;
-    httpServer = createHttpServer(mockStore as any, mockDocker as any, mockInteractive);
+    httpServer = createHttpServer(mockStore as any, mockDocker as any);
     httpServer.listen(TEST_PORT);
   });
 

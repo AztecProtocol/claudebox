@@ -1,4 +1,3 @@
-import type { WebSocket } from "ws";
 
 export interface SessionMeta {
   claude_session_id?: string;
@@ -31,17 +30,6 @@ export interface ContainerSessionOpts {
   profile?: string;
   model?: string;
   scopes?: string[];
-}
-
-export interface InteractiveSession {
-  timer: ReturnType<typeof setTimeout>;
-  container: string;
-  sidecar: string;
-  network: string;
-  ws: WebSocket | null;
-  hash: string;     // key (worktree ID or legacy hash)
-  logId: string;    // actual session log_id for store updates
-  deadline: number;
 }
 
 export type ParseResult =

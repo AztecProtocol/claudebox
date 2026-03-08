@@ -45,7 +45,6 @@ a{color:inherit;text-decoration:none}a:hover{text-decoration:underline}
 .card{background:#111;border:1px solid #222;border-radius:6px;padding:12px 14px;cursor:pointer;transition:border-color 0.15s;position:relative}
 .card:hover{border-color:#444}
 .card.running{border-left:3px solid #61D668}
-.card.interactive{border-left:3px solid #FAD979}
 .card.error{border-left:3px solid #E94560}
 .card.resolved{opacity:0.6}
 .card.deleted{opacity:0.4}
@@ -55,7 +54,6 @@ a{color:inherit;text-decoration:none}a:hover{text-decoration:underline}
 .card-status{display:flex;align-items:center;gap:4px;font-size:11px;flex-shrink:0}
 .status-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
 .status-dot.running{background:#61D668;animation:pulse 2s infinite}
-.status-dot.interactive{background:#FAD979;animation:pulse 2s infinite}
 .status-dot.completed{background:#61D668}
 .status-dot.error{background:#E94560}
 .status-dot.cancelled,.status-dot.interrupted,.status-dot.unknown{background:#666}
@@ -135,7 +133,7 @@ function WorkspaceCard({ w, onRefresh }) {
 
   const cls = useMemo(() => {
     let c = "card";
-    if (w.status === "running" || w.status === "interactive") c += " " + w.status;
+    if (w.status === "running") c += " " + w.status;
     if (w.status === "error") c += " error";
     if (w.resolved) c += " resolved";
     if (!w.alive) c += " deleted";
@@ -248,7 +246,7 @@ function WorkspaceCard({ w, onRefresh }) {
         <div class="menu">
           <button class="menu-item" onClick=\${handleRename}>Rename</button>
           <button class="menu-item" onClick=\${handleResolve}>\${w.resolved ? "Unresolve" : "Resolve"}</button>
-          \${w.alive && w.status !== "running" && w.status !== "interactive" ? html\`
+          \${w.alive && w.status !== "running" ? html\`
             <button class="menu-item danger" onClick=\${handleDelete}>Delete</button>
           \` : null}
         </div>
@@ -265,7 +263,7 @@ function WorkspaceGrid({ workspaces, onRefresh }) {
   const { running, recent, resolved } = useMemo(() => {
     const running = [], recent = [], resolved = [];
     (workspaces || []).forEach(w => {
-      if (w.status === "running" || w.status === "interactive") running.push(w);
+      if (w.status === "running") running.push(w);
       else if (w.resolved) resolved.push(w);
       else recent.push(w);
     });

@@ -54,14 +54,12 @@ a{color:#7aa2f7;text-decoration:none}a:hover{text-decoration:underline}
 .ws-card{background:#111;border:1px solid #222;border-radius:6px;padding:12px 14px;margin-bottom:8px;cursor:pointer;transition:border-color 0.15s;position:relative}
 .ws-card:hover{border-color:#444}
 .ws-card.running{border-left:3px solid #61D668}
-.ws-card.interactive{border-left:3px solid #FAD979}
 .ws-card.error{border-left:3px solid #E94560}
 .ws-card-top{display:flex;align-items:flex-start;gap:8px;margin-bottom:4px}
 .ws-card-name{font-size:13px;font-weight:bold;color:#ddd;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ws-card-status{display:flex;align-items:center;gap:4px;font-size:11px;flex-shrink:0}
 .status-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
 .status-dot.running{background:#61D668;animation:pulse 2s infinite}
-.status-dot.interactive{background:#FAD979;animation:pulse 2s infinite}
 .status-dot.completed{background:#61D668}
 .status-dot.error{background:#E94560}
 .status-dot.cancelled,.status-dot.interrupted,.status-dot.unknown{background:#666}
@@ -129,7 +127,7 @@ function timeAgo(iso) {
 function WorkspaceCard({ w, onRefresh }) {
   const cls = useMemo(() => {
     let c = "ws-card";
-    if (w.status === "running" || w.status === "interactive") c += " " + w.status;
+    if (w.status === "running") c += " " + w.status;
     if (w.status === "error") c += " error";
     return c;
   }, [w.status]);
@@ -172,7 +170,7 @@ function WorkspaceCard({ w, onRefresh }) {
   }, [w.worktreeId, onRefresh]);
 
   const showTags = w.tags && w.tags.length && !(w.tags.length === 1 && w.tags[0] === "untagged");
-  const isRunning = w.status === "running" || w.status === "interactive";
+  const isRunning = w.status === "running";
   const showAutoTag = !isRunning && (!w.tags || !w.tags.length || w.tags.includes("untagged"));
 
   return html\`
@@ -220,7 +218,7 @@ function WorkspaceCard({ w, onRefresh }) {
 function StatsBar({ data }) {
   if (!data || !data.length) return null;
   const total = data.length;
-  const running = data.filter(w => w.status === "running" || w.status === "interactive").length;
+  const running = data.filter(w => w.status === "running").length;
   const completed = data.filter(w => w.status === "completed").length;
   const errors = data.filter(w => w.status === "error").length;
   let artifacts = 0;

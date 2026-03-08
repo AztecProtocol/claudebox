@@ -371,7 +371,18 @@ Config file: ${CONFIG_FILE}
     return;
   }
 
-  // Local mode
+  // Local mode — pre-flight checks
+  try {
+    const gitName = execFileSync("git", ["config", "user.name"], { encoding: "utf-8", timeout: 5_000 }).trim();
+    const gitEmail = execFileSync("git", ["config", "user.email"], { encoding: "utf-8", timeout: 5_000 }).trim();
+    if (!gitName || !gitEmail) throw new Error("empty");
+  } catch {
+    console.error("Error: git identity not configured. Containers need it for commits.");
+    console.error("  git config --global user.name \"Your Name\"");
+    console.error("  git config --global user.email \"you@example.com\"");
+    process.exit(1);
+  }
+
   console.log("Running locally.");
   console.log(`Profile: ${profile}`);
 

@@ -5,7 +5,6 @@ import { existsSync, readFileSync, readdirSync, statSync, watch, mkdirSync } fro
 import { join } from "path";
 import type { SessionStore } from "./session-store.ts";
 import type { DockerService } from "./docker.ts";
-import type { InteractiveSessionManager } from "./interactive.ts";
 import type { SessionMeta, Artifact, EnrichedWorkspace, ThreadGroup, ChannelGroup } from "./types.ts";
 import { workspacePageHTML, dashboardHTML, auditDashboardHTML, personalDashboardHTML, type WorkspaceCard } from "./html/templates.ts";
 import { parseMessage, parseKeywords, validateResumeSession, truncate, prKeyFromUrl } from "./util.ts";
@@ -193,8 +192,8 @@ async function buildDashboardData(store: SessionStore, profileFilter?: string): 
 
   // Sort: running first, then by start time newest first
   workspaces.sort((a, b) => {
-    const aRunning = a.status === "running" || a.status === "interactive" ? 1 : 0;
-    const bRunning = b.status === "running" || b.status === "interactive" ? 1 : 0;
+    const aRunning = a.status === "running" ? 1 : 0;
+    const bRunning = b.status === "running" ? 1 : 0;
     if (aRunning !== bRunning) return bRunning - aRunning;
     return (b.started || "").localeCompare(a.started || "");
   });
@@ -232,7 +231,7 @@ function resolveSession(param: string, store: SessionStore): { worktreeId: strin
 
 type RouteHandler = (
   req: IncomingMessage, res: ServerResponse, params: Record<string, string>,
-  ctx: { store: SessionStore; docker: DockerService; interactive: InteractiveSessionManager },
+  ctx: { store: SessionStore; docker: DockerService },
 ) => Promise<void>;
 
 interface Route {
@@ -681,7 +680,7 @@ const routes: Route[] = [
       const resolved = resolveSession(params[0], store);
       if (!resolved) { json(res, 404, { ok: false, message: "Not found" }); return; }
       // Don't delete if running
-      if (resolved.session.status === "running" || resolved.session.status === "interactive") {
+      if (resolved.session.status === "running") {
         json(res, 409, { ok: false, message: "Cannot delete while session is running" });
         return;
       }
@@ -690,29 +689,13 @@ const routes: Route[] = [
     },
   },
 
-  // POST /s/<id>/keepalive
-  {
-    method: "POST", pattern: /^\/s\/([a-f0-9][\w-]+)\/keepalive$/, auth: "basic",
-    handler: async (req, res, params, { interactive }) => {
-      const s = interactive.get(params[0]);
-      if (!s) { json(res, 404, { error: "no active interactive session" }); return; }
-      let minutes = 5;
-      try {
-        const body = JSON.parse(await readBody(req));
-        minutes = Math.max(1, Math.min(60, body.minutes || 5));
-      } catch {}
-      interactive.resetKeepalive(params[0], minutes);
-      json(res, 200, { ok: true, minutes, deadline: s.deadline });
-    },
-  },
-
   // POST /s/<id>/cancel — cancel session (JSON response)
   {
     method: "POST", pattern: /^\/s\/([a-f0-9][\w-]+)\/cancel$/, auth: "basic",
-    handler: async (_req, res, params, { store, interactive }) => {
+    handler: async (_req, res, params, { store, docker }) => {
       const resolved = resolveSession(params[0], store);
       if (!resolved) { json(res, 404, { ok: false, message: "Session not found" }); return; }
-      const cancelled = interactive.cancelSession(params[0], resolved.session);
+      const cancelled = docker.cancelSession(params[0], resolved.session, store);
       json(res, 200, { ok: cancelled, message: cancelled ? "Session cancelled" : "Session was already stopped" });
     },
   },
@@ -1441,11 +1424,10 @@ const routes: Route[] = [
 export function createHttpServer(
   store: SessionStore,
   docker: DockerService,
-  interactive: InteractiveSessionManager,
   pluginRuntime?: import("./plugin.ts").PluginRuntime,
   dmRegistry?: import("./dm-registry.ts").DmRegistry,
 ) {
-  const ctx = { store, docker, interactive };
+  const ctx = { store, docker };
 
   // DM registry routes (only if registry provided)
   const dmRoutes: Route[] = [];

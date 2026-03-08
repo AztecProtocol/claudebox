@@ -51,7 +51,6 @@ a{color:inherit;text-decoration:none}a:hover{text-decoration:underline}
 .card{background:#111;border:1px solid #222;border-radius:6px;padding:12px 14px;cursor:pointer;transition:border-color 0.15s;position:relative}
 .card:hover{border-color:#444}
 .card.running{border-left:3px solid #61D668}
-.card.interactive{border-left:3px solid #FAD979}
 .card.error{border-left:3px solid #E94560}
 .card.resolved{opacity:0.6}
 .card.deleted{opacity:0.4}
@@ -60,7 +59,6 @@ a{color:inherit;text-decoration:none}a:hover{text-decoration:underline}
 .card-status{display:flex;align-items:center;gap:4px;font-size:11px;flex-shrink:0}
 .status-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
 .status-dot.running{background:#61D668;animation:pulse 2s infinite}
-.status-dot.interactive{background:#FAD979;animation:pulse 2s infinite}
 .status-dot.completed{background:#61D668}
 .status-dot.error{background:#E94560}
 .status-dot.cancelled,.status-dot.interrupted,.status-dot.unknown{background:#666}
@@ -404,7 +402,7 @@ function CoveragePanel({ coverage }) {
 
 function SessionCard({ w }) {
   let cls = "card";
-  if (w.status === "running" || w.status === "interactive") cls += " " + w.status;
+  if (w.status === "running") cls += " " + w.status;
   if (w.status === "error") cls += " error";
   if (!w.alive) cls += " deleted";
 
@@ -437,8 +435,8 @@ function SessionCard({ w }) {
 // ── Sessions Panel ───────────────────────────────────────────
 
 function SessionsPanel({ workspaces }) {
-  const running = useMemo(() => (workspaces || []).filter(w => w.status === "running" || w.status === "interactive"), [workspaces]);
-  const recent = useMemo(() => (workspaces || []).filter(w => w.status !== "running" && w.status !== "interactive"), [workspaces]);
+  const running = useMemo(() => (workspaces || []).filter(w => w.status === "running"), [workspaces]);
+  const recent = useMemo(() => (workspaces || []).filter(w => w.status !== "running"), [workspaces]);
 
   return html\`
     <div>

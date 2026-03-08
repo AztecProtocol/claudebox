@@ -1,7 +1,7 @@
 /**
  * Integration tests for http-routes.ts
  *
- * Spins up a real HTTP server with mock store/docker/interactive and tests:
+ * Spins up a real HTTP server with mock store/docker and tests:
  * - Health endpoint (unauthenticated)
  * - Auth: API bearer, Basic auth, JWT cookies, rejection
  * - Route matching and 404 handling
@@ -39,13 +39,10 @@ const TEST_PORT = 18_000 + Math.floor(Math.random() * 1000);
 let server: http.Server;
 let store: InstanceType<typeof SessionStore>;
 
-// Minimal mock docker/interactive — just enough to not crash
+// Minimal mock docker — just enough to not crash
 const mockDocker = {
   runContainerSession: async () => {},
   isRunning: () => false,
-} as any;
-const mockInteractive = {
-  list: () => [],
 } as any;
 
 function request(
@@ -100,7 +97,7 @@ describe("HTTP Routes", () => {
       exit_code: 0,
     });
 
-    server = createHttpServer(store, mockDocker, mockInteractive);
+    server = createHttpServer(store, mockDocker);
     server.listen(TEST_PORT);
   });
 

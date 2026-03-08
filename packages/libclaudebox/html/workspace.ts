@@ -20,7 +20,6 @@ a{color:inherit;text-decoration:none}a:hover{text-decoration:underline}
 
 /* Status colors */
 .status-running,.header-status.running{color:#61D668;background:rgba(97,214,104,0.1);border:1px solid rgba(97,214,104,0.2)}
-.status-interactive,.header-status.interactive{color:#FAD979;background:rgba(250,217,121,0.1);border:1px solid rgba(250,217,121,0.2)}
 .status-completed,.header-status.completed{color:#61D668;background:rgba(97,214,104,0.1);border:1px solid rgba(97,214,104,0.2)}
 .status-error,.header-status.error{color:#E94560;background:rgba(233,69,96,0.1);border:1px solid rgba(233,69,96,0.2)}
 .status-cancelled,.status-interrupted,.status-unknown,.header-status.cancelled,.header-status.interrupted,.header-status.unknown{color:#888;background:rgba(136,136,136,0.1);border:1px solid rgba(136,136,136,0.2)}
@@ -449,7 +448,7 @@ function WorkspacePage(){
     try{return JSON.parse(localStorage.getItem("cb_queue_"+id)||"[]");}catch(e){return[];}
   });
 
-  const isRunning=status==="running"||status==="interactive";
+  const isRunning=status==="running";
   const seenRef=useRef(new Set());
   const agentLogUrlsRef=useRef([]);
   const pendingQueueRef=useRef(messageQueue);
@@ -539,10 +538,10 @@ function WorkspacePage(){
         setArtifacts(prev=>[...prev,d.entry]);
       }
     }else if(d.type==="status"){
-      const wasRunning=statusRef.current==="running"||statusRef.current==="interactive";
+      const wasRunning=statusRef.current==="running";
       setStatus(d.status);
       setExitCode(d.exit_code);
-      if(wasRunning&&d.status!=="running"&&d.status!=="interactive"){
+      if(wasRunning&&d.status!=="running"){
         setTimeout(()=>sendNextQueued(),100);
       }
     }else if(d.type==="init"){

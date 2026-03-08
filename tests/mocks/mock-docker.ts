@@ -81,10 +81,6 @@ export class MockDockerService {
     // Mock always healthy immediately
   }
 
-  async waitForEntrypoint(_containerName: string, _timeoutMs = 15_000): Promise<void> {
-    // Mock always ready
-  }
-
   // ── Session runner (simplified) ──
 
   async runMockSession(

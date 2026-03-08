@@ -42,12 +42,6 @@ const mockDocker = {
   isRunning: () => false,
 } as any;
 
-const mockInteractive = {
-  list: () => [],
-  get: () => undefined,
-  has: () => false,
-} as any;
-
 // ── HTTP helpers ────────────────────────────────────────────────
 
 function request(
@@ -143,7 +137,7 @@ describe("Plugin Routes", () => {
     await runtime.loadPlugin(apiAuthPlugin);
     await runtime.loadPlugin(secondPlugin);
 
-    server = createHttpServer(mockStore, mockDocker, mockInteractive, runtime);
+    server = createHttpServer(mockStore, mockDocker, runtime);
     server.listen(TEST_PORT);
   });
 

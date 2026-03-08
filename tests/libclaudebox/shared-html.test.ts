@@ -51,10 +51,6 @@ describe("statusColor", () => {
     assert.equal(statusColor("running"), "#61D668");
   });
 
-  it("returns yellow for interactive", () => {
-    assert.equal(statusColor("interactive"), "#FAD979");
-  });
-
   it("returns red for error", () => {
     assert.equal(statusColor("error"), "#E94560");
   });

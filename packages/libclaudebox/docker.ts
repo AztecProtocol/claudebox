@@ -21,6 +21,19 @@ import type { DockerConfig } from "./plugin.ts";
 const CONTAINER_USER = process.env.CLAUDEBOX_CONTAINER_USER || "claude";
 const CONTAINER_HOME = `/home/${CONTAINER_USER}`;
 
+// Host git identity — passed into containers so git commit works
+function getGitIdentity(): { name: string; email: string } {
+  try {
+    const name = execFileSync("git", ["config", "user.name"], { encoding: "utf-8", timeout: 5_000 }).trim();
+    const email = execFileSync("git", ["config", "user.email"], { encoding: "utf-8", timeout: 5_000 }).trim();
+    return { name, email };
+  } catch {
+    return { name: "", email: "" };
+  }
+}
+
+const GIT_IDENTITY = getGitIdentity();
+
 export class DockerService {
   docker: Docker;
 
@@ -92,57 +105,6 @@ export class DockerService {
       await new Promise((r) => setTimeout(r, 500));
     }
     throw new Error(`Sidecar health check timed out after ${timeoutMs}ms`);
-  }
-
-  async waitForEntrypoint(containerName: string, timeoutMs = 15_000): Promise<void> {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      try {
-        const exec = await this.docker.getContainer(containerName).exec({
-          Cmd: ["test", "-f", `${CONTAINER_HOME}/bin/keepalive`],
-          AttachStdout: true,
-        });
-        const stream = await exec.start({});
-        const inspectResult = await exec.inspect();
-        // exec.inspect() may not have ExitCode immediately; just check if no error thrown
-        await new Promise<void>((resolve) => {
-          stream.on("end", resolve);
-          stream.resume(); // drain
-          setTimeout(resolve, 3000);
-        });
-        return;
-      } catch {}
-      await new Promise((r) => setTimeout(r, 500));
-    }
-    console.warn(`[INTERACTIVE] Entrypoint wait timed out for ${containerName}, proceeding anyway`);
-  }
-
-  // ── TTY Exec Bridge ───────────────────────────────────────────
-
-  /**
-   * Create an exec session inside the container via Docker API.
-   * Allocates a PTY for interactive shell use.
-   */
-  async createExecSession(containerName: string): Promise<{
-    stream: NodeJS.ReadWriteStream;
-    resize: (cols: number, rows: number) => Promise<void>;
-  }> {
-    const container = this.docker.getContainer(containerName);
-    const exec = await container.exec({
-      AttachStdin: true,
-      AttachStdout: true,
-      AttachStderr: true,
-      Tty: true,
-      Cmd: ["bash", "--login"],
-      WorkingDir: "/workspace",
-    });
-    const stream = await exec.start({ hijack: true, stdin: true, Tty: true });
-    return {
-      stream,
-      resize: async (cols: number, rows: number) => {
-        try { await exec.resize({ w: cols, h: rows }); } catch {}
-      },
-    };
   }
 
   // ── Full session runner ───────────────────────────────────────
@@ -268,6 +230,10 @@ export class DockerService {
         Env: [
           `HOME=${CONTAINER_HOME}`,
           `GIT_CONFIG_GLOBAL=/tmp/.gitconfig`,
+          `GIT_AUTHOR_NAME=${GIT_IDENTITY.name}`,
+          `GIT_AUTHOR_EMAIL=${GIT_IDENTITY.email}`,
+          `GIT_COMMITTER_NAME=${GIT_IDENTITY.name}`,
+          `GIT_COMMITTER_EMAIL=${GIT_IDENTITY.email}`,
           `MCP_PORT=9801`,
           `GH_TOKEN=${GH_TOKEN}`,
           `SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}`,
@@ -312,6 +278,11 @@ export class DockerService {
         "--user", uid,
         "--add-host", "host.docker.internal:host-gateway",
         "-e", `HOME=${CONTAINER_HOME}`,
+        "-e", `GIT_CONFIG_GLOBAL=/tmp/.gitconfig`,
+        "-e", `GIT_AUTHOR_NAME=${GIT_IDENTITY.name}`,
+        "-e", `GIT_AUTHOR_EMAIL=${GIT_IDENTITY.email}`,
+        "-e", `GIT_COMMITTER_NAME=${GIT_IDENTITY.name}`,
+        "-e", `GIT_COMMITTER_EMAIL=${GIT_IDENTITY.email}`,
         "-v", `${workspaceDir}:/workspace:rw`,
         // Mount session JSONL dir to both project keys: -workspace (initial cwd)
         // and -workspace-${basename(REPO_DIR)} (cwd after clone_repo). Without both,
@@ -458,158 +429,26 @@ export class DockerService {
     }
   }
 
-  // ── Interactive container ─────────────────────────────────────
+  /** Cancel a running session by stopping its containers. */
+  cancelSession(id: string, session: SessionMeta, store: SessionStore): boolean {
+    const logId = session._log_id || id;
+    let cancelled = false;
 
-  async startInteractiveContainer(
-    hash: string, session: SessionMeta,
-    store: SessionStore,
-  ): Promise<{ container: string; sidecar: string; network: string }> {
-    const networkName = `claudebox-int-${hash.slice(0, 12)}`;
-    const sidecarName = `claudebox-int-sidecar-${hash.slice(0, 12)}`;
-    const containerName = `claudebox-int-${hash.slice(0, 12)}`;
-
-    const worktreeId = session.worktree_id;
-    let workspaceDir: string;
-    let claudeProjectsDir: string;
-    if (worktreeId) {
-      const wt = store.getOrCreateWorktree(worktreeId);
-      workspaceDir = wt.workspaceDir;
-      claudeProjectsDir = wt.claudeProjectsDir;
-    } else {
-      const { CLAUDEBOX_SESSIONS_DIR } = await import("./config.ts");
-      const logId = session._log_id || hash;
-      workspaceDir = join(CLAUDEBOX_SESSIONS_DIR, logId, "workspace");
-      mkdirSync(workspaceDir, { recursive: true });
-      claudeProjectsDir = join(CLAUDEBOX_SESSIONS_DIR, logId, "claude-projects");
-      mkdirSync(claudeProjectsDir, { recursive: true });
+    if (session.status === "running" && session.container) {
+      this.stopAndRemoveSync(session.container, 5);
+      const sidecarName = session.sidecar || `claudebox-sidecar-${logId}`;
+      const networkName = `claudebox-net-${logId}`;
+      this.stopAndRemoveSync(sidecarName, 3);
+      this.removeNetworkSync(networkName);
+      cancelled = true;
     }
 
-    const resumeId = store.findLatestClaudeSessionId(claudeProjectsDir) || "";
-    const logId = session._log_id || hash;
-    const mcpUrl = `http://${sidecarName}:9801/mcp`;
-    const keepaliveUrl = `http://host.docker.internal:${HTTP_PORT}/s/${worktreeId || hash}/keepalive`;
-    const uid = `${process.getuid!()}:${process.getgid!()}`;
-    const profileDir = session.profile || "default";
-    const sidecarEntrypoint = `/opt/claudebox/profiles/${profileDir}/mcp-sidecar.ts`;
-    const claudeMdPath = `/opt/claudebox/profiles/${profileDir}/container-claude.md`;
-    const dockerConfig = await getDockerConfig(profileDir);
-    const containerImage = dockerConfig.image || DOCKER_IMAGE;
-    const mountRef = dockerConfig.mountReferenceRepo !== false;
-
-    console.log(`[INTERACTIVE] Network: ${networkName}`);
-    console.log(`[INTERACTIVE] Sidecar: ${sidecarName}`);
-    console.log(`[INTERACTIVE] Container: ${containerName}`);
-    console.log(`[INTERACTIVE] Workspace: ${workspaceDir}`);
-    console.log(`[INTERACTIVE] Profile: ${profileDir}`);
-
-    // Clean up any stale resources from previous sessions with the same hash
-    this.forceRemoveSync(containerName);
-    this.forceRemoveSync(sidecarName);
-    this.removeNetworkSync(networkName);
-
-    await this.createNetwork(networkName);
-
-    try {
-      // Sidecar
-      const sidecarBinds = [
-        `${workspaceDir}:/workspace:rw`,
-        `${claudeProjectsDir}:${CONTAINER_HOME}/.claude/projects/-workspace:ro`,
-        `${CLAUDEBOX_CODE_DIR}:/opt/claudebox:ro`,
-        `${BASTION_SSH_KEY}:${CONTAINER_HOME}/.ssh/build_instance_key:ro`,
-        `${CLAUDEBOX_STATS_DIR}:/stats:rw`,
-        `${CLAUDEBOX_DIR}:${CONTAINER_HOME}/.claudebox:rw`,
-      ];
-      if (mountRef) {
-        sidecarBinds.push(`${join(REPO_DIR, ".git")}:/reference-repo/.git:ro`);
-      }
-      const intServerUrl = `http://host.docker.internal:${HTTP_PORT}`;
-      await this.docker.createContainer({
-        name: sidecarName,
-        Image: containerImage,
-        Entrypoint: [sidecarEntrypoint],
-        User: uid,
-        Env: [
-          `HOME=${CONTAINER_HOME}`,
-          `GIT_CONFIG_GLOBAL=/tmp/.gitconfig`,
-          `MCP_PORT=9801`,
-          `GH_TOKEN=${GH_TOKEN}`,
-          `SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}`,
-          `LINEAR_API_KEY=${process.env.LINEAR_API_KEY || ""}`,
-          `CLAUDEBOX_SERVER_URL=${intServerUrl}`,
-          `CLAUDEBOX_SERVER_TOKEN=${API_SECRET}`,
-          `CLAUDEBOX_LOG_ID=${logId}`,
-          `CLAUDEBOX_LOG_URL=${session.log_url || ""}`,
-          `CLAUDEBOX_WORKTREE_ID=${worktreeId || ""}`,
-          `CLAUDEBOX_USER=${session.user || ""}`,
-          `CLAUDEBOX_SLACK_CHANNEL=${session.slack_channel || ""}`,
-          `CLAUDEBOX_SLACK_THREAD_TS=${session.slack_thread_ts || ""}`,
-          `CLAUDEBOX_HOST=${CLAUDEBOX_HOST}`,
-          `CLAUDEBOX_BASE_BRANCH=${session.base_branch || "next"}`,
-          `CLAUDEBOX_QUIET=${!(session.slack_channel || "").startsWith("D") ? "1" : "0"}`,
-          `CLAUDEBOX_PROFILE=${profileDir}`,
-          `CLAUDEBOX_SCOPES=${(session.scopes || []).join(",")}`,
-        ],
-        HostConfig: {
-          NetworkMode: networkName,
-          ExtraHosts: ["host.docker.internal:host-gateway"],
-          Binds: sidecarBinds,
-        },
-      }).then(c => c.start());
-      await this.waitForHealth(sidecarName);
-
-      // Interactive container
-      const intBinds = [
-        `${workspaceDir}:/workspace:rw`,
-        `${join(homedir(), ".claude")}:${CONTAINER_HOME}/.claude:rw`,
-        `${claudeProjectsDir}:${CONTAINER_HOME}/.claude/projects/-workspace:rw`,
-        `${claudeProjectsDir}:${CONTAINER_HOME}/.claude/projects/-workspace-${basename(REPO_DIR)}:rw`,
-        `${realpathSync(CLAUDE_BINARY)}:/usr/local/bin/claude:ro`,
-        `${join(homedir(), ".claude.json")}:${CONTAINER_HOME}/.claude.json:rw`,
-        `${CLAUDEBOX_CODE_DIR}:/opt/claudebox:ro`,
-        `${CLAUDEBOX_STATS_DIR}:/stats:rw`,
-      ];
-      if (mountRef) {
-        intBinds.push(`${join(REPO_DIR, ".git")}:/reference-repo/.git:ro`);
-      }
-      await this.docker.createContainer({
-        name: containerName,
-        Image: containerImage,
-        Entrypoint: ["bash", "/opt/claudebox/container-interactive.sh"],
-        User: uid,
-        Env: [
-          `HOME=${CONTAINER_HOME}`,
-          `CLAUDEBOX_MCP_URL=${mcpUrl}`,
-          `CLAUDEBOX_SESSION_HASH=${hash}`,
-          `CLAUDEBOX_LOG_ID=${logId}`,
-          `CLAUDEBOX_LOG_URL=${session.log_url || ""}`,
-          `CLAUDEBOX_WORKTREE_ID=${worktreeId || ""}`,
-          `CLAUDEBOX_USER=${session.user || ""}`,
-          `CLAUDEBOX_RESUME_ID=${resumeId}`,
-          `CLAUDEBOX_KEEPALIVE_URL=${keepaliveUrl}`,
-          `AZTEC_MCP_SERVER=http://${sidecarName}:9801/creds`,
-          `CLAUDEBOX_SIDECAR_HOST=${sidecarName}`,
-          `CLAUDEBOX_SIDECAR_PORT=9801`,
-          `CLAUDEBOX_HOST=${CLAUDEBOX_HOST}`,
-          `CLAUDEBOX_BASE_BRANCH=${session.base_branch || "next"}`,
-          `CLAUDEBOX_SLACK_CHANNEL=${session.slack_channel || ""}`,
-          `CLAUDEBOX_SLACK_THREAD_TS=${session.slack_thread_ts || ""}`,
-          `CLAUDEBOX_CONTAINER_CLAUDE_MD=${claudeMdPath}`,
-          ...(dockerConfig.extraEnv || []),
-        ],
-        HostConfig: {
-          NetworkMode: networkName,
-          ExtraHosts: ["host.docker.internal:host-gateway"],
-          Binds: [...intBinds, ...(dockerConfig.extraBinds || [])],
-        },
-      }).then(c => c.start());
-      console.log(`[INTERACTIVE] Container started: ${containerName}`);
-
-      return { container: containerName, sidecar: sidecarName, network: networkName };
-    } catch (e: any) {
-      await this.stopAndRemove(containerName);
-      await this.stopAndRemove(sidecarName);
-      await this.removeNetwork(networkName);
-      throw e;
+    if (session.status === "running") {
+      store.update(logId, { status: "cancelled", finished: new Date().toISOString() });
+      cancelled = true;
     }
+
+    if (cancelled) console.log(`[CANCEL] Session ${logId} cancelled`);
+    return cancelled;
   }
 }
