@@ -1,6 +1,6 @@
-import type { Plugin } from "../../packages/libclaudebox/plugin.ts";
+import type { Profile } from "../../packages/libclaudebox/profile.ts";
 
-const plugin: Plugin = {
+const plugin: Profile = {
   name: "minimal",
   docker: { mountReferenceRepo: false },
   setup(_ctx) {},

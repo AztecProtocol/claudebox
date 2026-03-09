@@ -2,7 +2,7 @@ import { readFileSync, readdirSync, existsSync, writeFileSync, mkdirSync, statSy
 import { rm } from "fs/promises";
 import { join, basename, dirname } from "path";
 import { execSync, exec, execFile } from "child_process";
-import type { SessionMeta, WorktreeInfo } from "./types.ts";
+import type { RunMeta, WorktreeInfo } from "./types.ts";
 import { SESSIONS_DIR, CLAUDEBOX_WORKTREES_DIR, CLAUDEBOX_DIR } from "./config.ts";
 import type { DockerService } from "./docker.ts";
 
@@ -13,7 +13,7 @@ function execFileAsync(cmd: string, args: string[], timeoutMs: number): Promise<
   });
 }
 
-export class SessionStore {
+export class WorktreeStore {
   sessionsDir: string;
   worktreesDir: string;
 
@@ -29,7 +29,7 @@ export class SessionStore {
 
   // ── Session CRUD ──────────────────────────────────────────────
 
-  get(logId: string): SessionMeta | null {
+  get(logId: string): RunMeta | null {
     this.validateId(logId, "logId");
     const path = join(this.sessionsDir, `${logId}.json`);
     if (!existsSync(path)) return null;
@@ -49,7 +49,7 @@ export class SessionStore {
     writeFileSync(path, JSON.stringify(meta, null, 2));
   }
 
-  update(logId: string, patch: Partial<SessionMeta>): void {
+  update(logId: string, patch: Partial<RunMeta>): void {
     this.validateId(logId, "logId");
     const path = join(this.sessionsDir, `${logId}.json`);
     try {
@@ -61,14 +61,14 @@ export class SessionStore {
 
   // ── Lookup ────────────────────────────────────────────────────
 
-  findByHash(hash: string): SessionMeta | null {
+  findByHash(hash: string): RunMeta | null {
     return this.get(hash);
   }
 
   /** Find the session for a thread. Checks the explicit binding first, then falls back to a file scan. */
-  findLastInThread(channel: string, threadTs: string): SessionMeta | null {
+  findLastInThread(channel: string, threadTs: string): RunMeta | null {
     // Fast path: explicit binding
-    const bound = this.loadBindings().threads[SessionStore.threadKey(channel, threadTs)];
+    const bound = this.loadBindings().threads[WorktreeStore.threadKey(channel, threadTs)];
     if (bound) {
       const s = this.findByWorktreeId(bound);
       if (s) return s;
@@ -81,7 +81,7 @@ export class SessionStore {
       .sort((a, b) => b.mtime - a.mtime);
     for (const { name } of files) {
       try {
-        const s: SessionMeta = JSON.parse(readFileSync(join(this.sessionsDir, name), "utf-8"));
+        const s: RunMeta = JSON.parse(readFileSync(join(this.sessionsDir, name), "utf-8"));
         if (s.slack_channel === channel && s.slack_thread_ts === threadTs) {
           s._log_id = basename(name, ".json");
           // Backfill the binding for next time
@@ -96,23 +96,23 @@ export class SessionStore {
   // ── Listing ─────────────────────────────────────────────────
 
   /** List all sessions, newest first. */
-  listAll(): SessionMeta[] {
+  listAll(): RunMeta[] {
     if (!existsSync(this.sessionsDir)) return [];
     return readdirSync(this.sessionsDir)
       .filter(f => f.endsWith(".json"))
       .map(f => {
         try {
-          const s: SessionMeta = JSON.parse(readFileSync(join(this.sessionsDir, f), "utf-8"));
+          const s: RunMeta = JSON.parse(readFileSync(join(this.sessionsDir, f), "utf-8"));
           s._log_id = basename(f, ".json");
           return s;
         } catch { return null; }
       })
-      .filter((s): s is SessionMeta => s !== null)
+      .filter((s): s is RunMeta => s !== null)
       .sort((a, b) => (b.started || "").localeCompare(a.started || ""));
   }
 
   /** List all sessions for a given worktree_id, newest first. */
-  listByWorktree(worktreeId: string): SessionMeta[] {
+  listByWorktree(worktreeId: string): RunMeta[] {
     return this.listAll().filter(s => s.worktree_id === worktreeId);
   }
 
@@ -123,7 +123,7 @@ export class SessionStore {
   }
 
   /** Find the latest session for a worktree ID (returns newest). */
-  findByWorktreeId(worktreeId: string): SessionMeta | null {
+  findByWorktreeId(worktreeId: string): RunMeta | null {
     const sessions = this.listByWorktree(worktreeId);
     return sessions.length > 0 ? sessions[0] : null;
   }
@@ -446,14 +446,14 @@ export class SessionStore {
   /** Bind a Slack thread to a worktree (idempotent). */
   bindThread(channel: string, threadTs: string, worktreeId: string): void {
     const b = this.loadBindings();
-    b.threads[SessionStore.threadKey(channel, threadTs)] = worktreeId;
+    b.threads[WorktreeStore.threadKey(channel, threadTs)] = worktreeId;
     this.saveBindings(b);
   }
 
   /** Clear the thread → worktree binding (used by new-session). */
   clearThreadBinding(channel: string, threadTs: string): void {
     const b = this.loadBindings();
-    const k = SessionStore.threadKey(channel, threadTs);
+    const k = WorktreeStore.threadKey(channel, threadTs);
     if (!(k in b.threads)) return;
     delete b.threads[k];
     this.saveBindings(b);

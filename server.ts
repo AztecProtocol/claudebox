@@ -15,18 +15,19 @@ const HTTP_ONLY = process.env.CLAUDEBOX_HTTP_ONLY === "1";
 
 import {
   SLACK_APP_TOKEN, HTTP_PORT, INTERNAL_PORT, DOCKER_IMAGE, MAX_CONCURRENT,
-  CLAUDEBOX_DIR, setChannelMaps,
+  CLAUDEBOX_DIR,
 } from "./packages/libclaudebox/config.ts";
+import { setChannelMaps } from "./packages/libclaudebox/runtime.ts";
 
 // SLACK_BOT_TOKEN via libcreds-host — needed for Slack Bolt App initialization.
 import { getSlackBotToken } from "./packages/libcreds-host/index.ts";
 const SLACK_BOT_TOKEN = getSlackBotToken();
-import { SessionStore } from "./packages/libclaudebox/session-store.ts";
+import { WorktreeStore } from "./packages/libclaudebox/worktree-store.ts";
 import { DockerService } from "./packages/libclaudebox/docker.ts";
 import { createHttpServer } from "./packages/libclaudebox/http-routes.ts";
 import { DmRegistry } from "./packages/libclaudebox/dm-registry.ts";
-import { setPluginsDir, buildChannelProfileMap, buildChannelBranchMap, loadAllPlugins } from "./packages/libclaudebox/plugin-loader.ts";
-import { PluginRuntime } from "./packages/libclaudebox/plugin.ts";
+import { setProfilesDir, buildChannelProfileMap, buildChannelBranchMap, loadAllProfiles } from "./packages/libclaudebox/profile-loader.ts";
+import { ProfileRuntime } from "./packages/libclaudebox/profile.ts";
 import { startAutoUpdate } from "./packages/libclaudebox/auto-update.ts";
 import { join, dirname } from "path";
 
@@ -48,7 +49,7 @@ async function main() {
 
   // ── Discover profiles and build channel maps ──
   const rootDir = dirname(import.meta.url.replace("file://", ""));
-  setPluginsDir(join(rootDir, "profiles"));
+  setProfilesDir(join(rootDir, "profiles"));
 
   const profileMap = await buildChannelProfileMap();
   const branchMap = await buildChannelBranchMap();
@@ -73,7 +74,7 @@ async function main() {
   console.log(`  Max concurrent: ${MAX_CONCURRENT}`);
 
   // ── Instantiate services ──
-  const store = new SessionStore();
+  const store = new WorktreeStore();
   const docker = new DockerService();
 
   // ── Reconcile stale sessions (async — won't block event loop) ──
@@ -136,17 +137,17 @@ async function main() {
     console.log("  Slack: skipped (HTTP-only mode)");
   }
 
-  // ── Load plugins and set up runtime ──
-  const plugins = await loadAllPlugins(requestedProfiles.length ? requestedProfiles : undefined);
-  const pluginRuntime = new PluginRuntime(docker, store);
-  for (const plugin of plugins) {
-    await pluginRuntime.loadPlugin(plugin);
+  // ── Load profiles and set up runtime ──
+  const profiles = await loadAllProfiles(requestedProfiles.length ? requestedProfiles : undefined);
+  const profileRuntime = new ProfileRuntime(docker, store);
+  for (const profile of profiles) {
+    await profileRuntime.loadProfile(profile);
   }
-  const pluginRoutes = pluginRuntime.getRoutes();
-  if (pluginRoutes.length) console.log(`  Plugin routes: ${pluginRoutes.length} endpoints`);
+  const profileRoutes = profileRuntime.getRoutes();
+  if (profileRoutes.length) console.log(`  Profile routes: ${profileRoutes.length} endpoints`);
 
   // ── HTTP servers ──
-  const { public: publicServer, internal: internalServer } = createHttpServer(store, docker, pluginRuntime, dmRegistry);
+  const { public: publicServer, internal: internalServer } = createHttpServer(store, docker, profileRuntime, dmRegistry);
 
   publicServer.listen(HTTP_PORT, () => {
     console.log(`  HTTP (public) listening on :${HTTP_PORT}`);

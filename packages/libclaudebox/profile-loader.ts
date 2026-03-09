@@ -1,24 +1,24 @@
 /**
- * Plugin discovery and loading.
+ * Profile discovery and loading.
  *
- * Scans the repo profiles/ directory (set via setPluginsDir) for profiles.
+ * Scans the repo profiles/ directory (set via setProfilesDir) for profiles.
  *
  * Each profile directory contains:
- *   - plugin.ts — exports a Plugin object
+ *   - plugin.ts — exports a Profile object
  *   - mcp-sidecar.ts — MCP tool server (runs inside container)
  */
 
 import { readdirSync, existsSync } from "fs";
 import { join } from "path";
-import type { Plugin } from "./plugin.ts";
+import type { Profile } from "./profile.ts";
 
 let _profilesDir = "";
 
-export function setPluginsDir(dir: string): void {
+export function setProfilesDir(dir: string): void {
   _profilesDir = dir;
 }
 
-export function getPluginsDir(): string {
+export function getProfilesDir(): string {
   return _profilesDir;
 }
 
@@ -30,8 +30,8 @@ function isProfileDir(dir: string, name: string): boolean {
   );
 }
 
-/** Discover plugin/profile names by scanning the profiles directory. */
-export function discoverPlugins(): string[] {
+/** Discover profile names by scanning the profiles directory. */
+export function discoverProfiles(): string[] {
   if (!_profilesDir || !existsSync(_profilesDir)) return [];
   const names: string[] = [];
   for (const entry of readdirSync(_profilesDir, { withFileTypes: true })) {
@@ -40,7 +40,7 @@ export function discoverPlugins(): string[] {
       names.push(entry.name);
     }
   }
-  console.log(`[PLUGINS] Discovered: ${names.join(", ") || "(none)"}`);
+  console.log(`[PROFILES] Discovered: ${names.join(", ") || "(none)"}`);
   return names;
 }
 
@@ -53,8 +53,8 @@ function resolveProfileDir(name: string): string | null {
   return null;
 }
 
-/** Load a plugin by name. Searches all profile directories. */
-export async function loadPlugin(name: string): Promise<Plugin> {
+/** Load a profile by name. Searches all profile directories. */
+export async function loadProfile(name: string): Promise<Profile> {
   const profileDir = resolveProfileDir(name);
   if (!profileDir) {
     return { name, setup() {} };
@@ -64,11 +64,11 @@ export async function loadPlugin(name: string): Promise<Plugin> {
   if (existsSync(pluginPath)) {
     try {
       const mod = await import(`file://${pluginPath}`);
-      const plugin: Plugin = mod.default;
-      if (!plugin.name) plugin.name = name;
-      return plugin;
+      const profile: Profile = mod.default;
+      if (!profile.name) profile.name = name;
+      return profile;
     } catch (e: any) {
-      console.error(`[PLUGINS] Failed to load plugin ${name}: ${e.message}`);
+      console.error(`[PROFILES] Failed to load profile ${name}: ${e.message}`);
     }
   }
 
@@ -76,68 +76,68 @@ export async function loadPlugin(name: string): Promise<Plugin> {
   return { name, setup() {} };
 }
 
-/** Load all plugins, optionally filtering to a specific set. */
-export async function loadAllPlugins(only?: string[]): Promise<Plugin[]> {
-  const names = only || discoverPlugins();
-  const plugins: Plugin[] = [];
+/** Load all profiles, optionally filtering to a specific set. */
+export async function loadAllProfiles(only?: string[]): Promise<Profile[]> {
+  const names = only || discoverProfiles();
+  const profiles: Profile[] = [];
   for (const name of names) {
-    plugins.push(await loadPlugin(name));
+    profiles.push(await loadProfile(name));
   }
-  return plugins;
+  return profiles;
 }
 
 // ── Convenience functions ────────────────────────────────────────
 
-/** Build channel→profile map from all discovered plugins. */
+/** Build channel→profile map from all discovered profiles. */
 export async function buildChannelProfileMap(): Promise<Map<string, string>> {
   const map = new Map<string, string>();
-  for (const name of discoverPlugins()) {
-    const plugin = await loadPlugin(name);
-    for (const ch of plugin.channels || []) map.set(ch, name);
+  for (const name of discoverProfiles()) {
+    const profile = await loadProfile(name);
+    for (const ch of profile.channels || []) map.set(ch, name);
   }
   return map;
 }
 
 /** Get summaryPrompt for a profile (queued after session completes). */
 export async function getSummaryPrompt(name: string): Promise<string> {
-  const plugin = await loadPlugin(name);
-  return plugin.summaryPrompt || "";
+  const profile = await loadProfile(name);
+  return profile.summaryPrompt || "";
 }
 
 /** Get DockerConfig for a profile. */
-export async function getDockerConfig(name: string): Promise<import("./plugin.ts").DockerConfig> {
-  const plugin = await loadPlugin(name);
-  return plugin.docker || {};
+export async function getDockerConfig(name: string): Promise<import("./profile.ts").DockerConfig> {
+  const profile = await loadProfile(name);
+  return profile.docker || {};
 }
 
 /** Get promptSuffix for a profile. */
 export async function getPromptSuffix(name: string): Promise<string> {
-  const plugin = await loadPlugin(name);
-  return plugin.promptSuffix || "";
+  const profile = await loadProfile(name);
+  return profile.promptSuffix || "";
 }
 
 /** Get tag categories for a profile. */
 export async function getTagCategories(name: string): Promise<string[]> {
-  const plugin = await loadPlugin(name);
-  return plugin.tagCategories || [];
+  const profile = await loadProfile(name);
+  return profile.tagCategories || [];
 }
 
-/** Collect tag categories from all discovered plugins. */
+/** Collect tag categories from all discovered profiles. */
 export async function getAllTagCategories(): Promise<string[]> {
   const all = new Set<string>();
-  for (const name of discoverPlugins()) {
-    const plugin = await loadPlugin(name);
-    for (const cat of plugin.tagCategories || []) all.add(cat);
+  for (const name of discoverProfiles()) {
+    const profile = await loadProfile(name);
+    for (const cat of profile.tagCategories || []) all.add(cat);
   }
   return [...all];
 }
 
-/** Build channel→branch map from all discovered plugins. */
+/** Build channel→branch map from all discovered profiles. */
 export async function buildChannelBranchMap(): Promise<Map<string, string>> {
   const map = new Map<string, string>();
-  for (const name of discoverPlugins()) {
-    const plugin = await loadPlugin(name);
-    for (const [ch, br] of Object.entries(plugin.branchOverrides || {})) map.set(ch, br);
+  for (const name of discoverProfiles()) {
+    const profile = await loadProfile(name);
+    for (const [ch, br] of Object.entries(profile.branchOverrides || {})) map.set(ch, br);
   }
   return map;
 }

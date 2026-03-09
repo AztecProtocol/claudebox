@@ -35,22 +35,4 @@ export function buildLogUrl(logId: string): string {
   return `${LOG_BASE_URL}/${logId}`;
 }
 
-// ── Channel → branch and channel → profile maps ────────────────
-// Populated by profile loader at startup via setChannelMaps().
-let _channelBranches: Record<string, string> = {};
-let _channelProfiles: Record<string, string> = {};
-
-export function setChannelMaps(branches: Record<string, string>, profiles: Record<string, string>): void {
-  _channelBranches = branches;
-  _channelProfiles = profiles;
-}
-export function getChannelBranches(): Record<string, string> { return _channelBranches; }
-export function getChannelProfiles(): Record<string, string> { return _channelProfiles; }
-
 export const DEFAULT_BASE_BRANCH = process.env.CLAUDEBOX_DEFAULT_BRANCH || "main";
-
-// ── Mutable session counter ─────────────────────────────────────
-let _activeSessions = 0;
-export function getActiveSessions(): number { return _activeSessions; }
-export function incrActiveSessions(): void { _activeSessions++; }
-export function decrActiveSessions(): void { _activeSessions--; }

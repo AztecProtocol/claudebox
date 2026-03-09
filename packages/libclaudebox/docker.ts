@@ -4,21 +4,21 @@ import { existsSync, writeFileSync, realpathSync, mkdirSync } from "fs";
 import { join, basename } from "path";
 import { homedir } from "os";
 import { randomUUID } from "crypto";
-import type { ContainerSessionOpts, WorktreeInfo, SessionMeta } from "./types.ts";
-import type { SessionStore } from "./session-store.ts";
+import type { ContainerSessionOpts, WorktreeInfo, RunMeta } from "./types.ts";
+import type { WorktreeStore } from "./worktree-store.ts";
 import { SessionStreamer } from "./session-streamer.ts";
 import {
   REPO_DIR, DOCKER_IMAGE, CLAUDEBOX_CODE_DIR, CLAUDE_BINARY,
   BASTION_SSH_KEY, INTERNAL_PORT,
   CLAUDEBOX_HOST, CLAUDEBOX_DIR, CLAUDEBOX_STATS_DIR, API_SECRET,
   buildLogUrl,
-  incrActiveSessions, decrActiveSessions,
 } from "./config.ts";
+import { incrActiveSessions, decrActiveSessions } from "./runtime.ts";
 
 // Token env vars — sourced from libcreds-host (the only package that reads token env vars).
 import { getContainerTokens } from "../libcreds-host/index.ts";
-import { getDockerConfig, getPromptSuffix, getSummaryPrompt, getTagCategories } from "./plugin-loader.ts";
-import type { DockerConfig } from "./plugin.ts";
+import { getDockerConfig, getPromptSuffix, getSummaryPrompt, getTagCategories } from "./profile-loader.ts";
+import type { DockerConfig } from "./profile.ts";
 
 // Container user — determined by the Docker image
 const CONTAINER_USER = process.env.CLAUDEBOX_CONTAINER_USER || "claude";
@@ -114,7 +114,7 @@ export class DockerService {
 
   async runContainerSession(
     opts: ContainerSessionOpts,
-    store: SessionStore,
+    store: WorktreeStore,
     onOutput?: (data: string) => void,
     onStart?: (logUrl: string, worktreeId: string) => void,
   ): Promise<number> {
@@ -158,7 +158,7 @@ export class DockerService {
     console.log(`[DOCKER]   Profile:   ${profileDir}`);
     console.log(`[DOCKER]   Log URL:   ${logUrl}`);
 
-    // Write prompt file (with plugin promptSuffix appended)
+    // Write prompt file (with profile promptSuffix appended)
     const baseBranch = opts.targetRef?.replace("origin/", "") || "next";
     let fullPrompt = opts.prompt;
     fullPrompt += `\n\nLog URL: ${logUrl}`;
@@ -434,7 +434,7 @@ export class DockerService {
   }
 
   /** Cancel a running session by stopping its containers. */
-  cancelSession(id: string, session: SessionMeta, store: SessionStore): boolean {
+  cancelSession(id: string, session: RunMeta, store: WorktreeStore): boolean {
     const logId = session._log_id || id;
     let cancelled = false;
 

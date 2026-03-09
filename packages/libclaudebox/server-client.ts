@@ -1,5 +1,5 @@
 /**
- * ServerClient — MCP sidecar ↔ ClaudeBox server communication.
+ * HostClient — MCP sidecar ↔ ClaudeBox server communication.
  *
  * Thin HTTP client for composite server endpoints that orchestrate
  * multi-service operations (Slack + GitHub comment updates, DMs).
@@ -9,7 +9,7 @@
 
 import { existsSync, readFileSync, appendFileSync } from "fs";
 
-export interface ServerClientOpts {
+export interface HostClientOpts {
   /** Profile name (e.g. "default", "barretenberg-audit") */
   profile: string;
   /** Server URL (e.g. "http://host.docker.internal:3000") — if unset, degrades gracefully */
@@ -26,7 +26,7 @@ export interface CommentSections {
   response: string;
 }
 
-export class ServerClient {
+export class HostClient {
   readonly profile: string;
   readonly serverUrl: string | undefined;
   private readonly token: string;
@@ -34,7 +34,7 @@ export class ServerClient {
   readonly activityLog: string;
   private sessionMeta: Record<string, string>;
 
-  constructor(opts: ServerClientOpts) {
+  constructor(opts: HostClientOpts) {
     this.profile = opts.profile;
     this.serverUrl = opts.serverUrl?.replace(/\/$/, "");
     this.token = opts.serverToken || "";
@@ -145,23 +145,23 @@ export class ServerClient {
         body: { ...body, session: this.sessionMeta },
       });
     } catch (e: any) {
-      console.error(`[ServerClient] DM failed: ${e.message}`);
+      console.error(`[HostClient] DM failed: ${e.message}`);
     }
   }
 
   // ── Session metadata ─────────────────────────────────────────
 
-  updateSessionMeta(meta: Record<string, string>): void {
+  updateRunMeta(meta: Record<string, string>): void {
     this.sessionMeta = { ...this.sessionMeta, ...meta };
   }
 }
 
 /**
- * Create a ServerClient from environment variables.
+ * Create a HostClient from environment variables.
  * Standard env vars set by docker.ts:
  *   CLAUDEBOX_SERVER_URL, CLAUDEBOX_SERVER_TOKEN, CLAUDEBOX_PROFILE
  */
-export function createServerClientFromEnv(extraMeta?: Record<string, string>): ServerClient {
+export function createHostClientFromEnv(extraMeta?: Record<string, string>): HostClient {
   const meta: Record<string, string> = {};
   // Collect session metadata from env
   const envMap: Record<string, string> = {
@@ -181,7 +181,7 @@ export function createServerClientFromEnv(extraMeta?: Record<string, string>): S
   }
   if (extraMeta) Object.assign(meta, extraMeta);
 
-  return new ServerClient({
+  return new HostClient({
     profile: process.env.CLAUDEBOX_PROFILE || "default",
     serverUrl: process.env.CLAUDEBOX_SERVER_URL,
     serverToken: process.env.CLAUDEBOX_SERVER_TOKEN,

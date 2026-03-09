@@ -1,5 +1,5 @@
 
-export interface SessionMeta {
+export interface RunMeta {
   claude_session_id?: string;
   log_url?: string;
   slack_channel?: string;

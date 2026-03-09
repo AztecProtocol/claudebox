@@ -6,7 +6,7 @@
  *   2. DockerService.runContainerSession() with profile=test
  *   3. mock-claude.sh calls MCP tools via JSON-RPC
  *   4. Verify activity.jsonl has expected tool calls
- *   5. Session appears in SessionStore
+ *   5. Session appears in WorktreeStore
  *   6. Clean up
  *
  * Requires: Docker daemon, network access (for initial repo clone).
@@ -77,15 +77,15 @@ describe("e2e session lifecycle (test profile)", () => {
       return;
     }
 
-    const { SessionStore } = await import("../../packages/libclaudebox/session-store.ts");
+    const { WorktreeStore } = await import("../../packages/libclaudebox/worktree-store.ts");
     const { DockerService } = await import("../../packages/libclaudebox/docker.ts");
-    const { setPluginsDir, loadPlugin } = await import("../../packages/libclaudebox/plugin-loader.ts");
+    const { setProfilesDir, loadProfile } = await import("../../packages/libclaudebox/profile-loader.ts");
 
-    setPluginsDir(join(ROOT_DIR, "profiles"));
-    const plugin = await loadPlugin("test");
-    assert.equal(plugin.name, "test");
+    setProfilesDir(join(ROOT_DIR, "profiles"));
+    const profile = await loadProfile("test");
+    assert.equal(profile.name, "test");
 
-    const store = new SessionStore(SESSIONS_DIR, WORKTREES_DIR);
+    const store = new WorktreeStore(SESSIONS_DIR, WORKTREES_DIR);
     const docker = new DockerService();
 
     // ── Run session ──

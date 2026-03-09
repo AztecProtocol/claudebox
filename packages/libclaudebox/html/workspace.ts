@@ -1,4 +1,4 @@
-import type { SessionMeta } from "../types.ts";
+import type { RunMeta } from "../types.ts";
 import { esc, safeHref, timeAgo, statusColor, linkify, renderActivityEntry, BASE_STYLES, type ActivityEntry, type WorkspacePageData } from "./shared.ts";
 import { appShell } from "./app-shell.ts";
 

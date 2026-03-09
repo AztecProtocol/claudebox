@@ -4,22 +4,22 @@
 
 import { existsSync, readFileSync, appendFileSync } from "fs";
 import { SESSION_META, statusPageUrl } from "./env.ts";
-import { ServerClient, createServerClientFromEnv } from "../server-client.ts";
+import { HostClient, createHostClientFromEnv } from "../server-client.ts";
 
 // ── Server client (lazy) ────────────────────────────────────────
-let _serverClient: ServerClient | null = null;
+let _hostClient: HostClient | null = null;
 
-export function getServerClient(): ServerClient {
-  if (!_serverClient) {
+export function getHostClient(): HostClient {
+  if (!_hostClient) {
     const extraMeta: Record<string, string> = {};
     if (SESSION_META.repo) extraMeta.repo = SESSION_META.repo;
-    _serverClient = createServerClientFromEnv(extraMeta);
+    _hostClient = createHostClientFromEnv(extraMeta);
   }
-  return _serverClient;
+  return _hostClient;
 }
 
-export function setServerClient(client: ServerClient): void {
-  _serverClient = client;
+export function setHostClient(client: HostClient): void {
+  _hostClient = client;
 }
 
 // ── Activity log ────────────────────────────────────────────────
@@ -135,7 +135,7 @@ export async function updateRootComment(status?: string): Promise<string[]> {
   const s = status ?? lastStatus;
   if (status) lastStatus = status;
 
-  const client = getServerClient();
+  const client = getHostClient();
   if (!client.hasServer) return [];
 
   try {

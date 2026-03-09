@@ -1,4 +1,5 @@
-import { getChannelBranches, DEFAULT_BASE_BRANCH } from "./config.ts";
+import { DEFAULT_BASE_BRANCH } from "./config.ts";
+import { getChannelBranches } from "./runtime.ts";
 
 // Cache: channelId → { name, numMembers }
 interface ChannelInfo { name: string; numMembers: number; }

@@ -108,7 +108,7 @@ function createMockSlackClient() {
 
 // ── Mock Session Store ───────────────────────────────────────────
 
-class MockSessionStore {
+class MockWorktreeStore {
   sessions: Map<string, any> = new Map();
   bindings: Map<string, string> = new Map();
   worktreeCounter = 0;
@@ -241,7 +241,7 @@ const TEST_CHANNEL = "C_TEST_CHANNEL";
 describe("Slack message handling flows", () => {
   let mockApp: MockSlackApp;
   let mockClient: ReturnType<typeof createMockSlackClient>;
-  let mockStore: MockSessionStore;
+  let mockStore: MockWorktreeStore;
   let mockDocker: MockDockerService;
 
   before(async () => {
@@ -253,9 +253,9 @@ describe("Slack message handling flows", () => {
     mkdirSync(fakeProfileDir, { recursive: true });
     writeFileSync(join(fakeProfileDir, "mcp-sidecar.ts"), "// stub\nexport default {};\n");
 
-    // Point plugin discovery to our fake profiles dir so parseKeywords recognizes the profile
-    const { setPluginsDir } = await import("../../packages/libclaudebox/plugin-loader.ts");
-    setPluginsDir(fakeProfilesDir);
+    // Point profile discovery to our fake profiles dir so parseKeywords recognizes the profile
+    const { setProfilesDir } = await import("../../packages/libclaudebox/profile-loader.ts");
+    setProfilesDir(fakeProfilesDir);
 
     // Set up channel -> profile mapping
     const { setChannelMaps } = await import("../../packages/libclaudebox/config.ts");
@@ -272,7 +272,7 @@ describe("Slack message handling flows", () => {
   beforeEach(() => {
     mockApp = new MockSlackApp();
     mockClient = createMockSlackClient();
-    mockStore = new MockSessionStore();
+    mockStore = new MockWorktreeStore();
     mockDocker = new MockDockerService();
   });
 

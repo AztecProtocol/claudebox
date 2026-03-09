@@ -100,7 +100,7 @@ function createMockSlackClient() {
 
 // ── Mock Session Store ───────────────────────────────────────────
 
-class MockSessionStore {
+class MockWorktreeStore {
   sessions: Map<string, any> = new Map();
   bindings: Map<string, string> = new Map();
   worktreeCounter = 0;
@@ -233,7 +233,7 @@ function apiAuth(): Record<string, string> {
 describe("Channel → Session → HTTP (e2e)", () => {
   let mockApp: MockSlackApp;
   let mockClient: ReturnType<typeof createMockSlackClient>;
-  let mockStore: MockSessionStore;
+  let mockStore: MockWorktreeStore;
   let mockDocker: MockDockerService;
   let httpServer: http.Server;
   const TEST_PORT = 19_000 + Math.floor(Math.random() * 1000);
@@ -250,7 +250,7 @@ describe("Channel → Session → HTTP (e2e)", () => {
 
     mockApp = new MockSlackApp();
     mockClient = createMockSlackClient();
-    mockStore = new MockSessionStore();
+    mockStore = new MockWorktreeStore();
     mockDocker = new MockDockerService();
 
     // Register Slack handlers

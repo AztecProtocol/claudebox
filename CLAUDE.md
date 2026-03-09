@@ -6,19 +6,21 @@ Docker container orchestrator for Claude agents. Slack + HTTP + CLI.
 
 - **Worktree** — persistent workspace (git checkout + transcripts + metadata). Survives across runs.
 - **Run** — one Claude execution in a worktree. Identified by `<worktreeId>-<seq>`.
-- **Profile** — directory in `profiles/` with plugin config, MCP sidecar, and system prompt.
-- **Host/container boundary** — host owns Slack/GitHub context; containers talk back via internal HTTP API on `:3002`.
+- **Profile** — directory in `profiles/` with config, MCP sidecar, and system prompt.
+- **Host/container boundary** — host owns Slack/GitHub context; containers talk back via `HostClient` → internal API on `:3002`.
 
 ## Layout
 
 ```
-packages/libclaudebox/     # Framework (Docker, sessions, MCP, Slack, HTTP)
-  plugin.ts                # Plugin interface, PluginRuntime
-  plugin-loader.ts         # Profile discovery and loading
+packages/libclaudebox/     # Framework (Docker, worktrees, MCP, Slack, HTTP)
+  profile.ts               # Profile interface, ProfileRuntime
+  profile-loader.ts        # Profile discovery and loading
   docker.ts                # Container lifecycle
-  session-store.ts         # Worktree + run persistence, GC
-  http-routes.ts           # HTTP API, dashboard, plugin routes
-  server-client.ts         # Container→host HTTP client
+  worktree-store.ts        # Worktree + run persistence, GC
+  http-routes.ts           # HTTP API, dashboard, profile routes
+  config.ts                # Static env config (ports, paths, secrets)
+  runtime.ts               # Mutable runtime state (channel maps, session counter)
+  server-client.ts         # HostClient: container→host HTTP client
   mcp/                     # MCP tool modules (env, activity, tools, git-tools, server)
   html/                    # Dashboard templates
   slack/                   # Slack event routing
@@ -30,7 +32,7 @@ cli.ts                     # CLI client
 ## Key Patterns
 
 - MCP sidecar changes take effect immediately (bind-mounted)
-- server.ts / plugin.ts changes require `systemctl --user restart claudebox`
+- server.ts / profile changes require `systemctl --user restart claudebox`
 - Template literal regex: `\[` must be `\\[` inside backtick strings
 - All operations must be async — sync calls block Slack heartbeats
 

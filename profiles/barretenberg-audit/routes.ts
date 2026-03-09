@@ -1,14 +1,15 @@
 /**
  * Barretenberg Audit HTTP routes.
  *
- * Extracted from plugin.ts for readability — registers all /audit and /api/audit/* routes.
+ * Extracted from profile config for readability — registers all /audit and /api/audit/* routes.
  */
 
-import type { PluginContext } from "../../packages/libclaudebox/plugin.ts";
+import type { ProfileContext } from "../../packages/libclaudebox/profile.ts";
 import { auditDashboardHTML } from "../../packages/libclaudebox/html/audit-dashboard.ts";
 import { existsSync, readFileSync, readdirSync, statSync } from "fs";
 import { join } from "path";
-import { MAX_CONCURRENT, getActiveSessions } from "../../packages/libclaudebox/config.ts";
+import { MAX_CONCURRENT } from "../../packages/libclaudebox/config.ts";
+import { getActiveSessions } from "../../packages/libclaudebox/runtime.ts";
 import { getHostCreds } from "../../packages/libcreds-host/index.ts";
 
 const AUDIT_REPO = "AztecProtocol/barretenberg-claude";
@@ -42,7 +43,7 @@ function readJsonl(statsDir: string, filename: string): any[] {
   return entries;
 }
 
-export function registerAuditRoutes(ctx: PluginContext): void {
+export function registerAuditRoutes(ctx: ProfileContext): void {
   // ── Audit dashboard page ──
   ctx.route("GET", "/audit", async ({ res }) => {
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });

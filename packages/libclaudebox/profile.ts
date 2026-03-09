@@ -1,18 +1,18 @@
 /**
- * Plugin system for ClaudeBox.
+ * Profile system for ClaudeBox.
  *
- * A Plugin is a self-contained unit that registers event handlers and HTTP routes.
- * Plugins compose on top of shared infrastructure (Docker, SessionStore, Slack).
+ * A Profile is a self-contained unit that registers event handlers and HTTP routes.
+ * Profiles compose on top of shared infrastructure (Docker, WorktreeStore, Slack).
  */
 
 import type { IncomingMessage, ServerResponse } from "http";
-import type { SessionStore } from "./session-store.ts";
+import type { WorktreeStore } from "./worktree-store.ts";
 import type { DockerService } from "./docker.ts";
-import type { SessionMeta, ContainerSessionOpts } from "./types.ts";
+import type { RunMeta, ContainerSessionOpts } from "./types.ts";
 
 // ── Shared types ──────────────────────────────────────────────────
 
-/** Docker sandbox configuration for a plugin/profile. */
+/** Docker sandbox configuration for a profile. */
 export interface DockerConfig {
   /** Docker image to use (overrides global default) */
   image?: string;
@@ -57,7 +57,7 @@ export interface RouteContext {
   req: IncomingMessage;
   res: ServerResponse;
   params: Record<string, string>;
-  store: SessionStore;
+  store: WorktreeStore;
   docker: DockerService;
 }
 
@@ -70,49 +70,49 @@ export interface RouteRegistration {
   handler: RouteHandler;
 }
 
-// ── Plugin interface ──────────────────────────────────────────────
+// ── Profile interface ─────────────────────────────────────────────
 
-export interface PluginContext {
+export interface ProfileContext {
   /** Register a Slack message handler. Return true to claim the event. */
   onSlackMessage(handler: (msg: SlackMessage) => Promise<boolean | void>): void;
 
   /** Register a Slack reaction handler. Return true to claim the event. */
   onSlackReaction(handler: (reaction: SlackReaction) => Promise<boolean | void>): void;
 
-  /** Register an HTTP route. Path is relative to plugin mount point. */
+  /** Register an HTTP route. Path is relative to profile mount point. */
   route(method: string, path: string, handler: RouteHandler, auth?: "api" | "basic" | "none"): void;
 
   /** Shared infrastructure */
   docker: DockerService;
-  store: SessionStore;
+  store: WorktreeStore;
 }
 
-export interface Plugin {
+export interface Profile {
   name: string;
 
   /** Docker sandbox config */
   docker?: DockerConfig;
 
-  /** Stat schemas this plugin provides */
+  /** Stat schemas this profile provides */
   schemas?: StatSchema[];
 
-  /** Slack channel IDs this plugin handles (for channel→profile mapping) */
+  /** Slack channel IDs this profile handles (for channel→profile mapping) */
   channels?: string[];
 
   /** Channel-specific base branch overrides */
   branchOverrides?: Record<string, string>;
 
-  /** Environment variables this plugin requires (e.g. ["GH_TOKEN", "LINEAR_API_KEY"]) */
+  /** Environment variables this profile requires (e.g. ["GH_TOKEN", "LINEAR_API_KEY"]) */
   requiredCredentials?: string[];
 
-  /** Whether this plugin requires a server (can't run locally) */
+  /** Whether this profile requires a server (can't run locally) */
   requiresServer?: boolean;
 
   /** Prompt appended to every session prompt (e.g. gist instructions, response style) */
   promptSuffix?: string;
 
   /** Build extra context to inject into the prompt (e.g. recent session history). */
-  buildPromptContext?: (store: SessionStore) => Promise<string> | string;
+  buildPromptContext?: (store: WorktreeStore) => Promise<string> | string;
 
   /** Prompt queued as a follow-up after session completes (e.g. "write a summary") */
   summaryPrompt?: string;
@@ -121,26 +121,26 @@ export interface Plugin {
   tagCategories?: string[];
 
   /** Called once at startup to register handlers and routes */
-  setup(ctx: PluginContext): void | Promise<void>;
+  setup(ctx: ProfileContext): void | Promise<void>;
 }
 
-// ── Plugin runtime ────────────────────────────────────────────────
+// ── Profile runtime ──────────────────────────────────────────────
 
-export class PluginRuntime {
-  private plugins: Plugin[] = [];
+export class ProfileRuntime {
+  private profiles: Profile[] = [];
   private messageHandlers: Array<(msg: SlackMessage) => Promise<boolean | void>> = [];
   private reactionHandlers: Array<(reaction: SlackReaction) => Promise<boolean | void>> = [];
   private routes: RouteRegistration[] = [];
   docker: DockerService;
-  store: SessionStore;
+  store: WorktreeStore;
 
-  constructor(docker: DockerService, store: SessionStore) {
+  constructor(docker: DockerService, store: WorktreeStore) {
     this.docker = docker;
     this.store = store;
   }
 
-  async loadPlugin(plugin: Plugin): Promise<void> {
-    const ctx: PluginContext = {
+  async loadProfile(profile: Profile): Promise<void> {
+    const ctx: ProfileContext = {
       onSlackMessage: (handler) => { this.messageHandlers.push(handler); },
       onSlackReaction: (handler) => { this.reactionHandlers.push(handler); },
       route: (method, path, handler, auth = "basic") => {
@@ -150,9 +150,9 @@ export class PluginRuntime {
       store: this.store,
     };
 
-    if (plugin.setup) await plugin.setup(ctx);
-    this.plugins.push(plugin);
-    console.log(`[PLUGIN] Loaded: ${plugin.name} (${this.routes.length} routes)`);
+    if (profile.setup) await profile.setup(ctx);
+    this.profiles.push(profile);
+    console.log(`[PROFILE] Loaded: ${profile.name} (${this.routes.length} routes)`);
   }
 
   /** Dispatch a Slack message through handlers in registration order. */
@@ -178,9 +178,9 @@ export class PluginRuntime {
     return this.routes;
   }
 
-  /** Get all loaded plugins. */
-  getPlugins(): Plugin[] {
-    return this.plugins;
+  /** Get all loaded profiles. */
+  getProfiles(): Profile[] {
+    return this.profiles;
   }
 
 }

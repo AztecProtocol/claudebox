@@ -10,7 +10,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 
 import { PORT, SESSION_META } from "./env.ts";
 import {
-  getServerClient, logActivity, addProgress, updateRootComment,
+  getHostClient, logActivity, addProgress, updateRootComment,
   lastStatus, respondToUserCalled, trackedPRs, otherArtifacts,
 } from "./activity.ts";
 import { hasGhToken, hasLinearToken, readBody } from "./helpers.ts";
@@ -63,7 +63,7 @@ function buildCompletionSummary(): string {
 async function dmAuthorOnCompletion(): Promise<void> {
   if (!SESSION_META.user) return;
 
-  const client = getServerClient();
+  const client = getHostClient();
   if (!client.hasServer) return;
 
   const hasError = lastStatus?.includes("error");

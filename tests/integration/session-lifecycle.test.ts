@@ -4,7 +4,7 @@ import { mkdirSync, rmSync, existsSync, readFileSync, readdirSync } from "fs";
 import { join, dirname } from "path";
 import { tmpdir } from "os";
 
-import { SessionStore } from "../../packages/libclaudebox/session-store.ts";
+import { WorktreeStore } from "../../packages/libclaudebox/worktree-store.ts";
 import { MockDockerService } from "../mocks/mock-docker.ts";
 
 const TEST_DIR = join(tmpdir(), `claudebox-integration-${Date.now()}`);
@@ -13,13 +13,13 @@ const WORKTREES_DIR = join(TEST_DIR, "worktrees");
 const MOCK_CLAUDE = join(dirname(import.meta.url.replace("file://", "")), "..", "mocks", "mock-claude.ts");
 
 describe("Session Lifecycle (integration)", () => {
-  let store: SessionStore;
+  let store: WorktreeStore;
   let docker: MockDockerService;
 
   beforeEach(() => {
     mkdirSync(SESSIONS_DIR, { recursive: true });
     mkdirSync(WORKTREES_DIR, { recursive: true });
-    store = new SessionStore(SESSIONS_DIR, WORKTREES_DIR);
+    store = new WorktreeStore(SESSIONS_DIR, WORKTREES_DIR);
     docker = new MockDockerService();
   });
 

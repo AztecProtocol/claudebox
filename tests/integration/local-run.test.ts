@@ -1,7 +1,7 @@
 /**
  * Integration tests for the local session workflow using Docker.
  *
- * Creates a real git repo, uses SessionStore to allocate a worktree,
+ * Creates a real git repo, uses WorktreeStore to allocate a worktree,
  * copies the repo into the workspace, then runs mock-claude inside a
  * Docker container with the workspace bind-mounted at /workspace —
  * exactly as the real `claudebox run` does.
@@ -120,8 +120,8 @@ describe("local session lifecycle (Docker)", () => {
   });
 
   it("mock-claude inside Docker sees repo at /workspace", async () => {
-    const { SessionStore } = await import("../../packages/libclaudebox/session-store.ts");
-    const store = new SessionStore(SESSIONS_DIR, WORKTREES_DIR);
+    const { WorktreeStore } = await import("../../packages/libclaudebox/worktree-store.ts");
+    const store = new WorktreeStore(SESSIONS_DIR, WORKTREES_DIR);
     const wt = store.getOrCreateWorktree();
 
     copyDir(repoDir, wt.workspaceDir);
@@ -144,8 +144,8 @@ describe("local session lifecycle (Docker)", () => {
   });
 
   it("mock-claude writes artifacts to /workspace (visible on host)", async () => {
-    const { SessionStore } = await import("../../packages/libclaudebox/session-store.ts");
-    const store = new SessionStore(SESSIONS_DIR, WORKTREES_DIR);
+    const { WorktreeStore } = await import("../../packages/libclaudebox/worktree-store.ts");
+    const store = new WorktreeStore(SESSIONS_DIR, WORKTREES_DIR);
     const wt = store.getOrCreateWorktree();
 
     copyDir(repoDir, wt.workspaceDir);
@@ -167,8 +167,8 @@ describe("local session lifecycle (Docker)", () => {
   });
 
   it("session JSONL is written to claude-projects dir", async () => {
-    const { SessionStore } = await import("../../packages/libclaudebox/session-store.ts");
-    const store = new SessionStore(SESSIONS_DIR, WORKTREES_DIR);
+    const { WorktreeStore } = await import("../../packages/libclaudebox/worktree-store.ts");
+    const store = new WorktreeStore(SESSIONS_DIR, WORKTREES_DIR);
     const wt = store.getOrCreateWorktree();
 
     copyDir(repoDir, wt.workspaceDir);
@@ -192,8 +192,8 @@ describe("local session lifecycle (Docker)", () => {
   });
 
   it("activity.jsonl has structured events with timestamps", async () => {
-    const { SessionStore } = await import("../../packages/libclaudebox/session-store.ts");
-    const store = new SessionStore(SESSIONS_DIR, WORKTREES_DIR);
+    const { WorktreeStore } = await import("../../packages/libclaudebox/worktree-store.ts");
+    const store = new WorktreeStore(SESSIONS_DIR, WORKTREES_DIR);
     const wt = store.getOrCreateWorktree();
 
     copyDir(repoDir, wt.workspaceDir);
@@ -213,8 +213,8 @@ describe("local session lifecycle (Docker)", () => {
   });
 
   it("git history is preserved inside container workspace", async () => {
-    const { SessionStore } = await import("../../packages/libclaudebox/session-store.ts");
-    const store = new SessionStore(SESSIONS_DIR, WORKTREES_DIR);
+    const { WorktreeStore } = await import("../../packages/libclaudebox/worktree-store.ts");
+    const store = new WorktreeStore(SESSIONS_DIR, WORKTREES_DIR);
     const wt = store.getOrCreateWorktree();
 
     copyDir(repoDir, wt.workspaceDir);
@@ -235,8 +235,8 @@ describe("local session lifecycle (Docker)", () => {
   });
 
   it("multiple sessions get isolated workspaces", async () => {
-    const { SessionStore } = await import("../../packages/libclaudebox/session-store.ts");
-    const store = new SessionStore(SESSIONS_DIR, WORKTREES_DIR);
+    const { WorktreeStore } = await import("../../packages/libclaudebox/worktree-store.ts");
+    const store = new WorktreeStore(SESSIONS_DIR, WORKTREES_DIR);
 
     const wt1 = store.getOrCreateWorktree();
     const wt2 = store.getOrCreateWorktree();

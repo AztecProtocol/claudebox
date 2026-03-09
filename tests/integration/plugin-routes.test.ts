@@ -1,8 +1,8 @@
 /**
- * Integration tests for the plugin system end-to-end.
+ * Integration tests for the profile system end-to-end.
  *
- * Tests plugin route registration, Express-style path params, auth modes,
- * multi-plugin coexistence, channel/branch maps, and requiredCredentials.
+ * Tests profile route registration, Express-style path params, auth modes,
+ * multi-profile coexistence, channel/branch maps, and requiredCredentials.
  */
 
 import { describe, it, before, after } from "node:test";
@@ -18,10 +18,10 @@ process.env.CLAUDEBOX_SESSION_PASS = "testpass";
 process.env.MAX_CONCURRENT = "5";
 process.env.SLACK_BOT_TOKEN = "";
 
-const { PluginRuntime } = await import("../../packages/libclaudebox/plugin.ts");
+const { ProfileRuntime } = await import("../../packages/libclaudebox/profile.ts");
 const { createHttpServer } = await import("../../packages/libclaudebox/http-routes.ts");
 
-import type { Plugin, RouteContext } from "../../packages/libclaudebox/plugin.ts";
+import type { Profile, RouteContext } from "../../packages/libclaudebox/profile.ts";
 
 const TEST_PORT = 19_000 + Math.floor(Math.random() * 1000);
 
@@ -89,22 +89,22 @@ function jsonResponse(ctx: RouteContext, status: number, data: unknown): void {
 
 // ── Tests ───────────────────────────────────────────────────────
 
-describe("Plugin Routes", () => {
+describe("Profile Routes", () => {
   let server: http.Server;
-  let runtime: InstanceType<typeof PluginRuntime>;
+  let runtime: InstanceType<typeof ProfileRuntime>;
 
-  // Define test plugins
-  const noAuthPlugin: Plugin = {
-    name: "no-auth-plugin",
+  // Define test profiles
+  const noAuthProfile: Profile = {
+    name: "no-auth-profile",
     setup(ctx) {
       ctx.route("GET", "/test-route", async (rc) => {
-        jsonResponse(rc, 200, { ok: true, source: "no-auth-plugin" });
+        jsonResponse(rc, 200, { ok: true, source: "no-auth-profile" });
       }, "none");
     },
   };
 
-  const paramPlugin: Plugin = {
-    name: "param-plugin",
+  const paramProfile: Profile = {
+    name: "param-profile",
     setup(ctx) {
       ctx.route("GET", "/items/:id", async (rc) => {
         jsonResponse(rc, 200, { id: rc.params["0"] });
@@ -112,8 +112,8 @@ describe("Plugin Routes", () => {
     },
   };
 
-  const apiAuthPlugin: Plugin = {
-    name: "api-auth-plugin",
+  const apiAuthProfile: Profile = {
+    name: "api-auth-profile",
     setup(ctx) {
       ctx.route("POST", "/data", async (rc) => {
         jsonResponse(rc, 200, { accepted: true });
@@ -121,21 +121,21 @@ describe("Plugin Routes", () => {
     },
   };
 
-  const secondPlugin: Plugin = {
-    name: "second-plugin",
+  const secondProfile: Profile = {
+    name: "second-profile",
     setup(ctx) {
       ctx.route("GET", "/second-route", async (rc) => {
-        jsonResponse(rc, 200, { source: "second-plugin" });
+        jsonResponse(rc, 200, { source: "second-profile" });
       }, "none");
     },
   };
 
   before(async () => {
-    runtime = new PluginRuntime(mockDocker, mockStore);
-    await runtime.loadPlugin(noAuthPlugin);
-    await runtime.loadPlugin(paramPlugin);
-    await runtime.loadPlugin(apiAuthPlugin);
-    await runtime.loadPlugin(secondPlugin);
+    runtime = new ProfileRuntime(mockDocker, mockStore);
+    await runtime.loadProfile(noAuthProfile);
+    await runtime.loadProfile(paramProfile);
+    await runtime.loadProfile(apiAuthProfile);
+    await runtime.loadProfile(secondProfile);
 
     const servers = createHttpServer(mockStore, mockDocker, runtime);
     server = servers.public;
@@ -146,15 +146,15 @@ describe("Plugin Routes", () => {
     server.close();
   });
 
-  // ── 1. Plugin registers a route accessible via HTTP ──
+  // ── 1. Profile registers a route accessible via HTTP ──
 
-  describe("plugin route registration", () => {
-    it("GET /test-route returns plugin JSON (auth: none)", async () => {
+  describe("profile route registration", () => {
+    it("GET /test-route returns profile JSON (auth: none)", async () => {
       const res = await request(TEST_PORT, "/test-route");
       assert.equal(res.status, 200);
       const data = JSON.parse(res.body);
       assert.equal(data.ok, true);
-      assert.equal(data.source, "no-auth-plugin");
+      assert.equal(data.source, "no-auth-profile");
     });
   });
 
@@ -214,24 +214,24 @@ describe("Plugin Routes", () => {
     });
   });
 
-  // ── 4. Multiple plugins register routes ──
+  // ── 4. Multiple profiles register routes ──
 
-  describe("multiple plugins", () => {
-    it("first plugin route is accessible", async () => {
+  describe("multiple profiles", () => {
+    it("first profile route is accessible", async () => {
       const res = await request(TEST_PORT, "/test-route");
       assert.equal(res.status, 200);
       const data = JSON.parse(res.body);
-      assert.equal(data.source, "no-auth-plugin");
+      assert.equal(data.source, "no-auth-profile");
     });
 
-    it("second plugin route is accessible", async () => {
+    it("second profile route is accessible", async () => {
       const res = await request(TEST_PORT, "/second-route");
       assert.equal(res.status, 200);
       const data = JSON.parse(res.body);
-      assert.equal(data.source, "second-plugin");
+      assert.equal(data.source, "second-profile");
     });
 
-    it("all four plugin routes are registered", () => {
+    it("all four profile routes are registered", () => {
       const registered = runtime.getRoutes();
       assert.equal(registered.length, 4);
     });
@@ -240,33 +240,33 @@ describe("Plugin Routes", () => {
   // ── 5. requiredCredentials field ──
 
   describe("requiredCredentials", () => {
-    it("preserves requiredCredentials after loading", async () => {
-      const credRuntime = new PluginRuntime(mockDocker, mockStore);
+    it("preserves requiredCredentials after loading profile", async () => {
+      const credRuntime = new ProfileRuntime(mockDocker, mockStore);
 
-      const plugin: Plugin = {
-        name: "cred-plugin",
+      const prof: Profile = {
+        name: "cred-profile",
         requiredCredentials: ["GH_TOKEN", "LINEAR_API_KEY"],
         setup() {},
       };
 
-      await credRuntime.loadPlugin(plugin);
+      await credRuntime.loadProfile(prof);
 
-      const loaded = credRuntime.getPlugins();
+      const loaded = credRuntime.getProfiles();
       assert.equal(loaded.length, 1);
       assert.deepEqual(loaded[0].requiredCredentials, ["GH_TOKEN", "LINEAR_API_KEY"]);
     });
 
-    it("plugin without requiredCredentials has undefined field", async () => {
-      const credRuntime = new PluginRuntime(mockDocker, mockStore);
+    it("profile without requiredCredentials has undefined field", async () => {
+      const credRuntime = new ProfileRuntime(mockDocker, mockStore);
 
-      const plugin: Plugin = {
+      const prof: Profile = {
         name: "no-creds",
         setup() {},
       };
 
-      await credRuntime.loadPlugin(plugin);
+      await credRuntime.loadProfile(prof);
 
-      const loaded = credRuntime.getPlugins();
+      const loaded = credRuntime.getProfiles();
       assert.equal(loaded[0].requiredCredentials, undefined);
     });
   });

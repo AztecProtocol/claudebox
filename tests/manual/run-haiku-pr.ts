@@ -60,13 +60,13 @@ async function main() {
     });
   }
 
-  const { SessionStore } = await import("../../packages/libclaudebox/session-store.ts");
+  const { WorktreeStore } = await import("../../packages/libclaudebox/worktree-store.ts");
   const { DockerService } = await import("../../packages/libclaudebox/docker.ts");
-  const { setPluginsDir } = await import("../../packages/libclaudebox/plugin-loader.ts");
+  const { setProfilesDir } = await import("../../packages/libclaudebox/profile-loader.ts");
 
-  setPluginsDir(join(ROOT_DIR, "profiles"));
+  setProfilesDir(join(ROOT_DIR, "profiles"));
 
-  const store = new SessionStore(SESSIONS_DIR, WORKTREES_DIR);
+  const store = new WorktreeStore(SESSIONS_DIR, WORKTREES_DIR);
   const docker = new DockerService();
 
   const prompt = `You are working on the repo ${TEST_REPO}.
