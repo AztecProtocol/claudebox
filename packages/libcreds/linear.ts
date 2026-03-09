@@ -1,47 +1,27 @@
 /**
- * Linear credential client.
+ * Linear API client with audit logging.
  *
- * Every Linear API call goes through this module.
- * Read-only by default; write operations require canWrite + team in allowedTeams.
+ * Clean wrapper — no grant checking. Security boundary is the token.
  */
 
-import type { SessionContext, ProfileGrant } from "./types.ts";
-import { audit, deny } from "./audit.ts";
+import type { SessionContext } from "./types.ts";
+import { audit } from "./audit.ts";
 
 export interface LinearClientOpts {
   token: string;
   ctx: SessionContext;
-  grant: ProfileGrant["linear"];
 }
 
 export class LinearClient {
   private token: string;
   private ctx: SessionContext;
-  private grant: ProfileGrant["linear"];
 
   constructor(opts: LinearClientOpts) {
     this.token = opts.token;
     this.ctx = opts.ctx;
-    this.grant = opts.grant;
   }
 
   get hasToken(): boolean { return !!this.token; }
-
-  // ── Grant checks ────────────────────────────────────────────────
-
-  private requireRead(detail: string): void {
-    if (!this.grant) deny("linear", "read", detail, `no Linear grant for profile '${this.ctx.profile}'`);
-    audit("linear", "read", detail, true);
-  }
-
-  private requireWrite(team: string, detail: string): void {
-    if (!this.grant) deny("linear", "write", detail, `no Linear grant for profile '${this.ctx.profile}'`);
-    if (!this.grant.canWrite) deny("linear", "write", detail, `writes not allowed for profile '${this.ctx.profile}'`);
-    if (this.grant.allowedTeams && !this.grant.allowedTeams.includes(team.toUpperCase())) {
-      deny("linear", "write", detail, `team '${team}' not in allowed teams for profile '${this.ctx.profile}'`);
-    }
-    audit("linear", "write", detail, true);
-  }
 
   // ── Transport ───────────────────────────────────────────────────
 
@@ -72,10 +52,7 @@ export class LinearClient {
     const m = identifier.match(/^([A-Za-z][\w-]*)-(\d+)$/);
     if (!m) throw new Error(`Invalid Linear identifier: ${identifier}`);
 
-    const teamKey = m[1].toUpperCase();
-    const number = parseInt(m[2], 10);
-
-    this.requireRead(`getIssue ${identifier}`);
+    audit("linear", "read", `getIssue ${identifier}`, true);
 
     const data = await this.graphql(
       `query($filter: IssueFilter) {
@@ -90,7 +67,7 @@ export class LinearClient {
           }
         }
       }`,
-      { filter: { number: { eq: number }, team: { key: { eq: teamKey } } } },
+      { filter: { number: { eq: parseInt(m[2], 10) }, team: { key: { eq: m[1].toUpperCase() } } } },
     );
 
     const issue = data?.issues?.nodes?.[0];
@@ -107,7 +84,7 @@ export class LinearClient {
     priority?: number;
   }): Promise<{ identifier: string; title: string; url: string }> {
     const teamKey = opts.team.toUpperCase();
-    this.requireWrite(teamKey, `createIssue team=${teamKey}`);
+    audit("linear", "write", `createIssue team=${teamKey}`, true);
 
     const teamData = await this.graphql(
       `query($key: String!) { teams(filter: { key: { eq: $key } }) { nodes { id } } }`,
