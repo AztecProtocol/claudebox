@@ -82,28 +82,14 @@ You can directly edit files here and they take effect immediately for future ses
 - `CLAUDE.md` — this file (your system prompt)
 - `.claude/skills/<name>/SKILL.md` — skills invokable as `/<name>`
 
-The `create_skill` MCP tool writes to this directory. To track changes in git, clone the repo and `create_pr` with the same changes.
-
 ## Improving Profiles
 
-When asked to improve a profile (add skills, update CLAUDE.md, tune MCP tools):
+When asked to improve a profile (add skills, update CLAUDE.md, tune MCP tools), make the changes in your workspace clone and `create_pr`:
 
-1. **Skills** — use `create_skill` for immediate effect. Copy the file into your workspace clone and PR it for version control.
-2. **CLAUDE.md** — edit `/opt/claudebox-profile/CLAUDE.md` directly (immediate). PR the change from your workspace clone.
-3. **MCP sidecar** — edit in workspace clone, PR it. Takes effect for new sessions once merged (bind-mounted).
-4. **libclaudebox MCP tools** — edit `packages/libclaudebox/mcp/*.ts` in workspace clone, PR it. Takes effect for new sessions.
-
-Pattern for tracked profile changes:
-```
-# 1. Make the change in the live profile dir (immediate)
-Write /opt/claudebox-profile/.claude/skills/my-skill/SKILL.md
-
-# 2. Copy to workspace clone for version control
-cp /opt/claudebox-profile/.claude/skills/my-skill/SKILL.md /workspace/claudebox/profiles/claudebox-dev/.claude/skills/my-skill/SKILL.md
-
-# 3. PR it
-create_pr(title="skill: add /my-skill", body="...")
-```
+- **Skills** — write to `profiles/<name>/.claude/skills/<skill>/SKILL.md`
+- **CLAUDE.md** — edit `profiles/<name>/CLAUDE.md`
+- **MCP sidecar** — edit `profiles/<name>/mcp-sidecar.ts`
+- **libclaudebox MCP tools** — edit `packages/libclaudebox/mcp/*.ts`
 
 ## Running Tests
 

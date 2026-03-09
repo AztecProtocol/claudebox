@@ -3,10 +3,10 @@
  *
  * Registers: get_context, session_status, set_workspace_name, set_tag,
  * respond_to_user, github_api, linear_get_issue, linear_create_issue,
- * ci_failures, record_stat, create_gist, create_skill.
+ * ci_failures, record_stat, create_gist.
  */
 
-import { existsSync, writeFileSync, appendFileSync, mkdirSync } from "fs";
+import { appendFileSync, mkdirSync } from "fs";
 import { join } from "path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
@@ -26,21 +26,19 @@ export let workspaceName = "";
 export interface ProfileOpts {
   repo: string;
   workspace: string;
-  tools: string;
   ghWhitelist?: Array<{ method: string; pattern: RegExp }>;
 }
 
 export function registerCommonTools(server: McpServer, opts: ProfileOpts): void {
-  const { repo, tools } = opts;
+  const { repo } = opts;
 
   // ── get_context ────────────────────────────────────────────────
-  server.tool("get_context", "Session metadata: user, repo, log_url, trigger source, git ref, available tools.", {},
+  server.tool("get_context", "Session metadata: user, repo, log_url, trigger source, git ref.", {},
     async () => {
       const ctx: Record<string, string> = {};
       for (const [k, v] of Object.entries(SESSION_META)) {
         if (v) ctx[k] = v;
       }
-      ctx.tools = tools;
       ctx.ci_allow = CI_ALLOW ? "true — you CAN modify .github/ workflow files" : "false — .github/ workflow files are blocked. If you need to propose CI changes, write them to .github-new/ instead.";
       return { content: [{ type: "text", text: JSON.stringify(ctx, null, 2) }] };
     });
@@ -286,38 +284,4 @@ For writes, use dedicated tools: create_pr, update_pr, create_gist, create_issue
       }
     });
 
-  // ── create_skill ──────────────────────────────────────────────
-  const profileDir = process.env.CLAUDEBOX_PROFILE_DIR || "/opt/claudebox-profile";
-  server.tool("create_skill",
-    `Create or update a Claude Code skill in this profile.
-
-A skill is a reusable prompt invoked with /<name>. Written to the profile's .claude/skills/ directory.
-Takes effect immediately for new sessions (profile dir is bind-mounted from the host).
-To track in version control, use the claudebox-dev profile to commit the change.`,
-    {
-      name: z.string().regex(/^[a-z0-9-]+$/).describe("Skill name (lowercase, hyphens only). Used as /<name> command."),
-      description: z.string().describe("One-line description shown in skill listings"),
-      argument_hint: z.string().optional().describe("Hint for arguments, e.g. '<PR number>' or '<url-or-hash>'"),
-      body: z.string().describe("Markdown body with detailed instructions for Claude to follow"),
-    },
-    async ({ name, description, argument_hint, body }) => {
-      const skillDir = join(profileDir, ".claude", "skills", name);
-      const skillFile = join(skillDir, "SKILL.md");
-
-      let frontmatter = `---\nname: ${name}\ndescription: ${description}\n`;
-      if (argument_hint) frontmatter += `argument-hint: ${argument_hint}\n`;
-      frontmatter += `---\n\n`;
-
-      const content = frontmatter + body;
-      const action = existsSync(skillFile) ? "Updated" : "Created";
-
-      try {
-        mkdirSync(skillDir, { recursive: true });
-        writeFileSync(skillFile, content);
-        logActivity("skill", `${action} /${name}: ${description}`);
-        return { content: [{ type: "text", text: `${action} skill /${name} in profile dir. Available next session.` }] };
-      } catch (e: any) {
-        return { content: [{ type: "text", text: `create_skill: ${e.message}` }], isError: true };
-      }
-    });
 }

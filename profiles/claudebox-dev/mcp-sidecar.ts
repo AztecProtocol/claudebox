@@ -27,14 +27,12 @@ const DEV_BRANCH = "main";
 
 SESSION_META.repo = REPO;
 
-const TOOL_LIST = "clone_repo, respond_to_user, get_context, session_status, github_api, create_pr, update_pr, push_branch, create_gist, create_skill, ci_failures, linear_get_issue, linear_create_issue, record_stat";
-
 // ── MCP Server factory ──────────────────────────────────────────
 
 function createServer(): McpServer {
   const server = new McpServer({ name: "claudebox-dev", version: "1.0.0" });
 
-  registerCommonTools(server, { repo: REPO, workspace: WORKSPACE, tools: TOOL_LIST });
+  registerCommonTools(server, { repo: REPO, workspace: WORKSPACE });
 
   registerCloneRepo(server, {
     repo: REPO, workspace: WORKSPACE,
