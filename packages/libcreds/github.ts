@@ -28,6 +28,17 @@ interface GhFetchOpts {
   accept?: string;
 }
 
+function validateRepo(repo: string): void {
+  if (typeof repo !== "string" || repo.length === 0 || repo.length > 200) {
+    throw new Error("[libcreds] Invalid GitHub repo identifier");
+  }
+  // Require "owner/repo" with safe characters only.
+  const repoPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+  if (!repoPattern.test(repo)) {
+    throw new Error("[libcreds] Invalid GitHub repo identifier");
+  }
+}
+
 export class GitHubClient {
   private token: string;
   private ctx: SessionContext;
@@ -226,16 +237,19 @@ export class GitHubClient {
   }
 
   async addIssueComment(repo: string, issueNumber: number, body: string): Promise<any> {
+    validateRepo(repo);
     await this.check("github:issues:comment", repo, `POST repos/${repo}/issues/${issueNumber}/comments`);
     return this.ghJson(`repos/${repo}/issues/${issueNumber}/comments`, { method: "POST", body: { body } });
   }
 
   async updateIssueComment(repo: string, commentId: string, body: string): Promise<any> {
+    validateRepo(repo);
     await this.check("github:issues:comment", repo, `PATCH repos/${repo}/issues/comments/${commentId}`);
     return this.ghJson(`repos/${repo}/issues/comments/${commentId}`, { method: "PATCH", body: { body } });
   }
 
   async addLabels(repo: string, issueNumber: number, labels: string[]): Promise<any> {
+    validateRepo(repo);
     await this.check("github:issues:label", repo, `POST repos/${repo}/issues/${issueNumber}/labels`);
     return this.ghJson(`repos/${repo}/issues/${issueNumber}/labels`, { method: "POST", body: { labels } });
   }
