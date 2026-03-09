@@ -699,11 +699,18 @@ function RunDetail({run, activity, onBack, runArtifacts, priorPrNums}){
     if(activity.length!==prevActivityLen.current){
       const nearBottom=el.scrollHeight-el.scrollTop-el.clientHeight<200;
       if(nearBottom||prevActivityLen.current===0){
-        requestAnimationFrame(()=>{el.scrollTop=el.scrollHeight;});
+        // Double-RAF to ensure DOM has painted before scrolling
+        requestAnimationFrame(()=>{requestAnimationFrame(()=>{el.scrollTop=el.scrollHeight;});});
       }
       prevActivityLen.current=activity.length;
     }
   },[activity.length]);
+  // Also scroll on mount after content settles
+  useEffect(()=>{
+    if(!bodyRef.current)return;
+    const el=bodyRef.current;
+    setTimeout(()=>{el.scrollTop=el.scrollHeight;},100);
+  },[]);
 
   return html\`<div class="run-detail">
     <div class="run-detail-header">
