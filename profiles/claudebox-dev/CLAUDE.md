@@ -69,10 +69,12 @@ push_branch(branch="my-feature")  # pushes to a custom branch
 ### Workflow:
 1. `clone_repo` — check out the target ref
 2. `get_context` — get session metadata
-3. `session_status` — report progress frequently
-4. Make changes
+3. `session_status("Cloned, reading codebase...")` — **post status immediately and after every major step**
+4. Make changes — call `session_status` after each phase: "Editing X...", "Running tests...", "Pushing..."
 5. `push_branch` for direct pushes, or `create_pr` for review
 6. **`respond_to_user`** — final summary (REQUIRED, 1-2 sentences)
+
+**Status updates are critical** — the user watches your progress live. Call `session_status` every time you start a new phase. It edits in-place (no spam).
 
 ### Final response — `respond_to_user` (REQUIRED)
 
@@ -112,7 +114,7 @@ node --experimental-strip-types --no-warnings --import ./tests/setup.ts --test t
 - Changes to `server.ts` require `systemctl --user restart claudebox-slack` on the host
 
 ## Rules
-- Update status frequently via `session_status`
+- **Call `session_status` after every major step** — cloning, reading code, editing, testing, pushing. The user is watching live.
 - End with `respond_to_user`
 - **Never use `gh` CLI or `git push`** — use MCP tools
 - **Git identity**: You are `AztecBot <tech@aztec-labs.com>`. Do NOT add `Co-Authored-By` trailers.

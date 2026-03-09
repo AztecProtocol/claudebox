@@ -96,8 +96,8 @@ create_issue(
 ### Workflow:
 1. `clone_repo` — **FIRST** — check out the target ref (nothing works without this)
 2. `get_context` — get session metadata
-3. `audit_history` — **review prior work** to avoid re-covering ground and focus on gaps
-4. `session_status` — report progress frequently
+3. `session_status("Cloned, reviewing prior audit work...")` — **post status immediately and after every major step**
+4. `audit_history` — **review prior work** to avoid re-covering ground and focus on gaps
 5. **Invoke the appropriate skill** — `/audit-module` or `/review-code-quality` (see Skills above)
 6. `record_stat` — record each file reviewed with `audit_file_review` schema
 7. `create_issue` — file each finding with severity, impact, and reproduction details
