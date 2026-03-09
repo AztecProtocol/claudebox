@@ -32,7 +32,7 @@ const TOOL_LIST = "clone_repo, respond_to_user, get_context, session_status, git
 // ── Auth check at startup ───────────────────────────────────────
 try {
   const creds = getCreds();
-  await creds.github.apiGet(REPO, `repos/${REPO}`);
+  await creds.github.rawGet(REPO, `repos/${REPO}`);
   console.log(`[AUDIT] Verified access to ${REPO}`);
 } catch (e: any) {
   console.error(`[FATAL] Cannot access ${REPO}: ${e.message}`);

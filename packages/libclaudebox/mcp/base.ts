@@ -545,7 +545,7 @@ For writes, use dedicated tools: create_pr, update_pr, create_gist, create_issue
       if (!_hasGhToken()) return { content: [{ type: "text", text: "No GitHub access configured" }], isError: true };
 
       try {
-        const result = await getCreds().github.apiGet(repo, path.replace(/^\//, ""), { accept });
+        const result = await getCreds().github.rawGet(repo, path.replace(/^\//, ""), { accept });
         const text = typeof result === "string" ? result : JSON.stringify(result, null, 2);
         const maxLen = 100_000;
         return { content: [{ type: "text", text: text.length > maxLen ? text.slice(0, maxLen) + "\n...(truncated)" : text }] };
@@ -592,17 +592,26 @@ Channel and thread are locked to this session — you can only read/write your o
       }
 
       try {
-        const d = await getCreds().slack.call(method, payload);
-        if (!d.ok) {
+        const slack = getCreds().slack;
+        let d: any;
+        switch (method) {
+          case "chat.postMessage": d = await slack.postMessage(payload.text, { channel: payload.channel, threadTs: payload.thread_ts }); break;
+          case "chat.update": d = await slack.updateMessage(payload.text, { channel: payload.channel, ts: payload.ts }); break;
+          case "reactions.add": d = await slack.addReaction(payload.name, { channel: payload.channel, timestamp: payload.timestamp }); break;
+          case "reactions.remove": d = await slack.removeReaction(payload.name, { channel: payload.channel, timestamp: payload.timestamp }); break;
+          case "conversations.replies": d = await slack.getThreadReplies({ channel: payload.channel, ts: payload.ts, limit: payload.limit }); break;
+          case "users.list": d = await slack.listUsers(payload.limit); break;
+          default: return { content: [{ type: "text", text: `Unknown method: ${method}` }], isError: true };
+        }
+        if (!d?.ok) {
           const hints: Record<string, string> = {
             not_in_channel: " (bot not invited to this channel — use your session's own channel instead)",
-            missing_scope: ` (need: ${d.needed || "unknown"}, have: ${d.provided || "unknown"})`,
+            missing_scope: ` (need: ${d?.needed || "unknown"}, have: ${d?.provided || "unknown"})`,
             channel_not_found: " (channel ID may be wrong — check get_context for your session's channel)",
           };
-          return { content: [{ type: "text", text: `${method}: ${d.error}${hints[d.error] || ""}` }], isError: true };
+          return { content: [{ type: "text", text: `${method}: ${d?.error}${hints[d?.error] || ""}` }], isError: true };
         }
-        const READ_METHODS = new Set(["conversations.replies"]);
-        if (READ_METHODS.has(method)) {
+        if (method === "conversations.replies") {
           const text = JSON.stringify(d, null, 2);
           const maxLen = 50_000;
           return { content: [{ type: "text", text: text.length > maxLen ? text.slice(0, maxLen) + "\n...(truncated)" : text }] };
@@ -663,7 +672,7 @@ Channel and thread are locked to this session — you can only read/write your o
 
       const creds = getCreds();
       const ghGet = async (path: string) => {
-        return creds.github.apiGet(repo, path);
+        return creds.github.rawGet(repo, path);
       };
 
       const fmtRun = (r: any) =>
@@ -931,8 +940,8 @@ async function initSlackFromPermalink(): Promise<void> {
   const slack = getCreds().slack;
 
   try {
-    const d = await slack.call("chat.update", {
-      channel: SESSION_META.slack_channel, ts: SESSION_META.slack_thread_ts, text: initText,
+    const d = await slack.updateMessage(initText, {
+      channel: SESSION_META.slack_channel, ts: SESSION_META.slack_thread_ts,
     });
     if (d.ok) {
       SESSION_META.slack_message_ts = SESSION_META.slack_thread_ts;
@@ -946,8 +955,8 @@ async function initSlackFromPermalink(): Promise<void> {
   }
 
   try {
-    const d = await slack.call("chat.postMessage", {
-      channel: SESSION_META.slack_channel, thread_ts: SESSION_META.slack_thread_ts, text: initText,
+    const d = await slack.postMessage(initText, {
+      channel: SESSION_META.slack_channel, threadTs: SESSION_META.slack_thread_ts,
     });
     if (d.ok && d.ts) {
       SESSION_META.slack_message_ts = d.ts;

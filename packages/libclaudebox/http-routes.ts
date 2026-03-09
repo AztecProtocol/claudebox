@@ -1138,7 +1138,17 @@ const routes: Route[] = [
       try {
         const { getHostCreds } = await import("../libcreds-host/index.ts");
         const creds = getHostCreds({ slackChannel: args?.channel });
-        const d = await creds.slack.call(method, args || {});
+        const slack = creds.slack;
+        let d: any;
+        switch (method) {
+          case "chat.postMessage": d = await slack.postMessage(args.text, { channel: args.channel, threadTs: args.thread_ts }); break;
+          case "chat.update": d = await slack.updateMessage(args.text, { channel: args.channel, ts: args.ts }); break;
+          case "reactions.add": d = await slack.addReaction(args.name, { channel: args.channel, timestamp: args.timestamp }); break;
+          case "conversations.replies": d = await slack.getThreadReplies({ channel: args.channel, ts: args.ts, limit: args.limit }); break;
+          case "users.list": d = await slack.listUsers(args.limit); break;
+          case "conversations.open": d = await slack.openConversation(args.users); break;
+          default: json(res, 403, { ok: false, error: `blocked: ${method}` }); return;
+        }
         json(res, 200, d);
       } catch (e: any) {
         console.error(`[HTTP] ${e.message}`); json(res, 500, { ok: false, error: "internal error" });

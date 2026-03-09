@@ -1,24 +1,23 @@
 /**
- * Slack credential client — high-level typed operations.
+ * Slack credential client.
  *
- * Every Slack API call in ClaudeBox goes through this module.
- * Operations are policy-checked, session-scoped, and audit-logged.
- * Fully async.
+ * Every Slack API call goes through this module.
+ * Channel-scoped: write operations are locked to the session channel
+ * (or explicitly granted extra channels). No escape hatches.
  *
- * Session scoping: by default, chat operations are locked to the
- * Slack channel/thread that triggered the session. The policy engine
- * enforces this — see policy.ts checkSlackPolicy.
+ * TRUST MODEL: In sidecar mode, policy is checked here (in the sidecar),
+ * then the API call is proxied through the host's /api/internal/slack.
+ * The host endpoint is a dumb pipe — the sidecar is trusted to enforce policy.
  */
 
-import type { SessionContext, ProfileGrant, SlackOperationName } from "./types.ts";
-import { checkSlackPolicy, enforce } from "./policy.ts";
-import { getOperationOrThrow } from "./operations.ts";
+import type { SessionContext, ProfileGrant } from "./types.ts";
+import { audit, deny } from "./audit.ts";
 
 export interface SlackClientOpts {
   token: string;
   ctx: SessionContext;
   grant: ProfileGrant["slack"];
-  /** For sidecar mode: proxy through the host server */
+  /** Sidecar mode: proxy through the host server. */
   proxy?: { serverUrl: string; serverToken: string; profile: string };
 }
 
@@ -38,19 +37,27 @@ export class SlackClient {
   /** Whether Slack access is available (direct token or proxy). */
   get hasToken(): boolean { return !!(this.token || this.proxy); }
 
-  // ── Internal ───────────────────────────────────────────────────
+  // ── Grant checks ────────────────────────────────────────────────
 
-  private async check(operation: SlackOperationName, channel?: string): Promise<void> {
-    const decision = checkSlackPolicy(operation, channel, this.ctx, this.grant);
-    const op = getOperationOrThrow(operation);
-    await enforce(decision, "slack", operation, `${operation}${channel ? ` ch=${channel}` : ""}`, op.danger);
+  private requireGrant(detail: string): void {
+    if (!this.grant) deny("slack", "read", detail, `no Slack grant for profile '${this.ctx.profile}'`);
   }
 
-  /**
-   * Call a Slack Web API method. Handles both direct and proxied modes.
-   */
+  /** Check that a channel is in session scope (session channel + extra channels). */
+  private requireChannel(channel: string, detail: string): void {
+    this.requireGrant(detail);
+    const allowed = new Set<string>();
+    if (this.ctx.slackChannel) allowed.add(this.ctx.slackChannel);
+    if (this.grant!.extraChannels) for (const ch of this.grant!.extraChannels) allowed.add(ch);
+
+    if (!allowed.has(channel)) {
+      deny("slack", "write", detail, `channel '${channel}' not in session scope (allowed: ${[...allowed].join(", ") || "none"})`);
+    }
+  }
+
+  // ── Transport ───────────────────────────────────────────────────
+
   private async slackCall(method: string, args: Record<string, any>, isRead = false): Promise<any> {
-    // Proxy mode: route through host server
     if (this.proxy) {
       const res = await fetch(`${this.proxy.serverUrl}/api/internal/slack`, {
         method: "POST",
@@ -65,7 +72,6 @@ export class SlackClient {
       return res.json();
     }
 
-    // Direct mode: call Slack API with token
     if (!this.token) throw new Error("[libcreds] No Slack token available");
 
     const url = isRead
@@ -83,111 +89,79 @@ export class SlackClient {
     return res.json();
   }
 
-  // ── READ operations ────────────────────────────────────────────
+  // ── READ ────────────────────────────────────────────────────────
 
-  /** Read thread replies. Scoped to session thread by default. */
   async getThreadReplies(opts?: { channel?: string; ts?: string; limit?: number }): Promise<any> {
     const channel = opts?.channel || this.ctx.slackChannel;
     const ts = opts?.ts || this.ctx.slackThreadTs;
     if (!channel) throw new Error("[libcreds] No Slack channel in session context");
     if (!ts) throw new Error("[libcreds] No Slack thread_ts in session context");
 
-    await this.check("slack:conversations:replies", channel);
-    return this.slackCall("conversations.replies", {
-      channel,
-      ts,
-      ...(opts?.limit ? { limit: opts.limit } : {}),
-    }, true);
+    this.requireChannel(channel, `conversations.replies ch=${channel}`);
+    audit("slack", "read", `conversations.replies ch=${channel}`, true);
+    return this.slackCall("conversations.replies", { channel, ts, ...(opts?.limit ? { limit: opts.limit } : {}) }, true);
   }
 
-  /** List workspace users. Not channel-scoped. */
   async listUsers(limit = 200): Promise<any> {
-    await this.check("slack:users:list");
+    this.requireGrant("users.list");
+    audit("slack", "read", "users.list", true);
     return this.slackCall("users.list", { limit }, true);
   }
 
-  /** Get channel info. */
   async getChannelInfo(channelId: string): Promise<any> {
-    await this.check("slack:conversations:info", channelId);
+    this.requireGrant(`conversations.info ch=${channelId}`);
+    audit("slack", "read", `conversations.info ch=${channelId}`, true);
     return this.slackCall("conversations.info", { channel: channelId }, true);
   }
 
-  // ── WRITE operations ───────────────────────────────────────────
+  // ── WRITE ───────────────────────────────────────────────────────
 
-  /** Post a message. Scoped to session thread by default. */
   async postMessage(text: string, opts?: { channel?: string; threadTs?: string }): Promise<any> {
     const channel = opts?.channel || this.ctx.slackChannel;
     if (!channel) throw new Error("[libcreds] No Slack channel in session context");
 
-    await this.check("slack:chat:postMessage", channel);
+    this.requireChannel(channel, `chat.postMessage ch=${channel}`);
+    audit("slack", "write", `chat.postMessage ch=${channel}`, true);
     return this.slackCall("chat.postMessage", {
-      channel,
-      text,
+      channel, text,
       thread_ts: opts?.threadTs || this.ctx.slackThreadTs,
     });
   }
 
-  /** Update an existing message. Scoped to session message by default. */
   async updateMessage(text: string, opts?: { channel?: string; ts?: string }): Promise<any> {
     const channel = opts?.channel || this.ctx.slackChannel;
     const ts = opts?.ts || this.ctx.slackMessageTs;
     if (!channel) throw new Error("[libcreds] No Slack channel in session context");
     if (!ts) throw new Error("[libcreds] No Slack message ts in session context");
 
-    await this.check("slack:chat:update", channel);
+    this.requireChannel(channel, `chat.update ch=${channel}`);
+    audit("slack", "write", `chat.update ch=${channel}`, true);
     return this.slackCall("chat.update", { channel, ts, text });
   }
 
-  /** Add a reaction to a message. */
   async addReaction(name: string, opts?: { channel?: string; timestamp?: string }): Promise<any> {
     const channel = opts?.channel || this.ctx.slackChannel;
     const timestamp = opts?.timestamp || this.ctx.slackMessageTs;
     if (!channel || !timestamp) return;
 
-    await this.check("slack:reactions:add", channel);
+    this.requireChannel(channel, `reactions.add ch=${channel}`);
+    audit("slack", "write", `reactions.add ch=${channel}`, true);
     return this.slackCall("reactions.add", { channel, timestamp, name });
   }
 
-  /** Remove a reaction from a message. */
   async removeReaction(name: string, opts?: { channel?: string; timestamp?: string }): Promise<any> {
     const channel = opts?.channel || this.ctx.slackChannel;
     const timestamp = opts?.timestamp || this.ctx.slackMessageTs;
     if (!channel || !timestamp) return;
 
-    await this.check("slack:reactions:remove", channel);
+    this.requireChannel(channel, `reactions.remove ch=${channel}`);
+    audit("slack", "write", `reactions.remove ch=${channel}`, true);
     return this.slackCall("reactions.remove", { channel, timestamp, name }).catch(() => {});
   }
 
-  /** Open a DM conversation with a user. */
   async openConversation(userId: string): Promise<any> {
-    await this.check("slack:conversations:open");
+    this.requireGrant(`conversations.open user=${userId}`);
+    audit("slack", "write", `conversations.open user=${userId}`, true);
     return this.slackCall("conversations.open", { users: userId });
-  }
-
-  /**
-   * Generic Slack API call — for methods not wrapped above.
-   * Still policy-checked against the operation name.
-   */
-  async call(method: string, args: Record<string, any>): Promise<any> {
-    // Map Slack method name to our operation name
-    const opMap: Record<string, SlackOperationName> = {
-      "chat.postMessage": "slack:chat:postMessage",
-      "chat.update": "slack:chat:update",
-      "reactions.add": "slack:reactions:add",
-      "reactions.remove": "slack:reactions:remove",
-      "conversations.replies": "slack:conversations:replies",
-      "conversations.open": "slack:conversations:open",
-      "conversations.info": "slack:conversations:info",
-      "users.list": "slack:users:list",
-    };
-
-    const op = opMap[method];
-    if (!op) throw new Error(`[libcreds] Unknown Slack method: ${method}`);
-
-    const channel = args.channel as string | undefined;
-    await this.check(op, channel);
-
-    const READ_METHODS = new Set(["conversations.replies", "users.list", "conversations.info"]);
-    return this.slackCall(method, args, READ_METHODS.has(method));
   }
 }

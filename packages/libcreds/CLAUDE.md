@@ -1,50 +1,45 @@
 # libcreds Security Model
 
-## Danger Levels
+## Grant-Based Access Control
 
-Every credentialed operation is tagged with exactly one danger level:
-- **read** — GET, list, fetch (no side effects)
-- **write** — POST, PUT, PATCH (creates or updates resources)
-- **destructive** — deletes, force-pushes, closes PRs/issues
+Each profile declares a `ProfileGrant` specifying what resources it can access.
+Grants are checked inline in each client method — no separate policy engine.
 
-There is no **admin** level. No operation grants org-level or account-level permissions.
+### GitHub Grants
+- **repos** — full (read + write) access
+- **readOnlyRepos** — read-only access (writes blocked)
+- **canClose** — allow closing issues/PRs (destructive)
+- **canForcePush** — allow force-pushing (destructive)
+
+### Slack Grants
+- **extraChannels** — channels beyond the session channel
+- Session channel is always allowed for write operations
+- Read operations (users.list, conversations.info) are not channel-scoped
+
+### Linear Grants
+- **canWrite** — allow creating issues (default: read-only)
+- **allowedTeams** — teams allowed for write operations
 
 ## Session Context
 
-Each `Creds` instance carries an immutable `SessionContext` that captures:
-- Who triggered the session (Slack user)
-- Where it was triggered (Slack channel/thread, GitHub issue/PR)
-- Which profile is active
-- Runtime mode (host vs sidecar)
-
-Session context cannot be modified after creation. All policy checks and audit entries reference it.
-
-## Profile Grants
-
-Each profile declares a `ProfileGrant` specifying:
-- **Repo whitelist** — which GitHub repos it can access (read-only repos separate)
-- **Operation whitelist** — which operations are allowed per service
-- **Extra channels** — Slack channels beyond the session thread
-- **Team keys** — Linear teams allowed for write operations
-
-Unknown profiles fall back to `MINIMAL_GRANT` (read-only GitHub, session-scoped Slack, no Linear).
+Each `Creds` instance carries a `SessionContext`. Fields marked `[POLICY]` drive access decisions:
+- **profile** — determines which grant applies
+- **runtime** — host (raw tokens) vs sidecar (proxied)
+- **slackChannel** — Slack channel scoping for write operations
 
 ## Audit Logging
 
 All credential operations are logged to session JSONL files:
-- Logged: timestamp, service, operation, danger level, sanitized detail, allowed/denied, session ID
-- **Never logged**: tokens, secrets, credentials, request/response bodies
-
-Blocked operations also print to stderr for container log visibility.
+- Logged: timestamp, service, access level, detail, allowed/denied, profile, session ID
+- **Never logged**: tokens, secrets, credentials
+- Blocked operations also print to stderr for container log visibility
 
 ## Token Isolation
 
-Only `libcreds` (container-side) and `libcreds-host` (server-side) touch token environment variables.
-No other code should read `GH_TOKEN`, `SLACK_BOT_TOKEN`, or `LINEAR_API_KEY` directly.
+Only `libcreds` (container-side) and `libcreds-host` (server-side) read token env vars.
+No other code should access `GH_TOKEN`, `SLACK_BOT_TOKEN`, or `LINEAR_API_KEY` directly.
 
-## Explicitly Out of Scope
+## Trust Model
 
-- Anthropic API keys / Claude Code subscription management
-- Redis/SSH credential proxying
-- Credential rotation / expiry management
-- Rate limiting for external APIs
+- **Host mode**: clients call APIs directly with raw tokens
+- **Sidecar mode**: Slack proxies through host's `/api/internal/slack`; grant checking happens in the sidecar before proxying

@@ -1,7 +1,7 @@
 /**
  * libcreds end-to-end tests.
  *
- * Each test exercises the full stack: createCreds → client → policy → audit.
+ * Each test exercises the full stack: createCreds → client → grant check → audit.
  * No mocks, no stubs — real module wiring with real temp files.
  */
 
@@ -215,8 +215,10 @@ describe("libcreds e2e", () => {
     assert.ok(creds.grant.github?.repos.includes("AztecProtocol/aztec-packages"));
     assert.ok(creds.grant.github?.repos.includes("AztecProtocol/claudebox"));
 
-    // Host slack grant includes conversations:info (not in session grants)
-    assert.ok(creds.grant.slack?.operations.includes("slack:conversations:info"));
+    // Host grant has Slack access
+    assert.ok(creds.grant.slack !== undefined, "host should have Slack grant");
+    // Host grant allows force-push (not all profiles do)
+    assert.ok(creds.grant.github?.canForcePush, "host should allow force-push");
   });
 
   // ────────────────────────────────────────────────────────────────

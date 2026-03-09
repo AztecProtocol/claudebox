@@ -1,14 +1,12 @@
 /**
- * Linear credential client — high-level typed operations.
+ * Linear credential client.
  *
- * Every Linear API call in ClaudeBox goes through this module.
- * Read-only by default; write operations require explicit profile grant.
- * Fully async.
+ * Every Linear API call goes through this module.
+ * Read-only by default; write operations require canWrite + team in allowedTeams.
  */
 
-import type { SessionContext, ProfileGrant, LinearOperationName } from "./types.ts";
-import { checkLinearPolicy, enforce } from "./policy.ts";
-import { getOperationOrThrow } from "./operations.ts";
+import type { SessionContext, ProfileGrant } from "./types.ts";
+import { audit, deny } from "./audit.ts";
 
 export interface LinearClientOpts {
   token: string;
@@ -27,26 +25,32 @@ export class LinearClient {
     this.grant = opts.grant;
   }
 
-  /** Whether a Linear token is available. */
   get hasToken(): boolean { return !!this.token; }
 
-  // ── Internal ───────────────────────────────────────────────────
+  // ── Grant checks ────────────────────────────────────────────────
 
-  private async check(operation: LinearOperationName, team?: string): Promise<void> {
-    const decision = checkLinearPolicy(operation, team, this.ctx, this.grant);
-    const op = getOperationOrThrow(operation);
-    await enforce(decision, "linear", operation, `${operation}${team ? ` team=${team}` : ""}`, op.danger);
+  private requireRead(detail: string): void {
+    if (!this.grant) deny("linear", "read", detail, `no Linear grant for profile '${this.ctx.profile}'`);
+    audit("linear", "read", detail, true);
   }
+
+  private requireWrite(team: string, detail: string): void {
+    if (!this.grant) deny("linear", "write", detail, `no Linear grant for profile '${this.ctx.profile}'`);
+    if (!this.grant.canWrite) deny("linear", "write", detail, `writes not allowed for profile '${this.ctx.profile}'`);
+    if (this.grant.allowedTeams && !this.grant.allowedTeams.includes(team.toUpperCase())) {
+      deny("linear", "write", detail, `team '${team}' not in allowed teams for profile '${this.ctx.profile}'`);
+    }
+    audit("linear", "write", detail, true);
+  }
+
+  // ── Transport ───────────────────────────────────────────────────
 
   private async graphql(query: string, variables?: Record<string, any>): Promise<any> {
     if (!this.token) throw new Error("[libcreds] No Linear token available");
 
     const res = await fetch("https://api.linear.app/graphql", {
       method: "POST",
-      headers: {
-        Authorization: this.token,
-        "Content-Type": "application/json",
-      },
+      headers: { Authorization: this.token, "Content-Type": "application/json" },
       body: JSON.stringify({ query, variables }),
     });
 
@@ -59,13 +63,11 @@ export class LinearClient {
     if (json.errors?.length) {
       throw new Error(`Linear GraphQL: ${json.errors.map((e: any) => e.message).join(", ")}`);
     }
-
     return json.data;
   }
 
-  // ── READ operations ────────────────────────────────────────────
+  // ── READ ────────────────────────────────────────────────────────
 
-  /** Fetch a Linear issue by identifier (e.g., "UNIFIED-26"). */
   async getIssue(identifier: string): Promise<any> {
     const m = identifier.match(/^([A-Za-z][\w-]*)-(\d+)$/);
     if (!m) throw new Error(`Invalid Linear identifier: ${identifier}`);
@@ -73,7 +75,7 @@ export class LinearClient {
     const teamKey = m[1].toUpperCase();
     const number = parseInt(m[2], 10);
 
-    await this.check("linear:issues:read");
+    this.requireRead(`getIssue ${identifier}`);
 
     const data = await this.graphql(
       `query($filter: IssueFilter) {
@@ -96,9 +98,8 @@ export class LinearClient {
     return issue;
   }
 
-  // ── WRITE operations ───────────────────────────────────────────
+  // ── WRITE ───────────────────────────────────────────────────────
 
-  /** Create a new Linear issue. Returns { identifier, title, url }. */
   async createIssue(opts: {
     team: string;
     title: string;
@@ -106,9 +107,8 @@ export class LinearClient {
     priority?: number;
   }): Promise<{ identifier: string; title: string; url: string }> {
     const teamKey = opts.team.toUpperCase();
-    await this.check("linear:issues:create", teamKey);
+    this.requireWrite(teamKey, `createIssue team=${teamKey}`);
 
-    // Resolve team ID
     const teamData = await this.graphql(
       `query($key: String!) { teams(filter: { key: { eq: $key } }) { nodes { id } } }`,
       { key: teamKey },
@@ -132,11 +132,6 @@ export class LinearClient {
 
     const result = data?.issueCreate;
     if (!result?.success) throw new Error(`Failed to create Linear issue`);
-
-    return {
-      identifier: result.issue.identifier,
-      title: result.issue.title,
-      url: result.issue.url,
-    };
+    return { identifier: result.issue.identifier, title: result.issue.title, url: result.issue.url };
   }
 }
