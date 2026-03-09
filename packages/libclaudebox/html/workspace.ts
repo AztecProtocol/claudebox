@@ -116,6 +116,7 @@ a{color:inherit;text-decoration:none}a:hover{text-decoration:underline}
 .run-label{font-weight:600;color:#ccc;white-space:nowrap}
 .run-status{color:#666;font-size:12px}
 .run-exit{color:#E94560;font-size:12px}
+.run-slack-link{color:#555;font-size:11px;text-decoration:none;padding:2px 4px;border-radius:3px}.run-slack-link:hover{color:#5FA7F1;background:rgba(95,167,241,0.1)}
 .run-time{color:#444;margin-left:auto;font-size:11px;flex-shrink:0}
 .run-summary{padding:8px 20px 16px;font-size:14px;line-height:1.6;cursor:pointer}
 .run-summary-prompt{color:#ccc;word-break:break-word;white-space:pre-wrap;display:flex;gap:10px}
@@ -209,6 +210,7 @@ export function workspacePageHTML(data: WorkspacePageData): string {
     slackDomain,
     sessions: data.sessions.map(s => ({
       log_id: s._log_id, status: s.status, started: s.started, user: s.user,
+      exit_code: s.exit_code ?? null,
       prompt: stripSlackContext(s.prompt || ""),
       slack_channel: s.slack_channel || "",
       slack_message_ts: s.slack_message_ts || "",
@@ -504,6 +506,7 @@ function RunCard({run, lastReply, selected, onSelect, onOpen, runArtifacts, prio
       <span class="run-label">run \${run.index+1}\${run.total>1?"/"+run.total:""}</span>
       <span class="run-status">\${st}</span>
       \${run.exitCode!=null&&run.exitCode!==0?html\`<span class="run-exit">exit \${run.exitCode}</span>\`:null}
+      \${run.slackLink?html\`<a href=\${run.slackLink} target="_blank" class="run-slack-link" onClick=\${(e)=>e.stopPropagation()} title="View in Slack">\u2197</a>\`:null}
       \${run.started?html\`<span class="run-time">\${timeAgo(run.started)}</span>\`:null}
     </div>
     <div class="run-summary">
@@ -544,6 +547,7 @@ function RunDetail({run, activity, onBack, runArtifacts, priorPrNums}){
       <span class="run-label">run \${run.index+1}/\${run.total}</span>
       <span class="run-status">\${st}</span>
       \${run.exitCode!=null&&run.exitCode!==0?html\`<span class="run-exit">exit \${run.exitCode}</span>\`:null}
+      \${run.slackLink?html\`<a href=\${run.slackLink} target="_blank" class="run-slack-link" title="View in Slack">\u2197 Slack</a>\`:null}
       \${run.started?html\`<span class="run-time">\${timeAgo(run.started)}</span>\`:null}
     </div>
     \${runArtifacts&&runArtifacts.length?html\`<\${ArtifactChips} artifacts=\${runArtifacts} priorPrNums=\${priorPrNums} />\`:null}
@@ -726,11 +730,17 @@ function WorkspacePage(){
 
   function slackPermalink(s){
     if(!s.slack_channel)return null;
-    var ts=s.slack_thread_ts||s.slack_message_ts;
+    // Use message_ts (specific run message) if available, fall back to thread_ts
+    var ts=s.slack_message_ts||s.slack_thread_ts;
     if(!ts)return null;
     var pTs=ts.replace(".","");
     var domain=D.slackDomain||"app";
-    return "https://"+domain+".slack.com/archives/"+s.slack_channel+"/p"+pTs;
+    var url="https://"+domain+".slack.com/archives/"+s.slack_channel+"/p"+pTs;
+    // If linking to a specific message in a thread, add thread_ts param
+    if(s.slack_message_ts&&s.slack_thread_ts&&s.slack_message_ts!==s.slack_thread_ts){
+      url+="?thread_ts="+s.slack_thread_ts+"&cid="+s.slack_channel;
+    }
+    return url;
   }
 
   // Build runs from D.sessions (oldest first)
