@@ -2,15 +2,15 @@
 
 Run Claude in isolated Docker containers. Trigger from Slack, HTTP, or CLI.
 
-## Design
+## Concepts
 
-Containers are stateless workers. The host server owns all context — which Slack thread triggered a session, what PRs it touched, where to post updates. Containers talk back through a single HTTP API (`ServerClient → host:3002`). They don't know they're in Slack.
+**Worktree** — a persistent workspace. Each worktree has a git checkout, session transcripts, and metadata. Worktrees survive across runs and can be resumed. Identified by a 16-hex ID like `d9441073aae158ae`.
 
-Customization lives in **profiles** — a directory with a plugin config, MCP sidecar, and system prompt. The framework handles Docker, sessions, and routing.
+**Run** — one Claude execution inside a worktree. Each run gets a log ID (`d9441073aae158ae-3`), writes to the worktree's transcript, and appends to its activity log. Multiple runs share one worktree.
 
-Sessions persist as **git worktrees**. Resume is automatic: same Slack thread or same worktree ID picks up where it left off.
+**Profile** — a directory in `profiles/` that configures what Claude can do. Contains a plugin config (`plugin.ts`), an MCP tool server (`mcp-sidecar.ts`), and a system prompt (`container-claude.md`). Profiles control the Docker image, available tools, Slack channel routing, and required credentials.
 
-All code is **bind-mounted** into containers at runtime. No image rebuild to iterate.
+**Host / Container boundary** — the host server owns all external context (Slack threads, PR bindings, session history). Containers are stateless workers that talk back through a single HTTP API on an internal port. They don't know how they were triggered.
 
 ## Quick Start
 
@@ -33,7 +33,7 @@ cli.ts                     # CLI client
 
 Two HTTP servers:
 - Public `:3000` — dashboard, status pages, session API
-- Internal `:3002` (localhost) — sidecar→host boundary
+- Internal `:3002` (localhost) — container→host boundary
 
 ## Profiles
 
@@ -68,7 +68,7 @@ config <key> [value]               Get/set config
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| `POST` | `/run` | Bearer | Start/resume session |
+| `POST` | `/run` | Bearer | Start/resume run |
 | `GET` | `/session/<id>` | Bearer | Session JSON |
 | `GET` | `/s/<id>` | Public | Status page |
 | `POST` | `/s/<id>/cancel` | Basic | Cancel |
@@ -76,15 +76,17 @@ config <key> [value]               Get/set config
 | `GET` | `/dashboard` | Public | Dashboard |
 | `GET` | `/health` | None | Health check |
 
-## Sessions
+## Worktree Layout
 
 ```
 ~/.claudebox/worktrees/<16-hex-id>/
   workspace/           # Git checkout (GC'd by disk budget)
-  claude-projects/     # Session JSONL (kept forever)
+  claude-projects/     # Run transcripts (kept forever)
   activity.jsonl       # Activity log
-  meta.json            # Metadata
+  meta.json            # Worktree metadata (name, tags, resolved)
 ```
+
+Resume: reply in the same Slack thread, pass `worktree_id` to `/run`, or reference by hash (`#abc123`).
 
 ## Deployment
 

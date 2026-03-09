@@ -104,6 +104,24 @@ export async function getSummaryPrompt(name: string): Promise<string> {
   return plugin.summaryPrompt || "";
 }
 
+/** Get DockerConfig for a profile. */
+export async function getDockerConfig(name: string): Promise<import("./plugin.ts").DockerConfig> {
+  const plugin = await loadPlugin(name);
+  return plugin.docker || {};
+}
+
+/** Get promptSuffix for a profile. */
+export async function getPromptSuffix(name: string): Promise<string> {
+  const plugin = await loadPlugin(name);
+  return plugin.promptSuffix || "";
+}
+
+/** Get tag categories for a profile. */
+export async function getTagCategories(name: string): Promise<string[]> {
+  const plugin = await loadPlugin(name);
+  return plugin.tagCategories || [];
+}
+
 /** Collect tag categories from all discovered plugins. */
 export async function getAllTagCategories(): Promise<string[]> {
   const all = new Set<string>();
