@@ -88,6 +88,24 @@ export async function loadAllPlugins(only?: string[]): Promise<Plugin[]> {
 
 // ── Convenience functions ────────────────────────────────────────
 
+/** Get DockerConfig for a profile. */
+export async function getDockerConfig(name: string): Promise<import("./plugin.ts").DockerConfig> {
+  const plugin = await loadPlugin(name);
+  return plugin.docker ?? {};
+}
+
+/** Get promptSuffix for a profile (appended to every prompt). */
+export async function getPromptSuffix(name: string): Promise<string> {
+  const plugin = await loadPlugin(name);
+  return plugin.promptSuffix || "";
+}
+
+/** Get tag categories from a profile (for set_tag tool and dashboard). */
+export async function getTagCategories(name: string): Promise<string[]> {
+  const plugin = await loadPlugin(name);
+  return plugin.tagCategories || [];
+}
+
 /** Build channel→profile map from all discovered plugins. */
 export async function buildChannelProfileMap(): Promise<Map<string, string>> {
   const map = new Map<string, string>();
