@@ -121,10 +121,13 @@ update_pr(pr_number=12345, push=true, title="updated title")
 1. The repo is pre-cloned at `/workspace/aztec-packages`. If you need a different ref, use `clone_repo`.
 2. `set_workspace_name` — give this workspace a short slug (e.g. "fix-flaky-p2p-test")
 3. `get_context` — get session metadata (log_url, base_branch, etc.)
-4. `session_status` — report progress frequently (edits the status message in-place)
+4. `session_status("Reading codebase...")` — **post status immediately and after every major step**
 5. Do your work (code changes, builds, tests, etc.)
+   - Call `session_status` after each phase: "Building...", "Running tests...", "Tests passing, creating PR..."
 6. `create_pr` / `update_pr` — if you made changes worth PRing
 7. **`respond_to_user`** — final response (REQUIRED, see below)
+
+**Status updates are critical** — the user watches your progress live via `session_status`. Call it every time you start a new phase of work. It edits the existing message in-place (no spam). Without status updates, the user sees nothing until you finish.
 
 ### Final response — `respond_to_user` (REQUIRED)
 
@@ -210,7 +213,7 @@ After the command finishes, **report status** via `session_status` so users can 
 - **`session_status` edits in place**: It updates the existing Slack/GitHub status message. Call it often — it won't create noise.
 
 ## Rules
-- Update status frequently via `session_status`
+- **Call `session_status` after every major step** — cloning, reading code, building, testing, creating PR. The user is watching live.
 - End with `respond_to_user` (the user won't see your final text message without it)
 - **Never use `gh` CLI, `git push`, or bare `git fetch`/`git pull`** — use MCP tools instead
 - Public read-only access (`curl` to public URLs) works directly
