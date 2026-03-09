@@ -1,6 +1,8 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
 import { SignJWT, jwtVerify, type JWTPayload } from "jose";
-import { API_SECRET, SESSION_PAGE_USER, SESSION_PAGE_PASS, MAX_CONCURRENT, getActiveSessions, SLACK_BOT_TOKEN, getChannelBranches, DEFAULT_BASE_BRANCH, GH_TOKEN } from "./config.ts";
+import { API_SECRET, SESSION_PAGE_USER, SESSION_PAGE_PASS, MAX_CONCURRENT, getActiveSessions, getChannelBranches, DEFAULT_BASE_BRANCH } from "./config.ts";
+import { getHostCreds } from "../libcreds-host/index.ts";
+import { dmAuthor } from "../libcreds-host/slack.ts";
 import { existsSync, readFileSync, readdirSync, statSync, watch, mkdirSync } from "fs";
 import { join } from "path";
 import type { SessionStore } from "./session-store.ts";
@@ -8,8 +10,6 @@ import type { DockerService } from "./docker.ts";
 import type { SessionMeta, Artifact, EnrichedWorkspace, ThreadGroup, ChannelGroup } from "./types.ts";
 import { workspacePageHTML, dashboardHTML, auditDashboardHTML, personalDashboardHTML, taggedDashboardHTML, type WorkspaceCard } from "./html/templates.ts";
 import { parseMessage, parseKeywords, validateResumeSession, truncate, prKeyFromUrl } from "./util.ts";
-import { QuestionStore } from "./question-store.ts";
-import { generateTags } from "./tagger.ts";
 import { updateSlackStatus } from "./slack/helpers.ts";
 import { getAllTagCategories } from "./plugin-loader.ts";
 
@@ -110,15 +110,8 @@ async function getSlackChannelInfo(channelId: string): Promise<SlackChannelInfo>
     return info;
   }
 
-  if (!SLACK_BOT_TOKEN) {
-    return { name: channelId, isDm: false };
-  }
-
   try {
-    const r = await fetch(`https://slack.com/api/conversations.info?channel=${channelId}`, {
-      headers: { Authorization: `Bearer ${SLACK_BOT_TOKEN}` },
-    });
-    const d = await r.json() as any;
+    const d = await getHostCreds().slack.getChannelInfo(channelId);
     if (d.ok && d.channel) {
       const info: SlackChannelInfo = {
         name: d.channel.name || channelId,
@@ -701,35 +694,21 @@ const routes: Route[] = [
     },
   },
 
-  // GET /api/audit/questions — list questions from local question store
-  {
-    method: "GET", pattern: /^\/api\/audit\/questions$/, auth: "basic",
-    handler: async (req, res) => {
-      const url = new URL(req.url || "/", "http://localhost");
-      const status = url.searchParams.get("state") || url.searchParams.get("status") || undefined;
-      const worktreeId = url.searchParams.get("worktree_id") || undefined;
-      const questionStore = new QuestionStore();
-      if (worktreeId) {
-        json(res, 200, questionStore.getQuestions(worktreeId, status === "all" ? undefined : status));
-      } else {
-        json(res, 200, questionStore.getAll(status === "all" ? undefined : status));
-      }
-    },
-  },
 
   // GET /api/audit/findings — proxy to GitHub issues API for audit-finding issues
   {
     method: "GET", pattern: /^\/api\/audit\/findings$/, auth: "basic",
     handler: async (req, res) => {
-      if (!GH_TOKEN) { json(res, 500, { error: "No GH_TOKEN configured" }); return; }
-      const url = new URL(req.url || "/", "http://localhost");
-      const state = url.searchParams.get("state") || "all";
-      const ghRes = await fetch(
-        `https://api.github.com/repos/AztecProtocol/barretenberg-claude/issues?labels=audit-finding&state=${state}&per_page=50&sort=updated`,
-        { headers: { Authorization: `Bearer ${GH_TOKEN}`, Accept: "application/vnd.github.v3+json" } },
-      );
-      const data = await ghRes.json();
-      json(res, ghRes.status, data);
+      try {
+        const url = new URL(req.url || "/", "http://localhost");
+        const state = url.searchParams.get("state") || "all";
+        const data = await getHostCreds().github.listIssues("AztecProtocol/barretenberg-claude", {
+          labels: "audit-finding", state, per_page: "50", sort: "updated",
+        });
+        json(res, 200, data);
+      } catch (e: any) {
+        json(res, 500, { error: e.message });
+      }
     },
   },
 
@@ -916,82 +895,6 @@ const routes: Route[] = [
     },
   },
 
-  // POST /api/audit/questions/:id/answer — answer a single question from the local store
-  {
-    method: "POST", pattern: /^\/api\/audit\/questions\/([a-f0-9-]+)\/answer$/, auth: "basic",
-    handler: async (req, res, params, { store, docker }) => {
-      let body: any;
-      try { body = JSON.parse(await readBody(req)); }
-      catch { json(res, 400, { error: "invalid JSON" }); return; }
-
-      const questionId = params[0];
-      const selectedOption = body.selected_option;
-      const freeformAnswer = body.freeform_answer || "";
-      const answeredBy = body.answered_by || "web";
-
-      if (!selectedOption) { json(res, 400, { error: "selected_option required" }); return; }
-
-      const questionStore = new QuestionStore();
-
-      // Find which worktree this question belongs to
-      const allQuestions = questionStore.getAll();
-      const target = allQuestions.find(q => q.id === questionId);
-      if (!target) { json(res, 404, { error: `Question ${questionId} not found` }); return; }
-
-      const ok = questionStore.answerQuestion(target.worktree_id, questionId, selectedOption, freeformAnswer, answeredBy);
-      if (!ok) { json(res, 409, { error: "Question already answered or expired" }); return; }
-
-      // Check if all questions for this worktree are now resolved
-      const allResolved = questionStore.allResolved(target.worktree_id);
-      let resumed = false;
-
-      if (allResolved) {
-        // Auto-resume the session (fire-and-forget — don't block the HTTP response)
-        const session = store.findByWorktreeId(target.worktree_id);
-        if (session && session.status !== "running" && store.isWorktreeAlive(target.worktree_id) && getActiveSessions() < MAX_CONCURRENT) {
-          const resumePrompt = questionStore.buildResumePrompt(target.worktree_id);
-          resumed = true;
-          docker.runContainerSession({
-            prompt: resumePrompt,
-            userName: session.user || "auto-resume",
-            worktreeId: target.worktree_id,
-            targetRef: session.base_branch ? `origin/${session.base_branch}` : undefined,
-            profile: session.profile || undefined,
-          }, store).then(() => {
-            console.log(`[QUESTIONS] Auto-resumed session completed for worktree ${target.worktree_id}`);
-          }).catch(e => {
-            console.error(`[QUESTIONS] Auto-resume failed for ${target.worktree_id}: ${e.message}`);
-          });
-        }
-      }
-
-      // Push updated question files to questions branch (fire-and-forget)
-      if (GH_TOKEN) {
-        questionStore.pushToQuestionsBranch(target.worktree_id, "AztecProtocol/barretenberg-claude", GH_TOKEN).catch(e => {
-          console.error(`[QUESTIONS] Failed to push to questions branch: ${e.message}`);
-        });
-      }
-
-      json(res, 200, { ok: true, all_resolved: allResolved, resumed, worktree_id: target.worktree_id });
-    },
-  },
-
-  // POST /api/audit/questions/direction — set freeform direction for a worktree's question batch
-  {
-    method: "POST", pattern: /^\/api\/audit\/questions\/direction$/, auth: "basic",
-    handler: async (req, res) => {
-      let body: any;
-      try { body = JSON.parse(await readBody(req)); }
-      catch { json(res, 400, { error: "invalid JSON" }); return; }
-
-      const { worktree_id, text, author } = body;
-      if (!worktree_id || !text) { json(res, 400, { error: "worktree_id and text required" }); return; }
-
-      const questionStore = new QuestionStore();
-      questionStore.setDirection(worktree_id, text, author || "web");
-      json(res, 200, { ok: true });
-    },
-  },
 
   // GET /me — personal dashboard
   {
@@ -1164,40 +1067,6 @@ const routes: Route[] = [
     },
   },
 
-  // POST /api/me/tag — generate tags for a worktree using Haiku
-  {
-    method: "POST", pattern: /^\/api\/me\/tag$/, auth: "basic",
-    handler: async (req, res, _params, { store }) => {
-      let body: any;
-      try { body = JSON.parse(await readBody(req)); }
-      catch { json(res, 400, { error: "invalid JSON" }); return; }
-
-      const worktreeId = body.worktree_id;
-      if (!worktreeId) { json(res, 400, { error: "worktree_id required" }); return; }
-
-      // Check if already tagged
-      const existing = store.getWorktreeTags(worktreeId);
-      if (existing.length && !existing.includes("untagged") && !body.force) {
-        json(res, 200, { tags: existing, cached: true });
-        return;
-      }
-
-      // Build context for tagging
-      const session = store.findByWorktreeId(worktreeId);
-      const prompt = session?.prompt || "";
-      const activity = store.readActivity(worktreeId);
-      const activitySummary = activity
-        .filter(a => a.type === "response" || a.type === "artifact")
-        .slice(0, 5)
-        .map(a => `[${a.type}] ${a.text.slice(0, 200)}`)
-        .join("\n");
-
-      const tags = await generateTags(prompt, activitySummary);
-      store.setWorktreeTags(worktreeId, tags);
-      json(res, 200, { tags, cached: false });
-    },
-  },
-
   // POST /s/<id>/resume — start a new Claude session in the same worktree
   {
     method: "POST", pattern: /^\/s\/([a-f0-9][\w-]+)\/resume$/, auth: "basic",
@@ -1255,7 +1124,6 @@ const routes: Route[] = [
   {
     method: "POST", pattern: /^\/api\/internal\/slack$/, auth: "api",
     handler: async (req, res) => {
-      if (!SLACK_BOT_TOKEN) { json(res, 503, { ok: false, error: "no_slack_token" }); return; }
       let body: any;
       try { body = JSON.parse(await readBody(req)); }
       catch { json(res, 400, { error: "invalid JSON" }); return; }
@@ -1268,19 +1136,19 @@ const routes: Route[] = [
       if (!ALLOWED_METHODS.has(method)) { json(res, 403, { ok: false, error: `blocked: ${method}` }); return; }
 
       try {
-        const READ_METHODS = new Set(["conversations.replies", "users.list"]);
-        const isRead = READ_METHODS.has(method);
-        const url = isRead
-          ? `https://slack.com/api/${method}?${new URLSearchParams(Object.entries(args || {}).map(([k, v]) => [k, String(v)])).toString()}`
-          : `https://slack.com/api/${method}`;
-        const slackRes = await fetch(url, {
-          method: isRead ? "GET" : "POST",
-          headers: isRead
-            ? { Authorization: `Bearer ${SLACK_BOT_TOKEN}` }
-            : { Authorization: `Bearer ${SLACK_BOT_TOKEN}`, "Content-Type": "application/json" },
-          ...(!isRead && { body: JSON.stringify(args || {}) }),
-        });
-        const d = await slackRes.json();
+        const { getHostCreds } = await import("../libcreds-host/index.ts");
+        const creds = getHostCreds({ slackChannel: args?.channel });
+        const slack = creds.slack;
+        let d: any;
+        switch (method) {
+          case "chat.postMessage": d = await slack.postMessage(args.text, { channel: args.channel, threadTs: args.thread_ts }); break;
+          case "chat.update": d = await slack.updateMessage(args.text, { channel: args.channel, ts: args.ts }); break;
+          case "reactions.add": d = await slack.addReaction(args.name, { channel: args.channel, timestamp: args.timestamp }); break;
+          case "conversations.replies": d = await slack.getThreadReplies({ channel: args.channel, ts: args.ts, limit: args.limit }); break;
+          case "users.list": d = await slack.listUsers(args.limit); break;
+          case "conversations.open": d = await slack.openConversation(args.users); break;
+          default: json(res, 403, { ok: false, error: `blocked: ${method}` }); return;
+        }
         json(res, 200, d);
       } catch (e: any) {
         console.error(`[HTTP] ${e.message}`); json(res, 500, { ok: false, error: "internal error" });
@@ -1339,32 +1207,19 @@ const routes: Route[] = [
       };
 
       // Update Slack
-      if (SLACK_BOT_TOKEN && session?.slack_channel && session?.slack_message_ts) {
+      if (session?.slack_channel && session?.slack_message_ts) {
         try {
-          const r = await fetch("https://slack.com/api/chat.update", {
-            method: "POST",
-            headers: { Authorization: `Bearer ${SLACK_BOT_TOKEN}`, "Content-Type": "application/json" },
-            body: JSON.stringify({
-              channel: session.slack_channel, ts: session.slack_message_ts,
-              text: buildSlackTextFromSections(),
-            }),
-          });
-          const d = await r.json() as any;
-          results.push(d.ok ? "Slack updated" : `Slack: ${d.error}`);
+          const slackCreds = getHostCreds({ slackChannel: session.slack_channel, slackMessageTs: session.slack_message_ts });
+          const d = await slackCreds.slack.updateMessage(buildSlackTextFromSections(), { channel: session.slack_channel, ts: session.slack_message_ts });
+          results.push(d?.ok ? "Slack updated" : `Slack: ${d?.error || "unknown"}`);
         } catch (e: any) { results.push(`Slack: ${e.message}`); }
       }
 
       // Update GitHub comment
-      if (GH_TOKEN && session?.run_comment_id && session?.repo) {
+      if (session?.run_comment_id && session?.repo) {
         try {
-          const r = await fetch(
-            `https://api.github.com/repos/${session.repo}/issues/comments/${session.run_comment_id}`,
-            {
-              method: "PATCH",
-              headers: { Authorization: `Bearer ${GH_TOKEN}`, Accept: "application/vnd.github.v3+json", "Content-Type": "application/json" },
-              body: JSON.stringify({ body: buildGhBodyFromSections() }),
-            });
-          results.push(r.ok ? "GitHub updated" : `GitHub: ${r.status}`);
+          await getHostCreds().github.updateIssueComment(session.repo, session.run_comment_id, buildGhBodyFromSections());
+          results.push("GitHub updated");
         } catch (e: any) { results.push(`GitHub: ${e.message}`); }
       }
 
@@ -1376,60 +1231,32 @@ const routes: Route[] = [
   {
     method: "POST", pattern: /^\/api\/internal\/dm$/, auth: "api",
     handler: async (req, res) => {
-      if (!SLACK_BOT_TOKEN) { json(res, 200, { ok: false, reason: "no_slack" }); return; }
       let body: any;
       try { body = JSON.parse(await readBody(req)); }
       catch { json(res, 400, { error: "invalid JSON" }); return; }
 
       const { status, trackedPRs, session } = body;
-      if (!session?.user) { json(res, 200, { ok: false, reason: "no_user" }); return; }
-      if (session.slack_channel?.startsWith("D")) { json(res, 200, { ok: false, reason: "already_dm" }); return; }
+      try {
+        const result = await dmAuthor(session, status, trackedPRs);
+        json(res, 200, result);
+      } catch (e: any) {
+        console.error(`[HTTP] ${e.message}`); json(res, 500, { ok: false, error: "internal error" });
+      }
+    },
+  },
+
+  // ── Internal API: Unified creds proxy (sidecar → server) ──
+  {
+    method: "POST", pattern: /^\/api\/internal\/creds$/, auth: "api",
+    handler: async (req, res) => {
+      let body: any;
+      try { body = JSON.parse(await readBody(req)); }
+      catch { json(res, 400, { error: "invalid JSON" }); return; }
 
       try {
-        const parts: string[] = [];
-        const contextLinks: string[] = [];
-        if (session.slack_channel && session.slack_thread_ts) {
-          const slackDomain = process.env.SLACK_WORKSPACE_DOMAIN || "slack";
-          const threadLink = `https://${slackDomain}.slack.com/archives/${session.slack_channel}/p${session.slack_thread_ts.replace(".", "")}`;
-          contextLinks.push(`<${threadLink}|thread>`);
-        }
-        if (session.link) contextLinks.push(`<${session.link}|source>`);
-
-        const prLinks = (trackedPRs || []).map((pr: any) => `<${pr.url}|#${pr.num}>`);
-        parts.push((status || "Task done") + (prLinks.length ? ` ${prLinks.join(" ")}` : ""));
-
-        const footer: string[] = [...contextLinks];
-        const host = session.host || "claudebox.work";
-        if (session.worktree_id) footer.push(`<https://${host}/s/${session.worktree_id}|status>`);
-        if (footer.length) parts.push(footer.join(" \u2502 "));
-
-        // Find user
-        const searchResp = await fetch("https://slack.com/api/users.list?limit=200", {
-          headers: { Authorization: `Bearer ${SLACK_BOT_TOKEN}` },
-        });
-        const searchData = await searchResp.json() as any;
-        const slackUser = searchData.members?.find((m: any) =>
-          m.real_name === session.user || m.name === session.user || m.profile?.display_name === session.user
-        );
-        if (!slackUser) { json(res, 200, { ok: false, reason: "user_not_found" }); return; }
-
-        // Open DM
-        const openResp = await fetch("https://slack.com/api/conversations.open", {
-          method: "POST",
-          headers: { Authorization: `Bearer ${SLACK_BOT_TOKEN}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ users: slackUser.id }),
-        });
-        const openData = await openResp.json() as any;
-        if (!openData.ok) { json(res, 200, { ok: false, reason: openData.error }); return; }
-
-        // Send DM
-        await fetch("https://slack.com/api/chat.postMessage", {
-          method: "POST",
-          headers: { Authorization: `Bearer ${SLACK_BOT_TOKEN}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ channel: openData.channel.id, text: parts.join("\n") }),
-        });
-
-        json(res, 200, { ok: true, user: slackUser.id });
+        const { handleCredsEndpoint } = await import("../libcreds-host/index.ts");
+        const result = await handleCredsEndpoint(body);
+        json(res, result.ok ? 200 : 400, result);
       } catch (e: any) {
         console.error(`[HTTP] ${e.message}`); json(res, 500, { ok: false, error: "internal error" });
       }

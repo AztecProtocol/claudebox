@@ -1,0 +1,11 @@
+{
+  "name": "libcreds-host",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": "./index.ts",
+    "./slack": "./slack.ts",
+    "./github": "./github.ts",
+    "./creds-endpoint": "./creds-endpoint.ts"
+  }
+}

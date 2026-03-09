@@ -19,12 +19,25 @@ import { z } from "zod";
 
 import { getSchema, allSchemas, schemasPrompt } from "../stat-schemas.ts";
 import { ServerClient, createServerClientFromEnv } from "../server-client.ts";
+import { createCreds, type Creds } from "../../libcreds/index.ts";
 
 // ── Config ──────────────────────────────────────────────────────
 export const PORT = parseInt(process.env.MCP_PORT || "9801", 10);
-export const GH_TOKEN = process.env.GH_TOKEN || "";
-export const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN || "";
-export const LINEAR_API_KEY = process.env.LINEAR_API_KEY || "";
+
+// ── Lazy libcreds instance ──────────────────────────────────────
+// Auto-detects sidecar mode (proxies through host) or direct mode (has tokens).
+let _creds: Creds | undefined;
+export function getCreds(): Creds {
+  if (!_creds) {
+    _creds = createCreds();
+  }
+  return _creds;
+}
+
+// Token availability checks — derived lazily from libcreds clients.
+function _hasGhToken(): boolean { return getCreds().github.hasToken; }
+function _hasSlackToken(): boolean { return getCreds().slack.hasToken; }
+function _hasLinearToken(): boolean { return getCreds().linear.hasToken; }
 export const QUIET_MODE = process.env.CLAUDEBOX_QUIET === "1";
 export const CI_ALLOW = process.env.CLAUDEBOX_CI_ALLOW === "1";
 export const STATS_DIR = process.env.CLAUDEBOX_STATS_DIR || "/stats";
@@ -103,7 +116,7 @@ function parseSlackPermalink(link: string): { channel: string; thread_ts: string
   return { channel: m[1], thread_ts: ts };
 }
 
-if (SLACK_BOT_TOKEN && SESSION_META.link && !SESSION_META.slack_channel) {
+if (_hasSlackToken() && SESSION_META.link && !SESSION_META.slack_channel) {
   const parsed = parseSlackPermalink(SESSION_META.link);
   if (parsed) {
     SESSION_META.slack_channel = parsed.channel;
@@ -184,8 +197,43 @@ export function truncateForSlack(text: string, maxLen = 600): string {
 // ── Activity log ────────────────────────────────────────────────
 export const ACTIVITY_LOG = "/workspace/activity.jsonl";
 
+const _seenArtifactUrls = new Set<string>();
+let _activityDeduped = false;
+
+function _initActivityDedup(): void {
+  if (_activityDeduped) return;
+  _activityDeduped = true;
+  try {
+    if (existsSync(ACTIVITY_LOG)) {
+      for (const line of readFileSync(ACTIVITY_LOG, "utf-8").split("\n")) {
+        if (!line.trim()) continue;
+        try {
+          const entry = JSON.parse(line);
+          if (entry.type === "artifact") {
+            const m = entry.text?.match(/(https?:\/\/[^\s)>\]]+)/);
+            if (m) _seenArtifactUrls.add(m[1].replace(/[.,;:!?]+$/, ""));
+          }
+        } catch {}
+      }
+    }
+  } catch {}
+}
+
 export function logActivity(type: string, text: string): void {
-  getServerClient().logActivity(type, text);
+  _initActivityDedup();
+  if (type === "artifact") {
+    const urlMatch = text.match(/(https?:\/\/[^\s)>\]]+)/);
+    if (urlMatch) {
+      const cleanUrl = urlMatch[1].replace(/[.,;:!?]+$/, "");
+      if (_seenArtifactUrls.has(cleanUrl)) return;
+      _seenArtifactUrls.add(cleanUrl);
+    }
+  }
+  try {
+    const entry: Record<string, string> = { ts: new Date().toISOString(), type, text };
+    if (SESSION_META.log_id) entry.log_id = SESSION_META.log_id;
+    appendFileSync(ACTIVITY_LOG, JSON.stringify(entry) + "\n");
+  } catch {}
 }
 
 // ── Root comment state ──────────────────────────────────────────
@@ -219,19 +267,6 @@ export function addTrackedPR(num: number, title: string, url: string, action: "c
   trackedPRs.set(num, { title, url, action: finalAction });
 }
 
-function buildArtifactsGh(): string {
-  const lines: string[] = [];
-  if (trackedPRs.size > 0) {
-    lines.push("**Pull Requests**");
-    for (const [num, pr] of trackedPRs) {
-      const label = pr.action === "created" ? "Created" : "Updated";
-      lines.push(`- **${label}** [#${num}: ${pr.title}](${pr.url})`);
-    }
-  }
-  if (otherArtifacts.length > 0) lines.push(...otherArtifacts);
-  return lines.join("\n");
-}
-
 function buildArtifactsSlack(): string {
   const prLinks: string[] = [];
   for (const [num, pr] of trackedPRs) {
@@ -240,46 +275,6 @@ function buildArtifactsSlack(): string {
   const lines: string[] = [];
   if (prLinks.length) lines.push(prLinks.join(" "));
   if (otherArtifacts.length > 0) lines.push(...otherArtifacts);
-  return lines.join("\n");
-}
-
-function buildGhBody(_latestStatus: string): string {
-  const lines: string[] = [];
-  const links: string[] = [];
-  if (statusPageUrl) links.push(`[Live status](${statusPageUrl})`);
-  if (SESSION_META.log_url) links.push(`[Log](${SESSION_META.log_url})`);
-  if (links.length) lines.push(links.join(" · "));
-
-  if (commentSections.status) {
-    lines.push("");
-    lines.push(`**Status:** ${commentSections.status}`);
-  }
-
-  if (commentSections.statusLog.length > 1) {
-    lines.push("");
-    lines.push("<details><summary>Progress</summary>");
-    lines.push("");
-    for (const entry of commentSections.statusLog) {
-      const time = new Date(entry.ts).toISOString().slice(11, 16);
-      let text = entry.text;
-      if (text.length > 200) text = text.slice(0, 200) + "…";
-      lines.push(`- \`${time}\` ${text}`);
-    }
-    lines.push("");
-    lines.push("</details>");
-  }
-
-  if (commentSections.response) {
-    lines.push("");
-    lines.push(`**Response:** ${commentSections.response}`);
-  }
-
-  const artifacts = buildArtifactsGh();
-  if (artifacts) {
-    lines.push("");
-    lines.push(artifacts);
-  }
-
   return lines.join("\n");
 }
 
@@ -310,52 +305,19 @@ export async function updateRootComment(status?: string): Promise<string[]> {
   if (status) lastStatus = status;
 
   const client = getServerClient();
-  if (client.hasServer) {
-    try {
-      return await client.updateComment({
-        status: s,
-        logId: SESSION_META.log_id,
-        sections: { ...commentSections },
-        trackedPRs: [...trackedPRs.entries()].map(([num, pr]) => ({ num, ...pr })),
-        otherArtifacts: [...otherArtifacts],
-      });
-    } catch (e: any) {
-      return [`Server: ${e.message}`];
-    }
+  if (!client.hasServer) return [];
+
+  try {
+    return await client.updateComment({
+      status: s,
+      logId: SESSION_META.log_id,
+      sections: { ...commentSections },
+      trackedPRs: [...trackedPRs.entries()].map(([num, pr]) => ({ num, ...pr })),
+      otherArtifacts: [...otherArtifacts],
+    });
+  } catch (e: any) {
+    return [`Server: ${e.message}`];
   }
-
-  // Fallback: direct API calls (for legacy/standalone mode)
-  const results: string[] = [];
-
-  if (SLACK_BOT_TOKEN && SESSION_META.slack_channel && SESSION_META.slack_message_ts) {
-    try {
-      const r = await fetch("https://slack.com/api/chat.update", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${SLACK_BOT_TOKEN}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          channel: SESSION_META.slack_channel, ts: SESSION_META.slack_message_ts,
-          text: buildSlackText(s),
-        }),
-      });
-      const d = await r.json() as any;
-      results.push(d.ok ? "Slack updated" : `Slack: ${d.error}`);
-    } catch (e: any) { results.push(`Slack: ${e.message}`); }
-  }
-
-  if (GH_TOKEN && SESSION_META.run_comment_id) {
-    try {
-      const r = await fetch(
-        `https://api.github.com/repos/${SESSION_META.repo}/issues/comments/${SESSION_META.run_comment_id}`,
-        {
-          method: "PATCH",
-          headers: { Authorization: `Bearer ${GH_TOKEN}`, Accept: "application/vnd.github.v3+json", "Content-Type": "application/json" },
-          body: JSON.stringify({ body: buildGhBody(s) }),
-        });
-      results.push(r.ok ? "GitHub updated" : `GitHub: ${r.status}`);
-    } catch (e: any) { results.push(`GitHub: ${e.message}`); }
-  }
-
-  return results;
 }
 
 // ── Claude transcript poller ────────────────────────────────────
@@ -481,7 +443,7 @@ export interface ProfileOpts {
   repo: string;
   workspace: string;
   tools: string;
-  ghWhitelist: Array<{ method: string; pattern: RegExp }>;
+  ghWhitelist?: Array<{ method: string; pattern: RegExp }>;
 }
 
 // ── Common tool registrar ───────────────────────────────────────
@@ -490,7 +452,7 @@ export interface ProfileOpts {
 // linear_get_issue, linear_create_issue, ci_failures, record_stat.
 
 export function registerCommonTools(server: McpServer, opts: ProfileOpts): void {
-  const { repo, tools, ghWhitelist } = opts;
+  const { repo, tools } = opts;
 
   // ── get_context ────────────────────────────────────────────────
   server.tool("get_context", "Session metadata: user, repo, log_url, trigger source, git ref, available tools.", {},
@@ -580,21 +542,11 @@ For writes, use dedicated tools: create_pr, update_pr, create_gist, create_issue
       accept: z.string().optional().describe("Accept header override"),
     },
     async ({ method, path, accept }) => {
-      if (!isGhAllowed(method, path, ghWhitelist))
-        return { content: [{ type: "text", text: `Blocked: ${method} ${path} not whitelisted` }], isError: true };
-      if (!GH_TOKEN) return { content: [{ type: "text", text: "No GH_TOKEN" }], isError: true };
+      if (!_hasGhToken()) return { content: [{ type: "text", text: "No GitHub access configured" }], isError: true };
 
       try {
-        const url = `https://api.github.com/${path.replace(/^\//, "")}`;
-        const res = await fetch(url, {
-          headers: {
-            Authorization: `Bearer ${GH_TOKEN}`,
-            Accept: accept || "application/vnd.github.v3+json",
-          },
-        });
-        const text = await res.text();
-        if (!res.ok)
-          return { content: [{ type: "text", text: `${res.status}: ${text.slice(0, 2000)}` }], isError: true };
+        const result = await getCreds().github.rawGet(repo, path.replace(/^\//, ""), { accept });
+        const text = typeof result === "string" ? result : JSON.stringify(result, null, 2);
         const maxLen = 100_000;
         return { content: [{ type: "text", text: text.length > maxLen ? text.slice(0, maxLen) + "\n...(truncated)" : text }] };
       } catch (e: any) {
@@ -611,10 +563,9 @@ Channel and thread are locked to this session — you can only read/write your o
       args: z.record(z.any()).describe("Method arguments"),
     },
     async ({ method, args }) => {
-      if (!SLACK_WHITELIST.has(method))
-        return { content: [{ type: "text", text: `Blocked: ${method}. Allowed: ${[...SLACK_WHITELIST].join(", ")}` }], isError: true };
       if (QUIET_MODE && method === "chat.postMessage")
         return { content: [{ type: "text", text: "Quiet mode active — use respond_to_user to send your response" }], isError: true };
+      if (!_hasSlackToken()) return { content: [{ type: "text", text: "No Slack access configured" }], isError: true };
 
       const payload = { ...args };
 
@@ -640,52 +591,27 @@ Channel and thread are locked to this session — you can only read/write your o
         payload.ts = SESSION_META.slack_thread_ts;
       }
 
-      // Use ServerClient if available (token stays on server)
-      const client = getServerClient();
-      if (client.hasServer) {
-        try {
-          const d = await client.slack(method, payload);
-          if (!d.ok) {
-            return { content: [{ type: "text", text: `${method}: ${d.error}${d.hint ? ` ${d.hint}` : ""}` }], isError: true };
-          }
-          const READ_METHODS = new Set(["conversations.replies"]);
-          if (READ_METHODS.has(method)) {
-            const text = JSON.stringify(d, null, 2);
-            const maxLen = 50_000;
-            return { content: [{ type: "text", text: text.length > maxLen ? text.slice(0, maxLen) + "\n...(truncated)" : text }] };
-          }
-          return { content: [{ type: "text", text: `OK${d.ts ? ` (ts: ${d.ts})` : ""}` }] };
-        } catch (e: any) {
-          return { content: [{ type: "text", text: `Server: ${e.message}` }], isError: true };
-        }
-      }
-
-      // Fallback: direct Slack API (legacy/standalone mode)
-      if (!SLACK_BOT_TOKEN) return { content: [{ type: "text", text: "No Slack access — no server or SLACK_BOT_TOKEN configured" }], isError: true };
-
       try {
-        const READ_METHODS = new Set(["conversations.replies"]);
-        const isRead = READ_METHODS.has(method);
-        const url = isRead
-          ? `https://slack.com/api/${method}?${new URLSearchParams(Object.entries(payload).map(([k, v]) => [k, String(v)])).toString()}`
-          : `https://slack.com/api/${method}`;
-        const res = await fetch(url, {
-          method: isRead ? "GET" : "POST",
-          headers: isRead
-            ? { Authorization: `Bearer ${SLACK_BOT_TOKEN}` }
-            : { Authorization: `Bearer ${SLACK_BOT_TOKEN}`, "Content-Type": "application/json" },
-          ...(!isRead && { body: JSON.stringify(payload) }),
-        });
-        const d = await res.json() as any;
-        if (!d.ok) {
+        const slack = getCreds().slack;
+        let d: any;
+        switch (method) {
+          case "chat.postMessage": d = await slack.postMessage(payload.text, { channel: payload.channel, threadTs: payload.thread_ts }); break;
+          case "chat.update": d = await slack.updateMessage(payload.text, { channel: payload.channel, ts: payload.ts }); break;
+          case "reactions.add": d = await slack.addReaction(payload.name, { channel: payload.channel, timestamp: payload.timestamp }); break;
+          case "reactions.remove": d = await slack.removeReaction(payload.name, { channel: payload.channel, timestamp: payload.timestamp }); break;
+          case "conversations.replies": d = await slack.getThreadReplies({ channel: payload.channel, ts: payload.ts, limit: payload.limit }); break;
+          case "users.list": d = await slack.listUsers(payload.limit); break;
+          default: return { content: [{ type: "text", text: `Unknown method: ${method}` }], isError: true };
+        }
+        if (!d?.ok) {
           const hints: Record<string, string> = {
             not_in_channel: " (bot not invited to this channel — use your session's own channel instead)",
-            missing_scope: ` (need: ${d.needed || "unknown"}, have: ${d.provided || "unknown"})`,
+            missing_scope: ` (need: ${d?.needed || "unknown"}, have: ${d?.provided || "unknown"})`,
             channel_not_found: " (channel ID may be wrong — check get_context for your session's channel)",
           };
-          return { content: [{ type: "text", text: `${method}: ${d.error}${hints[d.error] || ""}` }], isError: true };
+          return { content: [{ type: "text", text: `${method}: ${d?.error}${hints[d?.error] || ""}` }], isError: true };
         }
-        if (isRead) {
+        if (method === "conversations.replies") {
           const text = JSON.stringify(d, null, 2);
           const maxLen = 50_000;
           return { content: [{ type: "text", text: text.length > maxLen ? text.slice(0, maxLen) + "\n...(truncated)" : text }] };
@@ -701,35 +627,10 @@ Channel and thread are locked to this session — you can only read/write your o
     "Fetch a Linear issue by identifier (e.g. UNIFIED-26). Returns title, description, state, assignee, labels, and URL.",
     { identifier: z.string().describe("Issue identifier, e.g. UNIFIED-26 or ENG-1234") },
     async ({ identifier }) => {
-      if (!LINEAR_API_KEY) return { content: [{ type: "text", text: "No LINEAR_API_KEY" }], isError: true };
-
-      const m = identifier.match(/^([A-Za-z][\w-]*)-(\d+)$/);
-      if (!m) return { content: [{ type: "text", text: `Invalid identifier: ${identifier}` }], isError: true };
-      const number = parseInt(m[2], 10);
+      if (!_hasLinearToken()) return { content: [{ type: "text", text: "No Linear access configured" }], isError: true };
 
       try {
-        const res = await fetch("https://api.linear.app/graphql", {
-          method: "POST",
-          headers: { Authorization: LINEAR_API_KEY, "Content-Type": "application/json" },
-          body: JSON.stringify({
-            query: `query($filter: IssueFilter) {
-              issues(filter: $filter, first: 1) {
-                nodes {
-                  identifier title description url
-                  state { name }
-                  assignee { name }
-                  labels { nodes { name } }
-                  priority priorityLabel
-                  comments { nodes { body user { name } createdAt } }
-                }
-              }
-            }`,
-            variables: { filter: { number: { eq: number }, team: { key: { eq: m[1].toUpperCase() } } } },
-          }),
-        });
-        const json = await res.json() as any;
-        const issue = json?.data?.issues?.nodes?.[0];
-        if (!issue) return { content: [{ type: "text", text: `Issue ${identifier} not found` }], isError: true };
+        const issue = await getCreds().linear.getIssue(identifier);
         return { content: [{ type: "text", text: JSON.stringify(issue, null, 2) }] };
       } catch (e: any) {
         return { content: [{ type: "text", text: `Linear API error: ${e.message}` }], isError: true };
@@ -746,48 +647,17 @@ Channel and thread are locked to this session — you can only read/write your o
       priority: z.number().min(0).max(4).optional().describe("0=none, 1=urgent, 2=high, 3=medium, 4=low"),
     },
     async ({ team, title, description, priority }) => {
-      if (!LINEAR_API_KEY) return { content: [{ type: "text", text: "No LINEAR_API_KEY" }], isError: true };
+      if (!_hasLinearToken()) return { content: [{ type: "text", text: "No Linear access configured" }], isError: true };
 
       try {
-        const teamRes = await fetch("https://api.linear.app/graphql", {
-          method: "POST",
-          headers: { Authorization: LINEAR_API_KEY, "Content-Type": "application/json" },
-          body: JSON.stringify({
-            query: `query($key: String!) { teams(filter: { key: { eq: $key } }) { nodes { id } } }`,
-            variables: { key: team.toUpperCase() },
-          }),
-        });
-        const teamJson = await teamRes.json() as any;
-        const teamId = teamJson?.data?.teams?.nodes?.[0]?.id;
-        if (!teamId) return { content: [{ type: "text", text: `Team '${team}' not found` }], isError: true };
+        const result = await getCreds().linear.createIssue({ team, title, description, priority });
 
-        const input: any = { teamId, title };
-        if (description) input.description = description;
-        if (priority !== undefined) input.priority = priority;
-
-        const res = await fetch("https://api.linear.app/graphql", {
-          method: "POST",
-          headers: { Authorization: LINEAR_API_KEY, "Content-Type": "application/json" },
-          body: JSON.stringify({
-            query: `mutation($input: IssueCreateInput!) {
-              issueCreate(input: $input) {
-                success
-                issue { identifier title url }
-              }
-            }`,
-            variables: { input },
-          }),
-        });
-        const json = await res.json() as any;
-        const result = json?.data?.issueCreate;
-        if (!result?.success) return { content: [{ type: "text", text: `Failed: ${JSON.stringify(json.errors || json)}` }], isError: true };
-
-        const issueLink = `${result.issue.identifier}: ${result.issue.title} — ${result.issue.url}`;
-        otherArtifacts.push(`- [${result.issue.identifier}: ${result.issue.title}](${result.issue.url})`);
+        const issueLink = `${result.identifier}: ${result.title} — ${result.url}`;
+        otherArtifacts.push(`- [${result.identifier}: ${result.title}](${result.url})`);
         logActivity("artifact", issueLink);
         await updateRootComment();
 
-        return { content: [{ type: "text", text: `${result.issue.identifier}: ${result.issue.title}\n${result.issue.url}` }] };
+        return { content: [{ type: "text", text: `${result.identifier}: ${result.title}\n${result.url}` }] };
       } catch (e: any) {
         return { content: [{ type: "text", text: `Linear API error: ${e.message}` }], isError: true };
       }
@@ -798,14 +668,11 @@ Channel and thread are locked to this session — you can only read/write your o
     `CI status for a PR. Shows the CI3 workflow status on both the PR branch and merge-queue: last pass, last fail, with GitHub Actions links. CI dashboard link included.`,
     { pr: z.number().describe("PR number") },
     async ({ pr }) => {
-      if (!GH_TOKEN) return { content: [{ type: "text", text: "No GH_TOKEN" }], isError: true };
+      if (!_hasGhToken()) return { content: [{ type: "text", text: "No GitHub access configured" }], isError: true };
 
+      const creds = getCreds();
       const ghGet = async (path: string) => {
-        const res = await fetch(`https://api.github.com/${path}`, {
-          headers: { Authorization: `Bearer ${GH_TOKEN}`, Accept: "application/vnd.github.v3+json" },
-        });
-        if (!res.ok) throw new Error(`GitHub ${res.status}: ${path}`);
-        return res.json() as any;
+        return creds.github.rawGet(repo, path);
       };
 
       const fmtRun = (r: any) =>
@@ -908,7 +775,7 @@ Channel and thread are locked to this session — you can only read/write your o
       public_gist: z.boolean().default(false).describe("Whether the gist is public (default: false/secret)"),
     },
     async ({ description, files, public_gist }) => {
-      if (!GH_TOKEN) return { content: [{ type: "text", text: "No GH_TOKEN" }], isError: true };
+      if (!_hasGhToken()) return { content: [{ type: "text", text: "No GitHub access configured" }], isError: true };
 
       const gistFiles: Record<string, { content: string }> = {};
       for (const [name, content] of Object.entries(files)) {
@@ -916,18 +783,7 @@ Channel and thread are locked to this session — you can only read/write your o
       }
 
       try {
-        const res = await fetch("https://api.github.com/gists", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${GH_TOKEN}`,
-            Accept: "application/vnd.github.v3+json",
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ description, files: gistFiles, public: public_gist }),
-        });
-        const gist = await res.json() as any;
-        if (!res.ok)
-          return { content: [{ type: "text", text: `Gist failed: ${gist.message || JSON.stringify(gist)}` }], isError: true };
+        const gist = await getCreds().github.createGist({ description, files: gistFiles, public: public_gist });
 
         logActivity("artifact", `Gist: ${gist.html_url}`);
         otherArtifacts.push(`- [Gist: ${description}](${gist.html_url})`);
@@ -960,7 +816,7 @@ Creates a draft PR on a skill/<name> branch for human review.`,
       base: z.string().optional().describe("Base branch for the PR (defaults to current branch)"),
     },
     async ({ name, description, argument_hint, body, base }) => {
-      if (!GH_TOKEN) return { content: [{ type: "text", text: "No GH_TOKEN" }], isError: true };
+      if (!_hasGhToken()) return { content: [{ type: "text", text: "No GitHub access configured" }], isError: true };
 
       const skillDir = join(opts.workspace, ".claude", "claudebox", "skills", name);
       const skillFile = join(skillDir, "SKILL.md");
@@ -985,35 +841,28 @@ Creates a draft PR on a skill/<name> branch for human review.`,
         git(opts.workspace, "checkout", "-B", branch);
         git(opts.workspace, "add", skillFile);
         git(opts.workspace, "commit", "-m", `chore: ${action.toLowerCase()} skill /${name}`);
-        pushToRemote(opts.workspace, repo, branch, true);
+        await pushToRemote(opts.workspace, repo, branch, true);
 
         // Switch back to original branch
         try { git(opts.workspace, "checkout", currentBranch); } catch {}
 
-        // Create draft PR
-        const prRes = await fetch(`https://api.github.com/repos/${repo}/pulls`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${GH_TOKEN}`, Accept: "application/vnd.github.v3+json", "Content-Type": "application/json" },
-          body: JSON.stringify({
+        // Create draft PR via libcreds
+        try {
+          const pr = await getCreds().github.createPull(repo, {
             title: `skill: ${action.toLowerCase()} /${name} — ${description}`,
             base: prBase,
             head: branch,
             body: `## Skill: \`/${name}\`\n\n${description}\n\n${SESSION_META.log_url ? `Session log: ${SESSION_META.log_url}` : ""}`,
-          }),
-        });
-        const pr = await prRes.json() as any;
+          });
 
-        if (prRes.ok) {
           addTrackedPR(pr.number, `skill /${name}`, pr.html_url, "created");
           logActivity("artifact", `Skill PR [/${name} #${pr.number}](${pr.html_url})`);
           await updateRootComment();
           return { content: [{ type: "text", text: `${action} skill /${name} — PR ${pr.html_url}` }] };
-        } else {
-          const errors = pr.errors?.map((e: any) => e.message || JSON.stringify(e)).join("; ") || "";
-          const errMsg = `${pr.message || "unknown"}${errors ? ` — ${errors}` : ""}`;
-          logActivity("artifact", `${action} skill /${name} on branch ${branch} (PR failed: ${errMsg})`);
+        } catch (prErr: any) {
+          logActivity("artifact", `${action} skill /${name} on branch ${branch} (PR failed: ${prErr.message})`);
           await updateRootComment();
-          return { content: [{ type: "text", text: `${action} skill /${name} — pushed to ${branch} but PR creation failed: ${errMsg}` }] };
+          return { content: [{ type: "text", text: `${action} skill /${name} — pushed to ${branch} but PR creation failed: ${prErr.message}` }] };
         }
       } catch (e: any) {
         return { content: [{ type: "text", text: `create_skill: ${e.message}` }], isError: true };
@@ -1073,95 +922,26 @@ async function dmAuthorOnCompletion(): Promise<void> {
   if (SESSION_META.slack_channel && SESSION_META.slack_channel.startsWith("D")) return;
 
   const client = getServerClient();
-  if (client.hasServer) {
-    const hasError = lastStatus?.includes("error");
-    const status = hasError ? "Task failed" : "Task done";
-    await client.dmAuthor({
-      status,
-      trackedPRs: [...trackedPRs.entries()].map(([num, pr]) => ({ num, ...pr })),
-    });
-    return;
-  }
+  if (!client.hasServer) return;
 
-  // Fallback: direct Slack API (legacy/standalone mode)
-  if (!SLACK_BOT_TOKEN) return;
-  try {
-    const parts: string[] = [];
-    const contextLinks: string[] = [];
-    if (SESSION_META.slack_channel && SESSION_META.slack_thread_ts) {
-      const slackDomain = process.env.SLACK_WORKSPACE_DOMAIN || "slack";
-      const threadLink = `https://${slackDomain}.slack.com/archives/${SESSION_META.slack_channel}/p${SESSION_META.slack_thread_ts.replace(".", "")}`;
-      contextLinks.push(`<${threadLink}|thread>`);
-    }
-    if (SESSION_META.link) {
-      contextLinks.push(`<${SESSION_META.link}|source>`);
-    }
-
-    const prLinks = [...trackedPRs.entries()].map(([num, pr]) => `<${pr.url}|#${num}>`);
-    const hasError = lastStatus?.includes("error");
-    const status = hasError ? "Task failed" : "Task done";
-    parts.push(status + (prLinks.length ? ` ${prLinks.join(" ")}` : ""));
-
-    const footer: string[] = [...contextLinks];
-    if (statusPageUrl) footer.push(`<${statusPageUrl}|status>`);
-    if (footer.length) parts.push(footer.join(" \u2502 "));
-
-    const searchResp = await fetch("https://slack.com/api/users.list?limit=200", {
-      headers: { Authorization: `Bearer ${SLACK_BOT_TOKEN}` },
-    });
-    const searchData = await searchResp.json() as any;
-    const slackUser = searchData.members?.find((m: any) =>
-      m.real_name === SESSION_META.user || m.name === SESSION_META.user || m.profile?.display_name === SESSION_META.user
-    );
-    if (!slackUser) {
-      console.log(`[Sidecar] Could not find Slack user for "${SESSION_META.user}", skipping DM`);
-      return;
-    }
-
-    const openResp = await fetch("https://slack.com/api/conversations.open", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${SLACK_BOT_TOKEN}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ users: slackUser.id }),
-    });
-    const openData = await openResp.json() as any;
-    if (!openData.ok) {
-      console.log(`[Sidecar] Could not open DM: ${openData.error}`);
-      return;
-    }
-
-    await fetch("https://slack.com/api/chat.postMessage", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${SLACK_BOT_TOKEN}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ channel: openData.channel.id, text: parts.join("\n") }),
-    });
-    console.log(`[Sidecar] DM'd ${SESSION_META.user} (${slackUser.id}) on completion`);
-  } catch (e: any) {
-    console.error(`[Sidecar] Failed to DM author: ${e.message}`);
-  }
+  const hasError = lastStatus?.includes("error");
+  const status = hasError ? "Task failed" : "Task done";
+  await client.dmAuthor({
+    status,
+    trackedPRs: [...trackedPRs.entries()].map(([num, pr]) => ({ num, ...pr })),
+  });
 }
 
 async function initSlackFromPermalink(): Promise<void> {
   if (!SESSION_META.slack_channel || !SESSION_META.slack_thread_ts || SESSION_META.slack_message_ts) return;
+  if (!_hasSlackToken()) return;
 
-  const client = getServerClient();
   const initText = buildSlackText("Starting…");
-
-  // Try ServerClient first, then fall back to direct API
-  const doSlackCall = async (method: string, args: Record<string, any>): Promise<any> => {
-    if (client.hasServer) {
-      return client.slack(method, args);
-    }
-    if (!SLACK_BOT_TOKEN) return { ok: false, error: "no_token" };
-    const headers = { Authorization: `Bearer ${SLACK_BOT_TOKEN}`, "Content-Type": "application/json" };
-    const res = await fetch(`https://slack.com/api/${method}`, {
-      method: "POST", headers, body: JSON.stringify(args),
-    });
-    return res.json();
-  };
+  const slack = getCreds().slack;
 
   try {
-    const d = await doSlackCall("chat.update", {
-      channel: SESSION_META.slack_channel, ts: SESSION_META.slack_thread_ts, text: initText,
+    const d = await slack.updateMessage(initText, {
+      channel: SESSION_META.slack_channel, ts: SESSION_META.slack_thread_ts,
     });
     if (d.ok) {
       SESSION_META.slack_message_ts = SESSION_META.slack_thread_ts;
@@ -1175,8 +955,8 @@ async function initSlackFromPermalink(): Promise<void> {
   }
 
   try {
-    const d = await doSlackCall("chat.postMessage", {
-      channel: SESSION_META.slack_channel, thread_ts: SESSION_META.slack_thread_ts, text: initText,
+    const d = await slack.postMessage(initText, {
+      channel: SESSION_META.slack_channel, threadTs: SESSION_META.slack_thread_ts,
     });
     if (d.ok && d.ts) {
       SESSION_META.slack_message_ts = d.ts;
@@ -1243,7 +1023,7 @@ export function startMcpHttpServer(createMcpServer: () => McpServer): void {
   });
 
   httpServer.listen(PORT, "0.0.0.0", () => {
-    console.log(`[Sidecar] :${PORT} gh=${GH_TOKEN ? "yes" : "no"} slack=${SLACK_BOT_TOKEN ? "yes" : "no"} linear=${LINEAR_API_KEY ? "yes" : "no"} quiet=${QUIET_MODE ? "yes" : "no"} ci_allow=${CI_ALLOW ? "yes" : "no"}`);
+    console.log(`[Sidecar] :${PORT} gh=${_hasGhToken() ? "yes" : "no"} slack=${_hasSlackToken() ? "yes" : "no"} linear=${_hasLinearToken() ? "yes" : "no"} quiet=${QUIET_MODE ? "yes" : "no"} ci_allow=${CI_ALLOW ? "yes" : "no"}`);
     initSlackFromPermalink();
     // Transcript poller removed — host-side SessionStreamer handles JSONL → activity.jsonl
 
@@ -1359,20 +1139,9 @@ function stageAndCommit(workspace: string, commitMsg: string, opts: {
   }
 }
 
-export function pushToRemote(workspace: string, repo: string, branch: string, forcePush?: boolean): void {
-  // Pass token via GIT_ASKPASS env var to avoid leaking in /proc/pid/cmdline
-  const askpass = join("/tmp", `.git-askpass-${process.pid}`);
-  writeFileSync(askpass, `#!/bin/sh\necho "$GIT_PASSWORD"\n`, { mode: 0o700 });
-  try {
-    const pushUrl = `https://x-access-token@github.com/${repo}.git`;
-    const pushArgs = ["push", ...(forcePush ? ["--force"] : []), pushUrl, `HEAD:refs/heads/${branch}`];
-    execFileSync("git", pushArgs, {
-      cwd: workspace, encoding: "utf-8", timeout: 120000,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: askpass, GIT_PASSWORD: GH_TOKEN || "" },
-    });
-  } finally {
-    try { unlinkSync(askpass); } catch {}
-  }
+export async function pushToRemote(workspace: string, repo: string, branch: string, forcePush?: boolean): Promise<void> {
+  // Delegates to libcreds GitHubClient — policy-checked and audit-logged.
+  await getCreds().github.pushToRemote(workspace, repo, branch, forcePush);
 }
 
 // ── registerCloneRepo ───────────────────────────────────────────
@@ -1420,7 +1189,7 @@ export function registerCloneRepo(server: McpServer, config: CloneToolConfig): v
           try {
             execFileSync("git", ["clone", cloneUrl, targetDir], {
               timeout: 300_000, stdio: "pipe",
-              env: { ...process.env, GIT_ASKPASS: askpass, GIT_PASSWORD: GH_TOKEN || "" },
+              env: { ...process.env, GIT_ASKPASS: askpass, GIT_PASSWORD: process.env.GH_TOKEN || "" }, // libcreds-exempt: sync git clone needs raw token
             });
           } finally { try { unlinkSync(askpass); } catch {} }
         }
@@ -1457,7 +1226,7 @@ export function registerPRTools(server: McpServer, config: PRToolConfig): void {
       // Redirect v* branches to backport-to-v*-staging (never open PRs directly against version branches)
       let base: string = params.base;
       if (/^v\d+/.test(base)) base = `backport-to-${base}-staging`;
-      if (!GH_TOKEN) return { content: [{ type: "text", text: "No GH_TOKEN" }], isError: true };
+      if (!_hasGhToken()) return { content: [{ type: "text", text: "No GitHub access configured" }], isError: true };
 
       // Verify commits are actually based on the target branch
       if (base !== SESSION_META.base_branch) {
@@ -1492,31 +1261,19 @@ export function registerPRTools(server: McpServer, config: PRToolConfig): void {
         catch { logOutput = git(config.workspace, "log", "--oneline", "-5"); }
         if (!logOutput.trim()) return { content: [{ type: "text", text: "No commits to push" }], isError: true };
 
-        pushToRemote(config.workspace, config.repo, branch, force_push);
+        await pushToRemote(config.workspace, config.repo, branch, force_push);
 
-        const prRes = await fetch(`https://api.github.com/repos/${config.repo}/pulls`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${GH_TOKEN}`, Accept: "application/vnd.github.v3+json", "Content-Type": "application/json" },
-          body: JSON.stringify({
-            title, base, draft: true, head: branch,
-            body: body
-              + (closes?.length ? "\n\n" + closes.map((n: number) => `Closes #${n}`).join("\n") : "")
-              + (SESSION_META.log_url ? `\n\nClaudeBox log: ${SESSION_META.log_url}` : ""),
-          }),
+        const creds = getCreds();
+        const pr = await creds.github.createPull(config.repo, {
+          title, base, draft: true, head: branch,
+          body: body
+            + (closes?.length ? "\n\n" + closes.map((n: number) => `Closes #${n}`).join("\n") : "")
+            + (SESSION_META.log_url ? `\n\nClaudeBox log: ${SESSION_META.log_url}` : ""),
         });
-        const pr = await prRes.json() as any;
-        if (!prRes.ok) {
-          const errors = pr.errors?.map((e: any) => e.message || JSON.stringify(e)).join("; ") || "";
-          return { content: [{ type: "text", text: `PR failed (${prRes.status}): ${pr.message || "unknown"}${errors ? ` — ${errors}` : ""}\nBase: ${base}, Head: ${branch}` }], isError: true };
-        }
 
         if (config.label) {
           try {
-            await fetch(`https://api.github.com/repos/${config.repo}/issues/${pr.number}/labels`, {
-              method: "POST",
-              headers: { Authorization: `Bearer ${GH_TOKEN}`, Accept: "application/vnd.github.v3+json", "Content-Type": "application/json" },
-              body: JSON.stringify({ labels: [config.label] }),
-            });
+            await creds.github.addLabels(config.repo, pr.number, [config.label]);
           } catch {}
         }
 
@@ -1550,14 +1307,16 @@ export function registerPRTools(server: McpServer, config: PRToolConfig): void {
       // Redirect v* branches to backport-to-v*-staging
       let base: string | undefined = params.base;
       if (base && /^v\d+/.test(base)) base = `backport-to-${base}-staging`;
-      if (!GH_TOKEN) return { content: [{ type: "text", text: "No GH_TOKEN" }], isError: true };
+      if (!_hasGhToken()) return { content: [{ type: "text", text: "No GitHub access configured" }], isError: true };
 
       try {
-        const prRes = await fetch(`https://api.github.com/repos/${config.repo}/pulls/${pr_number}`, {
-          headers: { Authorization: `Bearer ${GH_TOKEN}`, Accept: "application/vnd.github.v3+json" },
-        });
-        if (!prRes.ok) return { content: [{ type: "text", text: `PR #${pr_number} not found (HTTP ${prRes.status}). Verify the number via github_api(method="GET", path="repos/${config.repo}/pulls/${pr_number}").` }], isError: true };
-        const prData = await prRes.json() as any;
+        const creds = getCreds();
+        let prData: any;
+        try {
+          prData = await creds.github.getPull(config.repo, pr_number);
+        } catch {
+          return { content: [{ type: "text", text: `PR #${pr_number} not found. Verify the number via github_api(method="GET", path="repos/${config.repo}/pulls/${pr_number}").` }], isError: true };
+        }
 
         if (config.label) {
           const labels: string[] = (prData.labels || []).map((l: any) => l.name);
@@ -1578,7 +1337,7 @@ export function registerPRTools(server: McpServer, config: PRToolConfig): void {
           });
           if (stage.error) return { content: [{ type: "text", text: stage.error }], isError: true };
 
-          pushToRemote(config.workspace, config.repo, branch, force_push);
+          await pushToRemote(config.workspace, config.repo, branch, force_push);
           results.push(`${force_push ? "Force-pushed" : "Pushed"} to ${branch}`);
         }
 
@@ -1592,16 +1351,7 @@ export function registerPRTools(server: McpServer, config: PRToolConfig): void {
         if (state) update.state = state;
 
         if (Object.keys(update).length > 0) {
-          const res = await fetch(`https://api.github.com/repos/${config.repo}/pulls/${pr_number}`, {
-            method: "PATCH",
-            headers: { Authorization: `Bearer ${GH_TOKEN}`, Accept: "application/vnd.github.v3+json", "Content-Type": "application/json" },
-            body: JSON.stringify(update),
-          });
-          if (!res.ok) {
-            const errBody = await res.json().catch(() => ({})) as any;
-            const errors = errBody.errors?.map((e: any) => e.message || JSON.stringify(e)).join("; ") || "";
-            return { content: [{ type: "text", text: `Update failed (${res.status}): ${errBody.message || "unknown"}${errors ? ` — ${errors}` : ""}` }], isError: true };
-          }
+          await creds.github.updatePull(config.repo, pr_number, update);
           results.push(`Updated PR metadata`);
         }
 

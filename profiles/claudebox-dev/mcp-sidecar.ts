@@ -13,8 +13,8 @@
 
 import {
   z, McpServer,
-  GH_TOKEN, SESSION_META,
-  buildCommonGhWhitelist, sanitizeError,
+  getCreds, SESSION_META,
+  sanitizeError,
   git, logActivity, pushToRemote,
   registerCommonTools, registerCloneRepo, registerPRTools,
   startMcpHttpServer,
@@ -23,12 +23,9 @@ import {
 // ── Profile config ──────────────────────────────────────────────
 const REPO = "AztecProtocol/claudebox";
 const WORKSPACE = "/workspace/claudebox";
-const R = `repos/${REPO}`;
 const DEV_BRANCH = "main";
 
 SESSION_META.repo = REPO;
-
-const GH_WHITELIST = buildCommonGhWhitelist(R);
 
 const TOOL_LIST = "clone_repo, respond_to_user, get_context, session_status, github_api, slack_api, create_pr, update_pr, push_branch, create_gist, create_skill, ci_failures, linear_get_issue, linear_create_issue, record_stat";
 
@@ -37,7 +34,7 @@ const TOOL_LIST = "clone_repo, respond_to_user, get_context, session_status, git
 function createServer(): McpServer {
   const server = new McpServer({ name: "claudebox-dev", version: "1.0.0" });
 
-  registerCommonTools(server, { repo: REPO, workspace: WORKSPACE, tools: TOOL_LIST, ghWhitelist: GH_WHITELIST });
+  registerCommonTools(server, { repo: REPO, workspace: WORKSPACE, tools: TOOL_LIST });
 
   registerCloneRepo(server, {
     repo: REPO, workspace: WORKSPACE,
@@ -63,7 +60,8 @@ function createServer(): McpServer {
       force_push: z.boolean().optional().describe("Force-push"),
     },
     async ({ branch, force_push }) => {
-      if (!GH_TOKEN) return { content: [{ type: "text", text: "No GH_TOKEN" }], isError: true };
+      if (!getCreds().github.hasToken)
+        return { content: [{ type: "text", text: "No GitHub credentials available" }], isError: true };
       const targetBranch = branch || DEV_BRANCH;
       if (!/^[\w./-]+$/.test(targetBranch))
         return { content: [{ type: "text", text: `Invalid branch name: ${targetBranch}` }], isError: true };
@@ -78,7 +76,7 @@ function createServer(): McpServer {
           git(WORKSPACE, "commit", "-m", `claudebox-dev: update`);
         }
 
-        pushToRemote(WORKSPACE, REPO, targetBranch, force_push);
+        await pushToRemote(WORKSPACE, REPO, targetBranch, force_push);
         logActivity("push", `Pushed to ${targetBranch}`);
         return { content: [{ type: "text", text: `Pushed to ${targetBranch}\nhttps://github.com/${REPO}/tree/${targetBranch}` }] };
       } catch (e: any) {

@@ -1,13 +1,12 @@
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 
-
-
 import {
   truncate, extractHashFromUrl, parseMessage, parseKeywords,
   validateResumeSession, sessionUrl, worktreeIdFromLogUrl,
   hashFromLogUrl, prKeyFromUrl,
 } from "../../packages/libclaudebox/util.ts";
+import { LOG_BASE_URL, CLAUDEBOX_HOST } from "../../packages/libclaudebox/config.ts";
 import type { SessionMeta, ParseResult } from "../../packages/libclaudebox/types.ts";
 
 describe("truncate", () => {
@@ -36,14 +35,14 @@ describe("truncate", () => {
 describe("extractHashFromUrl", () => {
   it("extracts hash from log URL", () => {
     assert.equal(
-      extractHashFromUrl("http://ci.example.com/abc123def456-3"),
+      extractHashFromUrl(`${LOG_BASE_URL}/abc123def456-3`),
       "abc123def456-3",
     );
   });
 
   it("extracts hash from angle-bracketed URL", () => {
     assert.equal(
-      extractHashFromUrl("<http://ci.example.com/abc123def456-3>"),
+      extractHashFromUrl(`<${LOG_BASE_URL}/abc123def456-3>`),
       "abc123def456-3",
     );
   });
@@ -51,7 +50,7 @@ describe("extractHashFromUrl", () => {
   it("extracts legacy 32-hex hash", () => {
     const hash = "a".repeat(32);
     assert.equal(
-      extractHashFromUrl(`http://ci.example.com/${hash}`),
+      extractHashFromUrl(`${LOG_BASE_URL}/${hash}`),
       hash,
     );
   });
@@ -63,8 +62,9 @@ describe("extractHashFromUrl", () => {
   });
 
   it("handles https variant", () => {
+    const httpsBase = LOG_BASE_URL.replace(/^http:/, "https:");
     assert.equal(
-      extractHashFromUrl("https://ci.example.com/abc123def456-3"),
+      extractHashFromUrl(`${httpsBase}/abc123def456-3`),
       "abc123def456-3",
     );
   });
@@ -80,7 +80,7 @@ describe("parseMessage", () => {
   });
 
   it("extracts hash from log URL with remaining prompt", () => {
-    const result = parseMessage("http://ci.example.com/abc123-1 fix this", noSession);
+    const result = parseMessage(`${LOG_BASE_URL}/abc123-1 fix this`, noSession);
     assert.equal(result.type, "reply-hash");
     if (result.type === "reply-hash") {
       assert.equal(result.hash, "abc123-1");
@@ -195,21 +195,21 @@ describe("validateResumeSession", () => {
 
 describe("sessionUrl", () => {
   it("builds URL from worktree ID", () => {
-    assert.equal(sessionUrl("abc123"), "https://claudebox.test/s/abc123");
+    assert.equal(sessionUrl("abc123"), `https://${CLAUDEBOX_HOST}/s/abc123`);
   });
 });
 
 describe("worktreeIdFromLogUrl", () => {
   it("extracts worktree ID from new format", () => {
     assert.equal(
-      worktreeIdFromLogUrl("http://ci.example.com/d9441073aae158ae-3"),
+      worktreeIdFromLogUrl(`${LOG_BASE_URL}/d9441073aae158ae-3`),
       "d9441073aae158ae",
     );
   });
 
   it("returns empty string for legacy format", () => {
     assert.equal(
-      worktreeIdFromLogUrl("http://ci.example.com/" + "a".repeat(32)),
+      worktreeIdFromLogUrl(`${LOG_BASE_URL}/` + "a".repeat(32)),
       "",
     );
   });
@@ -218,7 +218,7 @@ describe("worktreeIdFromLogUrl", () => {
 describe("hashFromLogUrl", () => {
   it("extracts full log ID", () => {
     assert.equal(
-      hashFromLogUrl("http://ci.example.com/d9441073aae158ae-3"),
+      hashFromLogUrl(`${LOG_BASE_URL}/d9441073aae158ae-3`),
       "d9441073aae158ae-3",
     );
   });

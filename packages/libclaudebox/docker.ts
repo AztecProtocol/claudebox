@@ -9,11 +9,14 @@ import type { SessionStore } from "./session-store.ts";
 import { SessionStreamer } from "./session-streamer.ts";
 import {
   REPO_DIR, DOCKER_IMAGE, CLAUDEBOX_CODE_DIR, CLAUDE_BINARY,
-  BASTION_SSH_KEY, GH_TOKEN, SLACK_BOT_TOKEN, HTTP_PORT,
+  BASTION_SSH_KEY, HTTP_PORT,
   CLAUDEBOX_HOST, CLAUDEBOX_DIR, CLAUDEBOX_STATS_DIR, API_SECRET,
   buildLogUrl,
   incrActiveSessions, decrActiveSessions,
 } from "./config.ts";
+
+// Token env vars — sourced from libcreds-host (the only package that reads token env vars).
+import { getContainerTokens } from "../libcreds-host/index.ts";
 import { getDockerConfig, getPromptSuffix, getSummaryPrompt, getTagCategories } from "./plugin-loader.ts";
 import type { DockerConfig } from "./plugin.ts";
 
@@ -237,9 +240,9 @@ export class DockerService {
           `GIT_COMMITTER_NAME=${GIT_IDENTITY.name}`,
           `GIT_COMMITTER_EMAIL=${GIT_IDENTITY.email}`,
           `MCP_PORT=9801`,
-          `GH_TOKEN=${GH_TOKEN}`,
-          `SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}`,
-          `LINEAR_API_KEY=${process.env.LINEAR_API_KEY || ""}`,
+          `GH_TOKEN=${getContainerTokens().ghToken}`,
+          `SLACK_BOT_TOKEN=${getContainerTokens().slackBotToken}`,
+          `LINEAR_API_KEY=${getContainerTokens().linearApiKey}`,
           // Server client env — sidecar uses these to talk to host server
           `CLAUDEBOX_SERVER_URL=${serverUrl}`,
           `CLAUDEBOX_SERVER_TOKEN=${API_SECRET}`,
