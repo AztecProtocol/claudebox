@@ -9,9 +9,6 @@
  * Max 10 concurrent sessions.
  */
 
-// ── Aztec-specific config (sets env defaults before config.ts evaluates) ──
-import "./aztec/config.ts";
-
 // Set env var early so config.ts sees it during import
 if (process.argv.includes("--http-only")) process.env.CLAUDEBOX_HTTP_ONLY = "1";
 const HTTP_ONLY = process.env.CLAUDEBOX_HTTP_ONLY === "1";

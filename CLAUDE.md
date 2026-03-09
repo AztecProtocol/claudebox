@@ -8,7 +8,6 @@ Automated Claude Code session orchestrator — Slack bot + HTTP dashboard + Dock
 packages/
   libclaudebox/          # Generic framework (use-case agnostic)
 profiles/                # Profiles (plugin.ts + mcp-sidecar.ts)
-aztec/                   # Aztec org-specific code (CI, cred proxy)
 server.ts                # Entry point: wires everything together
 ```
 
