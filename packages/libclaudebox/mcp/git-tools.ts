@@ -33,7 +33,7 @@ export function cloneRepoCheckoutAndInit(targetDir: string, ref: string, fallbac
     }
   }
   const head = execFileSync("git", ["-C", targetDir, "rev-parse", "--short", "HEAD"], { encoding: "utf-8", timeout: 5_000 }).trim();
-  const refNote = checkedOutRef !== ref ? ` (WARNING: ${ref} not found, fell back to ${checkedOutRef})` : "";
+  const refNote = checkedOutRef !== ref ? ` (used ${checkedOutRef} — ${ref} not found)` : "";
 
   let submoduleMsg = "";
   if (opts?.initSubmodules) {
