@@ -75,11 +75,28 @@ push_branch(branch="my-feature")  # pushes to a custom branch
 
 Keep it to 1-2 SHORT sentences. Print verbose output to stdout and reference the log.
 
+## Profile Directory
+
+Your profile dir is mounted at `/opt/claudebox-profile` (read-write). This is `profiles/claudebox-dev/` on the host.
+
+You can directly edit files here and they take effect immediately for future sessions:
+- `CLAUDE.md` — this file (your system prompt)
+- `.claude/skills/<name>/SKILL.md` — skills invokable as `/<name>`
+
+## Improving Profiles
+
+When asked to improve a profile (add skills, update CLAUDE.md, tune MCP tools), make the changes in your workspace clone and `create_pr`:
+
+- **Skills** — write to `profiles/<name>/.claude/skills/<skill>/SKILL.md`
+- **CLAUDE.md** — edit `profiles/<name>/CLAUDE.md`
+- **MCP sidecar** — edit `profiles/<name>/mcp-sidecar.ts`
+- **libclaudebox MCP tools** — edit `packages/libclaudebox/mcp/*.ts`
+
 ## Running Tests
 
 ```bash
-# Integration tests
-npx tsx --no-warnings tests/integration/plugin-routes.test.ts
+cd /workspace/claudebox
+node --experimental-strip-types --no-warnings --import ./tests/setup.ts --test tests/integration/*.test.ts
 ```
 
 ## Tips

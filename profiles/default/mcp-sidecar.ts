@@ -15,14 +15,12 @@ import { startMcpHttpServer } from "../../packages/libclaudebox/mcp/server.ts";
 const REPO = "AztecProtocol/aztec-packages";
 const WORKSPACE = process.env.WORKSPACE || "/workspace/aztec-packages";
 
-const TOOL_LIST = "clone_repo, respond_to_user, get_context, session_status, github_api, create_pr, update_pr, create_gist, update_gist, ci_failures, linear_get_issue, linear_create_issue, record_stat, git_fetch, git_pull, submodule_update, read_log, write_log";
-
 // ── MCP Server factory ──────────────────────────────────────────
 
 function createServer(): McpServer {
   const server = new McpServer({ name: "claudebox-default", version: "1.0.0" });
 
-  registerCommonTools(server, { repo: REPO, workspace: WORKSPACE, tools: TOOL_LIST });
+  registerCommonTools(server, { repo: REPO, workspace: WORKSPACE });
 
   registerCloneRepo(server, {
     repo: REPO, workspace: WORKSPACE,

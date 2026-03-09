@@ -3,10 +3,10 @@
  *
  * Registers: get_context, session_status, set_workspace_name, set_tag,
  * respond_to_user, github_api, linear_get_issue, linear_create_issue,
- * ci_failures, record_stat, create_gist, create_skill.
+ * ci_failures, record_stat, create_gist.
  */
 
-import { existsSync, writeFileSync, appendFileSync, mkdirSync } from "fs";
+import { appendFileSync, mkdirSync } from "fs";
 import { join } from "path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
@@ -14,12 +14,11 @@ import { z } from "zod";
 import { getSchema, allSchemas, schemasPrompt } from "../stat-schemas.ts";
 import { SESSION_META, QUIET_MODE, CI_ALLOW, STATS_DIR, WORKTREE_ID } from "./env.ts";
 import {
-  logActivity, addProgress, addTrackedPR, updateRootComment,
+  logActivity, addProgress, updateRootComment,
   otherArtifacts, truncateForSlack,
   respondToUserCalled, setRespondToUserCalled,
 } from "./activity.ts";
-import { getCreds, hasGhToken, hasLinearToken, git, sanitizeError } from "./helpers.ts";
-import { pushToRemote } from "./git-tools.ts";
+import { getCreds, hasGhToken, hasLinearToken } from "./helpers.ts";
 
 // ── Workspace name (shared state for branch naming) ─────────────
 export let workspaceName = "";
@@ -27,21 +26,19 @@ export let workspaceName = "";
 export interface ProfileOpts {
   repo: string;
   workspace: string;
-  tools: string;
   ghWhitelist?: Array<{ method: string; pattern: RegExp }>;
 }
 
 export function registerCommonTools(server: McpServer, opts: ProfileOpts): void {
-  const { repo, tools } = opts;
+  const { repo } = opts;
 
   // ── get_context ────────────────────────────────────────────────
-  server.tool("get_context", "Session metadata: user, repo, log_url, trigger source, git ref, available tools.", {},
+  server.tool("get_context", "Session metadata: user, repo, log_url, trigger source, git ref.", {},
     async () => {
       const ctx: Record<string, string> = {};
       for (const [k, v] of Object.entries(SESSION_META)) {
         if (v) ctx[k] = v;
       }
-      ctx.tools = tools;
       ctx.ci_allow = CI_ALLOW ? "true — you CAN modify .github/ workflow files" : "false — .github/ workflow files are blocked. If you need to propose CI changes, write them to .github-new/ instead.";
       return { content: [{ type: "text", text: JSON.stringify(ctx, null, 2) }] };
     });
@@ -316,78 +313,6 @@ For writes, use dedicated tools: create_pr, update_pr, create_gist, create_issue
         return { content: [{ type: "text", text: `Updated: ${gist.html_url}\nFiles: ${Object.keys(files).join(", ")}` }] };
       } catch (e: any) {
         return { content: [{ type: "text", text: `update_gist: ${e.message}` }], isError: true };
-      }
-    });
-
-  // ── create_skill ──────────────────────────────────────────────
-  server.tool("create_skill",
-    `Create or update a Claude Code skill and open a draft PR for review.
-
-A skill is a reusable prompt that Claude Code users invoke with /<name>. Skills have YAML frontmatter and a markdown body.
-
-Example:
-  name: "review-pr"
-  description: "Review a PR for correctness, style, and security"
-  argument_hint: "<PR number>"
-  body: "# Review PR\\n\\n## Steps\\n1. Fetch the PR diff...\\n2. Check for..."
-
-The body should be detailed, step-by-step instructions that Claude follows when the skill is invoked.
-Creates a draft PR on a skill/<name> branch for human review.`,
-    {
-      name: z.string().regex(/^[a-z0-9-]+$/).describe("Skill name (lowercase, hyphens only). Used as /<name> command."),
-      description: z.string().describe("One-line description shown in skill listings"),
-      argument_hint: z.string().optional().describe("Hint for arguments, e.g. '<PR number>' or '<url-or-hash>'"),
-      body: z.string().describe("Markdown body with detailed instructions for Claude to follow"),
-      base: z.string().optional().describe("Base branch for the PR (defaults to current branch)"),
-    },
-    async ({ name, description, argument_hint, body, base }) => {
-      if (!hasGhToken()) return { content: [{ type: "text", text: "No GitHub access configured" }], isError: true };
-
-      const workspace = (opts as any).workspace || "/workspace";
-      const skillDir = join(workspace, ".claude", "claudebox", "skills", name);
-      const skillFile = join(skillDir, "SKILL.md");
-
-      let frontmatter = `---\nname: ${name}\ndescription: ${description}\n`;
-      if (argument_hint) frontmatter += `argument-hint: ${argument_hint}\n`;
-      frontmatter += `---\n\n`;
-
-      const content = frontmatter + body;
-      const action = existsSync(skillFile) ? "Updated" : "Created";
-
-      try {
-        mkdirSync(skillDir, { recursive: true });
-        writeFileSync(skillFile, content);
-
-        const branch = `skill/${name}`;
-        const currentBranch = git(workspace, "rev-parse", "--abbrev-ref", "HEAD").trim();
-        const prBase = base || currentBranch || SESSION_META.base_branch || "next";
-
-        git(workspace, "checkout", "-B", branch);
-        git(workspace, "add", skillFile);
-        git(workspace, "commit", "-m", `chore: ${action.toLowerCase()} skill /${name}`);
-        await pushToRemote(workspace, repo, branch, true);
-
-        try { git(workspace, "checkout", currentBranch); } catch {}
-
-        try {
-          const pr = await getCreds().github.createPull(repo, {
-            title: `skill: ${action.toLowerCase()} /${name} — ${description}`,
-            base: prBase,
-            head: branch,
-            body: `## Skill: \`/${name}\`\n\n${description}\n\n${SESSION_META.log_url ? `Session log: ${SESSION_META.log_url}` : ""}`,
-          });
-
-          addTrackedPR(pr.number, `skill /${name}`, pr.html_url, "created");
-          logActivity("artifact", `Skill PR [/${name} #${pr.number}](${pr.html_url})`);
-          await updateRootComment();
-          return { content: [{ type: "text", text: `${action} skill /${name} — PR ${pr.html_url}` }] };
-        } catch (prErr: any) {
-          logActivity("artifact", `${action} skill /${name} on branch ${branch} (PR failed: ${prErr.message})`);
-          await updateRootComment();
-          return { content: [{ type: "text", text: `${action} skill /${name} — pushed to ${branch} but PR creation failed: ${prErr.message}` }] };
-        }
-      } catch (e: any) {
-        return { content: [{ type: "text", text: `create_skill: ${e.message}` }], isError: true };
       }
     });
 }

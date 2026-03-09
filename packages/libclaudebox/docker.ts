@@ -144,7 +144,6 @@ export class DockerService {
       throw new Error(`Invalid profile name: ${profileDir}`);
     }
     const sidecarEntrypoint = `/opt/claudebox/profiles/${profileDir}/mcp-sidecar.ts`;
-    const claudeMdPath = `/opt/claudebox/profiles/${profileDir}/container-claude.md`;
     const profile = await loadProfile(profileDir);
     const dockerConfig = profile.docker || {};
     const containerImage = dockerConfig.image || DOCKER_IMAGE;
@@ -213,10 +212,12 @@ export class DockerService {
       // Start sidecar
       const uid = `${process.getuid!()}:${process.getgid!()}`;
       // Build sidecar binds — audit profile skips reference repo
+      const profileHostDir = join(CLAUDEBOX_CODE_DIR, "profiles", profileDir);
       const sidecarBinds = [
         `${workspaceDir}:/workspace:rw`,
         `${claudeProjectsDir}:${CONTAINER_HOME}/.claude/projects/-workspace:ro`,
         `${CLAUDEBOX_CODE_DIR}:/opt/claudebox:ro`,
+        `${profileHostDir}:/opt/claudebox-profile:rw`,
         `${BASTION_SSH_KEY}:${CONTAINER_HOME}/.ssh/build_instance_key:ro`,
         `${CLAUDEBOX_STATS_DIR}:/stats:rw`,
         `${CLAUDEBOX_DIR}:${CONTAINER_HOME}/.claudebox:rw`,
@@ -296,13 +297,15 @@ export class DockerService {
         "-v", `${realpathSync(CLAUDE_BINARY)}:/usr/local/bin/claude:ro`,
         "-v", `${join(homedir(), ".claude.json")}:${CONTAINER_HOME}/.claude.json:rw`,
         "-v", `${CLAUDEBOX_CODE_DIR}:/opt/claudebox:ro`,
+        // Profile dir mounted rw so Claude can add skills, edit CLAUDE.md, etc.
+        "-v", `${join(CLAUDEBOX_CODE_DIR, "profiles", profileDir)}:/opt/claudebox-profile:rw`,
         "-e", `CLAUDEBOX_MCP_URL=${mcpUrl}`,
         "-e", `SESSION_UUID=${sessionUuid}`,
         "-e", `AZTEC_MCP_SERVER=http://${sidecarName}:9801/creds`,
         "-e", `CLAUDEBOX_SIDECAR_HOST=${sidecarName}`,
         "-e", `CLAUDEBOX_SIDECAR_PORT=9801`,
-        "-e", `CLAUDEBOX_CONTAINER_CLAUDE_MD=${claudeMdPath}`,
         "-e", `PARENT_LOG_ID=${logId}`,
+        "-e", `CLAUDEBOX_PROFILE=${profileDir}`,
         "-e", `CLAUDEBOX_MODEL=${opts.model || ""}`,
       ];
       // Pass tag categories to sidecar

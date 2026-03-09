@@ -95,7 +95,8 @@ create_issue(
 9. `create_gist` — create a summary gist (use `update_gist` if you need to add more files)
 10. `record_stat` — record `audit_summary` with the gist URL
 11. `update_meta_issue` — create session meta-issue linking all artifacts
-12. **`respond_to_user`** — final summary (REQUIRED, 1-2 sentences + gist link)
+12. **Mandatory review** — see below
+13. **`respond_to_user`** — final summary (REQUIRED, 1-2 sentences + gist link)
 
 ### Final response — `respond_to_user` (REQUIRED)
 

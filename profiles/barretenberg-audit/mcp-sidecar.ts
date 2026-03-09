@@ -28,8 +28,6 @@ SESSION_META.repo = REPO;
 
 const UPSTREAM_REPO = "AztecProtocol/barretenberg";
 
-const TOOL_LIST = "clone_repo, respond_to_user, get_context, session_status, github_api, create_pr, update_pr, create_external_pr, create_issue, close_issue, add_labels, create_audit_label, add_log_link, audit_history, create_gist, update_gist, list_gists, read_gist, update_meta_issue, ci_failures, linear_get_issue, linear_create_issue, record_stat, git_fetch, git_pull, submodule_update, read_log, write_log";
-
 // ── Auth check at startup ───────────────────────────────────────
 try {
   const creds = getCreds();
@@ -45,7 +43,7 @@ try {
 function createServer(): McpServer {
   const server = new McpServer({ name: "claudebox-audit", version: "1.0.0" });
 
-  registerCommonTools(server, { repo: REPO, workspace: WORKSPACE, tools: TOOL_LIST });
+  registerCommonTools(server, { repo: REPO, workspace: WORKSPACE });
 
   registerCloneRepo(server, {
     repo: REPO, workspace: WORKSPACE,

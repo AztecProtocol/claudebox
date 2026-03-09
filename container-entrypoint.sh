@@ -17,12 +17,14 @@ MCP_URL="${CLAUDEBOX_MCP_URL:?required}"
 SESSION_UUID="${SESSION_UUID:?required}"
 RESUME_ID="${CLAUDEBOX_RESUME_ID:-}"
 MODEL="${CLAUDEBOX_MODEL:-}"
+PROFILE="${CLAUDEBOX_PROFILE:-default}"
 PROMPT_FILE="/workspace/prompt.txt"
-CLAUDE_MD_TEMPLATE="${CLAUDEBOX_CONTAINER_CLAUDE_MD:-/opt/claudebox/container-claude.md}"
+PROFILE_DIR="/opt/claudebox-profile"
 
 echo "━━━ Container Bootstrap ━━━"
 echo "MCP:     $MCP_URL"
 echo "Session: $SESSION_UUID"
+echo "Profile: $PROFILE"
 [ -n "$RESUME_ID" ] && echo "Resume:  $RESUME_ID"
 [ -n "$MODEL" ] && echo "Model:   $MODEL"
 
@@ -38,13 +40,19 @@ cat > /tmp/mcp.json <<EOF
 }
 EOF
 
-# ── Step 2: Install CLAUDE.md ────────────────────────────────────
-# Placed at /workspace/.claude/CLAUDE.md — Claude will start in /workspace
-# and the repo (once cloned) lives at /workspace/aztec-packages
-if [ -f "$CLAUDE_MD_TEMPLATE" ]; then
-    mkdir -p /workspace/.claude
-    cp "$CLAUDE_MD_TEMPLATE" /workspace/.claude/CLAUDE.md
-fi
+# ── Step 2: Write session metadata CLAUDE.md ─────────────────────
+# Profile instructions live in $PROFILE_DIR/CLAUDE.md (loaded via --add-dir).
+# This file just injects session-specific context into the workspace.
+mkdir -p /workspace/.claude
+cat > /workspace/.claude/CLAUDE.md <<METAEOF
+# Session
+
+- Profile: $PROFILE
+- Session: $SESSION_UUID
+- MCP: $MCP_URL
+$([ -n "$RESUME_ID" ] && echo "- Resuming: $RESUME_ID")
+$([ -n "$MODEL" ] && echo "- Model: $MODEL")
+METAEOF
 
 # ── Step 3: Read prompt ──────────────────────────────────────────
 if [ ! -f "$PROMPT_FILE" ]; then
@@ -101,6 +109,8 @@ cd "$WORK_DIR"
 CLAUDE_BIN="${CLAUDE_BINARY:-claude}"
 COMMON_ARGS=(--print --dangerously-skip-permissions --mcp-config /tmp/mcp.json -p "$PROMPT")
 [ -n "$MODEL" ] && COMMON_ARGS+=(--model "$MODEL")
+# Give Claude read/write access to the profile directory (skills, CLAUDE.md, etc.)
+[ -d "$PROFILE_DIR" ] && COMMON_ARGS+=(--add-dir "$PROFILE_DIR")
 
 set +e
 if [ -n "$RESUME_ID" ]; then
