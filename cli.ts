@@ -18,14 +18,14 @@
  *   claudebox status
  *   claudebox profiles
  *   claudebox config <key> [value]
- *   claudebox init
+ *   claudebox init [--gh-token ...] [--slack-bot-token ...]
  *   claudebox register
  *
- * Config: ~/.claudebox/config.json
- *   { "server": "https://claudebox.work", "token": "...", "password": "..." }
+ * Config: ~/.claudebox/config.json (CLI client config)
+ * Credentials: ~/.config/claudebox/env (server tokens, managed by 'init')
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, watch } from "fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, watch, chmodSync } from "fs";
 import { join, dirname, basename } from "path";
 import { homedir } from "os";
 import { execFileSync } from "child_process";
@@ -1442,9 +1442,136 @@ Be concise. Focus on decisions that are blocking progress.`;
   process.exit(exitCode);
 }
 
-async function initCommand(_args: string[]): Promise<void> {
-  console.error("The 'init' command has been removed. Credentials are now managed via libcreds.");
-  process.exit(1);
+/**
+ * claudebox init — manage the server credentials file (~/.config/claudebox/env).
+ *
+ * This file is loaded by systemd's EnvironmentFile directive.
+ * Only libcreds and libcreds-host read these tokens at runtime.
+ *
+ * Usage:
+ *   claudebox init                              # show current status
+ *   claudebox init --gh-token ghp_xxx           # set GitHub token
+ *   claudebox init --slack-bot-token xoxb-xxx   # set Slack bot token
+ *   claudebox init --slack-app-token xapp-xxx   # set Slack app token
+ *   claudebox init --api-secret xxx             # set API secret
+ *   claudebox init --session-pass xxx           # set session password
+ *   claudebox init --linear-api-key lin_xxx     # set Linear API key
+ */
+async function initCommand(args: string[]): Promise<void> {
+  const { opts } = parseArgs(args, { help: true });
+
+  if (opts.help) {
+    console.log(`Usage: claudebox init [options]
+
+Manage the server credentials file (~/.config/claudebox/env).
+With no flags, shows which credentials are configured.
+
+Token flags:
+  --gh-token <token>          GitHub personal access token
+  --slack-bot-token <token>   Slack bot token (xoxb-...)
+  --slack-app-token <token>   Slack app token (xapp-...)
+  --api-secret <secret>       ClaudeBox API secret
+  --session-pass <pass>       Dashboard session password
+  --linear-api-key <key>      Linear API key (optional)
+
+Other options:
+  --host <hostname>           CLAUDEBOX_HOST (e.g. claudebox.work)
+  --port <port>               CLAUDEBOX_PORT (default: 3000)
+`);
+    return;
+  }
+
+  const ENV_DIR = join(homedir(), ".config", "claudebox");
+  const ENV_FILE = join(ENV_DIR, "env");
+
+  // Parse existing env file into key-value map
+  const existing = new Map<string, string>();
+  const comments: string[] = [];
+  if (existsSync(ENV_FILE)) {
+    for (const line of readFileSync(ENV_FILE, "utf-8").split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) { comments.push(line); continue; }
+      const eq = trimmed.indexOf("=");
+      if (eq > 0) existing.set(trimmed.slice(0, eq), trimmed.slice(eq + 1));
+    }
+  }
+
+  // Map CLI flags to env var names
+  const flagMap: Record<string, string> = {
+    "gh-token": "GH_TOKEN",
+    "slack-bot-token": "SLACK_BOT_TOKEN",
+    "slack-app-token": "SLACK_APP_TOKEN",
+    "api-secret": "CLAUDEBOX_API_SECRET",
+    "session-pass": "CLAUDEBOX_SESSION_PASS",
+    "linear-api-key": "LINEAR_API_KEY",
+    "host": "CLAUDEBOX_HOST",
+    "port": "CLAUDEBOX_PORT",
+  };
+
+  // Apply any provided flags
+  let changed = false;
+  for (const [flag, envKey] of Object.entries(flagMap)) {
+    if (opts[flag]) {
+      existing.set(envKey, opts[flag]);
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    // Write the env file
+    mkdirSync(ENV_DIR, { recursive: true });
+    const REQUIRED_KEYS = [
+      "CLAUDEBOX_SESSION_PASS", "CLAUDEBOX_API_SECRET",
+      "SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "GH_TOKEN",
+    ];
+    const OPTIONAL_KEYS = [
+      "LINEAR_API_KEY", "CLAUDEBOX_PORT", "CLAUDEBOX_HOST",
+      "CLAUDEBOX_DOCKER_IMAGE", "CLAUDEBOX_DEFAULT_BRANCH",
+    ];
+
+    const lines = ["# ClaudeBox credentials — managed by 'claudebox init'", "# chmod 600 — do not commit this file", ""];
+    for (const key of REQUIRED_KEYS) {
+      lines.push(`${key}=${existing.get(key) || ""}`);
+    }
+    lines.push("");
+    for (const key of OPTIONAL_KEYS) {
+      const val = existing.get(key);
+      if (val) lines.push(`${key}=${val}`);
+    }
+    lines.push("");
+
+    writeFileSync(ENV_FILE, lines.join("\n"), { mode: 0o600 });
+    console.log(`Updated ${ENV_FILE}`);
+  }
+
+  // Show status
+  const status = (key: string) => {
+    const val = existing.get(key);
+    if (!val) return "  \x1b[31m✗\x1b[0m";
+    return `  \x1b[32m✓\x1b[0m (${val.slice(0, 8)}...)`;
+  };
+
+  console.log(`\nCredentials: ${ENV_FILE}\n`);
+  console.log(`  GH_TOKEN:             ${status("GH_TOKEN")}`);
+  console.log(`  SLACK_BOT_TOKEN:      ${status("SLACK_BOT_TOKEN")}`);
+  console.log(`  SLACK_APP_TOKEN:      ${status("SLACK_APP_TOKEN")}`);
+  console.log(`  CLAUDEBOX_API_SECRET: ${status("CLAUDEBOX_API_SECRET")}`);
+  console.log(`  CLAUDEBOX_SESSION_PASS:${status("CLAUDEBOX_SESSION_PASS")}`);
+  console.log(`  LINEAR_API_KEY:       ${status("LINEAR_API_KEY")}`);
+
+  const host = existing.get("CLAUDEBOX_HOST");
+  const port = existing.get("CLAUDEBOX_PORT");
+  if (host || port) {
+    console.log("");
+    if (host) console.log(`  CLAUDEBOX_HOST:       ${host}`);
+    if (port) console.log(`  CLAUDEBOX_PORT:       ${port}`);
+  }
+
+  if (!changed && !existsSync(ENV_FILE)) {
+    console.log("\nNo credentials file found. Set tokens with:");
+    console.log("  claudebox init --gh-token ghp_xxx --slack-bot-token xoxb-xxx ...");
+  }
+  console.log("");
 }
 
 async function registerCommand(args: string[]): Promise<void> {
