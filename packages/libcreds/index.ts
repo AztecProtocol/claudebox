@@ -1,8 +1,8 @@
 /**
  * libcreds — Centralized credential management for ClaudeBox.
  *
- * Security core: typed, grant-checked, audit-logged clients for
- * GitHub, Slack, and Linear. No escape hatches.
+ * Typed, audit-logged API clients for GitHub, Slack, and Linear.
+ * No grant checking — security boundary is the token.
  *
  * Usage:
  *   const creds = createCreds({ profile: "default" });
@@ -10,26 +10,16 @@
  *   await creds.slack.postMessage("Done!");
  */
 
-export type {
-  SessionContext, ProfileGrant, AccessLevel, ServiceName, AuditEntry,
-  GitHubGrant, SlackGrant, LinearGrant,
-} from "./types.ts";
-
-export { getProfileGrant, registerProfileGrant } from "./grants.ts";
-export {
-  DEFAULT_GRANT, BARRETENBERG_AUDIT_GRANT, CLAUDEBOX_DEV_GRANT,
-  MINIMAL_GRANT, TEST_GRANT, HOST_GRANT,
-} from "./grants.ts";
+export type { SessionContext, AccessLevel, ServiceName, AuditEntry } from "./types.ts";
 
 export { GitHubClient } from "./github.ts";
 export { SlackClient } from "./slack.ts";
 export { LinearClient } from "./linear.ts";
 
-import type { SessionContext, ProfileGrant } from "./types.ts";
+import type { SessionContext } from "./types.ts";
 import { GitHubClient } from "./github.ts";
 import { SlackClient } from "./slack.ts";
 import { LinearClient } from "./linear.ts";
-import { getProfileGrant } from "./grants.ts";
 import { initAuditLog } from "./audit.ts";
 
 // ── Creds instance ───────────────────────────────────────────────
@@ -39,13 +29,11 @@ export interface Creds {
   slack: SlackClient;
   linear: LinearClient;
   ctx: SessionContext;
-  grant: ProfileGrant;
 }
 
 export interface CreateCredsOpts {
   profile?: string;
   ctx?: Partial<SessionContext>;
-  grant?: ProfileGrant;
   tokens?: { github?: string; slack?: string; linear?: string };
   auditLogPath?: string;
 }
@@ -58,7 +46,6 @@ export interface CreateCredsOpts {
  */
 export function createCreds(opts: CreateCredsOpts = {}): Creds {
   const profile = opts.profile || process.env.CLAUDEBOX_PROFILE || "default";
-  const grant = opts.grant || getProfileGrant(profile);
   const isHost = !process.env.CLAUDEBOX_SERVER_URL && !process.env.MCP_PORT;
   const runtime = isHost ? "host" as const : "sidecar" as const;
 
@@ -94,14 +81,14 @@ export function createCreds(opts: CreateCredsOpts = {}): Creds {
   const proxy = serverUrl && serverToken ? { serverUrl, serverToken, profile } : undefined;
 
   return {
-    github: new GitHubClient({ token: ghToken, ctx, grant: grant.github }),
-    slack: new SlackClient({ token: slackToken, ctx, grant: grant.slack, proxy }),
-    linear: new LinearClient({ token: linearToken, ctx, grant: grant.linear }),
-    ctx, grant,
+    github: new GitHubClient({ token: ghToken, ctx }),
+    slack: new SlackClient({ token: slackToken, ctx, proxy }),
+    linear: new LinearClient({ token: linearToken, ctx }),
+    ctx,
   };
 }
 
-/** Create a host-side Creds with the _host grant. For server.ts/http-routes.ts only. */
+/** Create a host-side Creds. For server.ts/http-routes.ts only. */
 export function createHostCreds(opts?: {
   slackChannel?: string;
   slackThreadTs?: string;

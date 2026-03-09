@@ -1,38 +1,21 @@
-# libcreds Security Model
+# libcreds
 
-## Grant-Based Access Control
+Typed, audit-logged API clients for GitHub, Slack, and Linear.
 
-Each profile declares a `ProfileGrant` specifying what resources it can access.
-Grants are checked inline in each client method — no separate policy engine.
+## Design
 
-### GitHub Grants
-- **repos** — full (read + write) access
-- **readOnlyRepos** — read-only access (writes blocked)
-- **canClose** — allow closing issues/PRs (destructive)
-- **canForcePush** — allow force-pushing (destructive)
-
-### Slack Grants
-- **extraChannels** — channels beyond the session channel
-- Session channel is always allowed for write operations
-- Read operations (users.list, conversations.info) are not channel-scoped
-
-### Linear Grants
-- **canWrite** — allow creating issues (default: read-only)
-- **allowedTeams** — teams allowed for write operations
+Simple wrappers around external APIs. Each method logs an audit entry, then makes the call.
+No grant checking, no policy engine — security boundary is the token itself.
 
 ## Session Context
 
-Each `Creds` instance carries a `SessionContext`. Fields marked `[POLICY]` drive access decisions:
-- **profile** — determines which grant applies
-- **runtime** — host (raw tokens) vs sidecar (proxied)
-- **slackChannel** — Slack channel scoping for write operations
+Each `Creds` instance carries a `SessionContext` with profile, runtime mode, and Slack coordinates.
 
 ## Audit Logging
 
-All credential operations are logged to session JSONL files:
-- Logged: timestamp, service, access level, detail, allowed/denied, profile, session ID
+All operations are logged to session JSONL files:
+- Logged: timestamp, service, access level, detail, profile, session ID
 - **Never logged**: tokens, secrets, credentials
-- Blocked operations also print to stderr for container log visibility
 
 ## Token Isolation
 
@@ -42,4 +25,4 @@ No other code should access `GH_TOKEN`, `SLACK_BOT_TOKEN`, or `LINEAR_API_KEY` d
 ## Trust Model
 
 - **Host mode**: clients call APIs directly with raw tokens
-- **Sidecar mode**: Slack proxies through host's `/api/internal/slack`; grant checking happens in the sidecar before proxying
+- **Sidecar mode**: Slack proxies through host's `/api/internal/slack`

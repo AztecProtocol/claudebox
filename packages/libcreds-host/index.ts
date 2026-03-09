@@ -1,10 +1,5 @@
 /**
- * libcreds-host — Server-side privileged credential operations.
- *
- * Creates a host-scoped Creds instance using libcreds with the HOST_GRANT.
- * This is MORE PRIVILEGED than sidecar libcreds — it has direct access to
- * raw SLACK_BOT_TOKEN and GH_TOKEN env vars and can operate on any channel
- * or repo in the org.
+ * libcreds-host — Server-side credential operations.
  *
  * Only used by server.ts and http-routes.ts (host-side code).
  */
@@ -22,11 +17,7 @@ export interface HostCredsOpts {
 /** Singleton host creds instance (no session scoping needed). */
 let _hostCreds: Creds | undefined;
 
-/**
- * Get or create a host-side Creds instance.
- * The host instance uses the _host profile with broad permissions.
- * Pass opts to create a session-scoped instance (e.g., for Slack updates).
- */
+/** Get or create a host-side Creds instance. */
 export function getHostCreds(opts?: HostCredsOpts): Creds {
   if (opts) {
     // Session-scoped: create fresh instance with channel context

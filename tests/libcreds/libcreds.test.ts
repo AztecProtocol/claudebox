@@ -1,7 +1,7 @@
 /**
  * libcreds end-to-end tests.
  *
- * Each test exercises the full stack: createCreds → client → grant check → audit.
+ * Each test exercises the full stack: createCreds → client → audit.
  * No mocks, no stubs — real module wiring with real temp files.
  */
 
@@ -26,7 +26,6 @@ function auditEntries(): any[] {
 }
 
 describe("libcreds e2e", () => {
-  // Save env, clean up between tests
   const savedEnv: Record<string, string | undefined> = {};
   const ENV_KEYS = [
     "CLAUDEBOX_SERVER_URL", "CLAUDEBOX_SERVER_TOKEN", "MCP_PORT",
@@ -36,7 +35,6 @@ describe("libcreds e2e", () => {
   before(() => {
     mkdirSync(TEST_DIR, { recursive: true });
     for (const k of ENV_KEYS) savedEnv[k] = process.env[k];
-    // Ensure host mode for most tests
     delete process.env.CLAUDEBOX_SERVER_URL;
     delete process.env.CLAUDEBOX_SERVER_TOKEN;
     delete process.env.MCP_PORT;
@@ -51,33 +49,24 @@ describe("libcreds e2e", () => {
 
   // ────────────────────────────────────────────────────────────────
 
-  it("default profile: allowed GitHub read passes policy, denied write is blocked, both audited", async () => {
+  it("github client: reads fail at API (not at policy), writes are audit-logged", async () => {
     const creds = createCreds({
       profile: "default",
       tokens: { github: "ghp_fake" },
       auditLogPath: AUDIT_LOG,
     });
 
-    // Allowed: read issues on aztec-packages (will fail at GitHub API, not at policy)
+    // Read fails at GitHub API (401/network), not at policy
     const readErr = await creds.github.getIssue("AztecProtocol/aztec-packages", 1)
       .catch((e: Error) => e);
     assert.ok(readErr instanceof Error);
-    // Policy passed — error is from GitHub API (401/network), not "not in allowed list"
-    assert.ok(!readErr.message.includes("not in allowed list"));
-    assert.ok(!readErr.message.includes("Denied"));
+    assert.ok(readErr.message.includes("GitHub 401") || readErr.message.includes("GitHub 403") || readErr.message.includes("fetch"));
 
-    // Denied: force-push is destructive but granted for default; try a repo NOT in the list
-    const denyErr = await creds.github.getIssue("AztecProtocol/secret-repo", 1)
-      .catch((e: Error) => e);
-    assert.ok(denyErr instanceof Error);
-    assert.ok(denyErr.message.includes("not in allowed list"));
-
-    // Audit log has both entries
+    // Audit log records the operation
     const entries = auditEntries();
-    const allowed = entries.filter(e => e.allowed === true);
-    const denied = entries.filter(e => e.allowed === false);
-    assert.ok(allowed.length >= 1, "should have at least 1 allowed entry");
-    assert.ok(denied.length >= 1, "should have at least 1 denied entry");
+    assert.ok(entries.length >= 1, "should have at least 1 audit entry");
+    assert.ok(entries.every(e => e.allowed === true), "all entries should be allowed (no grant checking)");
+
     // No entry contains token strings
     const raw = readFileSync(AUDIT_LOG, "utf-8");
     assert.ok(!raw.includes("ghp_fake"));
@@ -85,32 +74,7 @@ describe("libcreds e2e", () => {
 
   // ────────────────────────────────────────────────────────────────
 
-  it("barretenberg-audit profile: read-only repo blocks writes but allows reads", async () => {
-    const creds = createCreds({
-      profile: "barretenberg-audit",
-      tokens: { github: "ghp_fake" },
-      auditLogPath: AUDIT_LOG,
-    });
-
-    // aztec-packages is in readOnlyRepos — reads pass policy
-    const readErr = await creds.github.listIssues("AztecProtocol/aztec-packages")
-      .catch((e: Error) => e);
-    assert.ok(!readErr.message.includes("read-only"), "read should pass policy");
-
-    // But writes are blocked on read-only repos
-    const writeErr = await creds.github.createIssue("AztecProtocol/aztec-packages", { title: "x" })
-      .catch((e: Error) => e);
-    assert.ok(writeErr.message.includes("read-only"), "write to read-only repo should be blocked");
-
-    // Writes to the actual audit repo pass policy
-    const auditWriteErr = await creds.github.createIssue("AztecProtocol/barretenberg-claude", { title: "x" })
-      .catch((e: Error) => e);
-    assert.ok(!auditWriteErr.message.includes("Denied"), "write to audit repo should pass policy");
-  });
-
-  // ────────────────────────────────────────────────────────────────
-
-  it("slack channel scoping: session channel allowed, other channels blocked, non-scoped ops pass", async () => {
+  it("slack client: posts work with session context, no token throws", async () => {
     const creds = createCreds({
       profile: "default",
       tokens: { slack: "xoxb-fake" },
@@ -118,30 +82,28 @@ describe("libcreds e2e", () => {
       auditLogPath: AUDIT_LOG,
     });
 
-    // Post to session channel — passes policy (Slack API returns error JSON, not a throw)
-    const okResult = await creds.slack.postMessage("hi", { channel: "C_SESSION" })
+    // Post to session channel — Slack API returns error JSON (invalid_auth), not a throw
+    const result = await creds.slack.postMessage("hi", { channel: "C_SESSION" })
       .catch((e: Error) => e);
-    // If it threw, the error should NOT be about scoping
-    if (okResult instanceof Error) {
-      assert.ok(!okResult.message.includes("not in session scope"));
+    // Either returns Slack API response or network error — both are fine
+    if (!(result instanceof Error)) {
+      assert.ok(result !== undefined, "should get a response from Slack API");
     }
-    // If it returned, the Slack API responded (policy passed)
 
-    // Post to random channel — blocked by policy
-    const denyErr = await creds.slack.postMessage("hi", { channel: "C_RANDOM" })
-      .catch((e: Error) => e);
-    assert.ok(denyErr.message.includes("not in session scope"));
-
-    // Reactions also channel-scoped
-    const reactErr = await creds.slack.addReaction("thumbsup", { channel: "C_RANDOM", timestamp: "1.2" })
-      .catch((e: Error) => e);
-    assert.ok(reactErr instanceof Error && reactErr.message.includes("not in session scope"));
-
-    // users:list is NOT channel-scoped — passes policy (may fail at API)
+    // users.list works (not channel-scoped)
     const listResult = await creds.slack.listUsers().catch((e: Error) => e);
-    if (listResult instanceof Error) {
-      assert.ok(!listResult.message.includes("scope"));
-    }
+    assert.ok(listResult !== undefined);
+
+    // No token at all throws
+    const noTokenCreds = createCreds({
+      profile: "default",
+      tokens: { slack: "" },
+      auditLogPath: AUDIT_LOG,
+    });
+    const noTokenErr = await noTokenCreds.slack.postMessage("hi", { channel: "C_TEST" })
+      .catch((e: Error) => e);
+    assert.ok(noTokenErr instanceof Error);
+    assert.ok(noTokenErr.message.includes("No Slack token"));
   });
 
   // ────────────────────────────────────────────────────────────────
@@ -158,9 +120,7 @@ describe("libcreds e2e", () => {
       });
 
       assert.equal(creds.ctx.runtime, "sidecar");
-      // Slack should report hasToken=true via proxy even without direct token
-      assert.equal(creds.slack.hasToken, true);
-      // GitHub/Linear don't proxy
+      assert.equal(creds.slack.hasToken, true); // proxy
       assert.equal(creds.github.hasToken, false);
       assert.equal(creds.linear.hasToken, false);
     } finally {
@@ -169,84 +129,43 @@ describe("libcreds e2e", () => {
       delete process.env.MCP_PORT;
     }
 
-    // Host mode when env cleared
     const hostCreds = createCreds({ profile: "test", auditLogPath: AUDIT_LOG });
     assert.equal(hostCreds.ctx.runtime, "host");
   });
 
   // ────────────────────────────────────────────────────────────────
 
-  it("minimal profile falls back correctly and unknown profiles get minimal grants", async () => {
-    // Explicit minimal
-    const minimal = createCreds({
-      profile: "minimal",
-      tokens: { github: "ghp_fake" },
-      auditLogPath: AUDIT_LOG,
-    });
-    assert.deepStrictEqual(minimal.grant.github?.repos, []);
-    assert.equal(minimal.grant.linear, undefined);
-
-    // Any repo is blocked (empty repos list)
-    const err = await minimal.github.getIssue("AztecProtocol/aztec-packages", 1)
-      .catch((e: Error) => e);
-    assert.ok(err.message.includes("not in allowed list"));
-
-    // Unknown profile gets same treatment
-    const unknown = createCreds({
-      profile: "completely-unknown-profile-xyz",
-      tokens: { github: "ghp_fake" },
-      auditLogPath: AUDIT_LOG,
-    });
-    assert.deepStrictEqual(unknown.grant.github?.repos, []);
-    assert.equal(unknown.grant.linear, undefined);
-  });
-
-  // ────────────────────────────────────────────────────────────────
-
-  it("createHostCreds: broad permissions, _host profile, session context passthrough", async () => {
+  it("createHostCreds: _host profile, session context passthrough", () => {
     const creds = createHostCreds({ slackChannel: "C_OPS", slackThreadTs: "999.000" });
 
     assert.equal(creds.ctx.profile, "_host");
     assert.equal(creds.ctx.runtime, "host");
     assert.equal(creds.ctx.slackChannel, "C_OPS");
     assert.equal(creds.ctx.slackThreadTs, "999.000");
-
-    // Host grant covers multiple repos — verify aztec-packages AND claudebox
-    assert.ok(creds.grant.github?.repos.includes("AztecProtocol/aztec-packages"));
-    assert.ok(creds.grant.github?.repos.includes("AztecProtocol/claudebox"));
-
-    // Host grant has Slack access
-    assert.ok(creds.grant.slack !== undefined, "host should have Slack grant");
-    // Host grant allows force-push (not all profiles do)
-    assert.ok(creds.grant.github?.canForcePush, "host should allow force-push");
   });
 
   // ────────────────────────────────────────────────────────────────
 
-  it("handleCredsEndpoint: dispatches valid ops, rejects invalid ones, scopes by session", async () => {
-    // Missing op
+  it("handleCredsEndpoint: dispatches valid ops, rejects invalid ones", async () => {
     assert.equal((await handleCredsEndpoint({ op: "", args: {} })).ok, false);
 
-    // Unknown service
     const r1 = await handleCredsEndpoint({ op: "redis:get", args: {} });
     assert.ok(r1.error?.includes("unknown service"));
 
-    // Unknown slack method
     const r2 = await handleCredsEndpoint({ op: "slack:admin:nuke", args: {} });
     assert.ok(r2.error?.includes("unknown slack op"));
 
-    // Unknown github method
     const r3 = await handleCredsEndpoint({ op: "github:admin:delete", args: {} });
     assert.ok(r3.error?.includes("unknown github op"));
 
-    // Valid slack op dispatches (fails at API layer, not at dispatch)
+    // Valid slack op dispatches (fails at API, not at dispatch)
     const r4 = await handleCredsEndpoint({
       op: "slack:chat:postMessage",
       args: { text: "hi", channel: "C_TEST" },
       session: { slack_channel: "C_TEST" },
     });
     assert.equal(r4.ok, false);
-    assert.ok(!r4.error?.includes("unknown"), "should fail at API, not dispatch");
+    assert.ok(!r4.error?.includes("unknown"));
 
     // Valid github op dispatches
     const r5 = await handleCredsEndpoint({
@@ -254,7 +173,7 @@ describe("libcreds e2e", () => {
       args: { repo: "AztecProtocol/aztec-packages", issue_number: 1 },
     });
     assert.equal(r5.ok, false);
-    assert.ok(!r5.error?.includes("unknown"), "should fail at API, not dispatch");
+    assert.ok(!r5.error?.includes("unknown"));
   });
 
   // ────────────────────────────────────────────────────────────────
