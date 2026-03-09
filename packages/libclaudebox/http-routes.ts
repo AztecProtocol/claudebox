@@ -128,6 +128,27 @@ function getSlackChannelInfo(channelId: string): SlackChannelInfo | null {
   return null; // unknown channel — no info
 }
 
+/** Resolve channel info via Slack API and cache it. */
+async function resolveSlackChannelInfo(channelId: string): Promise<SlackChannelInfo | null> {
+  if (channelInfoCache.has(channelId)) return channelInfoCache.get(channelId)!;
+  if (channelId.startsWith("D")) { const info = { name: "", isDm: true }; channelInfoCache.set(channelId, info); return info; }
+  if (!SLACK_BOT_TOKEN || !channelId) return null;
+  try {
+    const resp = await fetch(`https://slack.com/api/conversations.info?channel=${channelId}`, {
+      headers: { "Authorization": `Bearer ${SLACK_BOT_TOKEN}` },
+    });
+    const data = await resp.json() as any;
+    if (data.ok) {
+      const ch = data.channel || {};
+      const isDm = !!ch.is_im || !!ch.is_mpim;
+      const info: SlackChannelInfo = { name: ch.name || "", isDm };
+      channelInfoCache.set(channelId, info);
+      return info;
+    }
+  } catch {}
+  return null;
+}
+
 /** Strip "Slack thread context..." suffix from prompts for display */
 function stripSlackContext(prompt: string): string {
   // Match any variant: "Slack thread context:", "Slack thread context (recent):", etc.
@@ -171,10 +192,10 @@ async function buildDashboardData(store: WorktreeStore, profileFilter?: string):
     if (channelId) channelIds.add(channelId);
   }
   const channelInfoMap = new Map<string, SlackChannelInfo>();
-  for (const id of channelIds) {
-    const info = getSlackChannelInfo(id);
+  await Promise.all([...channelIds].map(async (id) => {
+    const info = await resolveSlackChannelInfo(id);
     if (info) channelInfoMap.set(id, info);
-  }
+  }));
 
   // Build flat workspace list
   const workspaces: WorkspaceCard[] = [];
@@ -1087,12 +1108,12 @@ const routes: Route[] = [
       for (const s of all) {
         if (s.slack_channel) channelIds.add(s.slack_channel);
       }
-      // Resolve channel names
+      // Resolve channel names (async via Slack API)
       const channelNameMap = new Map<string, SlackChannelInfo>();
-      for (const id of channelIds) {
-        const info = getSlackChannelInfo(id);
+      await Promise.all([...channelIds].map(async (id) => {
+        const info = await resolveSlackChannelInfo(id);
         if (info) channelNameMap.set(id, info);
-      }
+      }));
 
       // Group by worktree first (like buildDashboardData), then enrich
       const worktreeMap = new Map<string, RunMeta[]>();
