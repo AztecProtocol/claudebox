@@ -306,6 +306,8 @@ export class DockerService {
         "-e", `CLAUDEBOX_CONTAINER_CLAUDE_MD=${claudeMdPath}`,
         "-e", `PARENT_LOG_ID=${logId}`,
         "-e", `CLAUDEBOX_MODEL=${opts.model || ""}`,
+        "-e", `CLAUDEBOX_REPO_NAME=${basename(REPO_DIR)}`,
+        "-e", `CLAUDEBOX_BASE_BRANCH=${baseBranch}`,
       ];
       // Pass tag categories to sidecar
       const tagCats = await getTagCategories(profileDir);
