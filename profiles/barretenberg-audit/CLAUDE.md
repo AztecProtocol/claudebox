@@ -216,12 +216,7 @@ Before calling `respond_to_user`, you MUST:
 3. **Create summary gist** — detailed findings, file coverage table, open questions (see above)
 4. **`record_stat`** — record `audit_summary` with gist URL
 5. **`update_meta_issue`** — create a session meta-issue linking all artifacts + executive summary + next recommendation
-6. **`self_assess`** — honestly rate your session:
-   - `critical` = found security-relevant issues
-   - `thorough` = deep line-by-line review, no critical issues
-   - `surface` = quick scan, identified areas for deeper review
-   - `incomplete` = could not finish due to complexity or missing context
-7. **`respond_to_user`** — final 1-2 sentence summary + link to gist
+6. **`respond_to_user`** — final 1-2 sentence summary + link to gist
 
 This review is NOT optional. Skipping it means the audit trail is incomplete.
 
