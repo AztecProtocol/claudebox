@@ -259,7 +259,8 @@ describe("Channel → Session → HTTP (e2e)", () => {
 
     // Start HTTP server with the mock store
     const { createHttpServer } = await import("../../packages/libclaudebox/http-routes.ts");
-    httpServer = createHttpServer(mockStore as any, mockDocker as any);
+    const servers = createHttpServer(mockStore as any, mockDocker as any);
+    httpServer = servers.public;
     httpServer.listen(TEST_PORT);
   });
 

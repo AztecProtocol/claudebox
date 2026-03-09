@@ -49,7 +49,6 @@ The skills load PRINCIPLES.md (known bug classes) and CRITERIA.md (code quality 
 | `get_context` | Session metadata |
 | `session_status` | Update Slack + GitHub status in-place. Call frequently. |
 | `github_api` | GitHub REST API proxy — **read-only** (GET only) |
-| `slack_api` | Slack API proxy |
 | `create_issue` | **Create GitHub issues for findings** — specify quality_dimension + severity |
 | `close_issue` | Close a GitHub issue — posts a tracking comment with session log before closing |
 | `add_labels` | Add labels to an existing issue or PR |

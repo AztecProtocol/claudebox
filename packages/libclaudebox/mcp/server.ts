@@ -10,10 +10,10 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 
 import { PORT, SESSION_META } from "./env.ts";
 import {
-  getServerClient, logActivity, addProgress, updateRootComment, buildSlackText,
+  getServerClient, logActivity, addProgress, updateRootComment,
   lastStatus, respondToUserCalled, trackedPRs, otherArtifacts,
 } from "./activity.ts";
-import { getCreds, _hasGhToken, _hasSlackToken, _hasLinearToken, readBody, parseSlackPermalink } from "./helpers.ts";
+import { hasGhToken, hasLinearToken, readBody } from "./helpers.ts";
 
 // ── Completion summary ──────────────────────────────────────────
 
@@ -62,7 +62,6 @@ function buildCompletionSummary(): string {
 
 async function dmAuthorOnCompletion(): Promise<void> {
   if (!SESSION_META.user) return;
-  if (SESSION_META.slack_channel && SESSION_META.slack_channel.startsWith("D")) return;
 
   const client = getServerClient();
   if (!client.hasServer) return;
@@ -73,53 +72,6 @@ async function dmAuthorOnCompletion(): Promise<void> {
     status,
     trackedPRs: [...trackedPRs.entries()].map(([num, pr]) => ({ num, ...pr })),
   });
-}
-
-async function initSlackFromPermalink(): Promise<void> {
-  if (!SESSION_META.slack_channel || !SESSION_META.slack_thread_ts || SESSION_META.slack_message_ts) return;
-  if (!_hasSlackToken()) return;
-
-  const initText = buildSlackText("Starting…");
-  const slack = getCreds().slack;
-
-  try {
-    const d = await slack.updateMessage(initText, {
-      channel: SESSION_META.slack_channel, ts: SESSION_META.slack_thread_ts,
-    });
-    if (d.ok) {
-      SESSION_META.slack_message_ts = SESSION_META.slack_thread_ts;
-      getServerClient().updateSessionMeta({ slack_message_ts: SESSION_META.slack_message_ts });
-      console.log(`[Sidecar] Updated linked message directly in ${SESSION_META.slack_channel}, ts=${SESSION_META.slack_thread_ts}`);
-      return;
-    }
-    console.log(`[Sidecar] Can't update linked message (${d.error}), posting thread reply`);
-  } catch (e: any) {
-    console.log(`[Sidecar] Can't update linked message (${e.message}), posting thread reply`);
-  }
-
-  try {
-    const d = await slack.postMessage(initText, {
-      channel: SESSION_META.slack_channel, threadTs: SESSION_META.slack_thread_ts,
-    });
-    if (d.ok && d.ts) {
-      SESSION_META.slack_message_ts = d.ts;
-      getServerClient().updateSessionMeta({ slack_message_ts: d.ts });
-      console.log(`[Sidecar] Posted thread reply in ${SESSION_META.slack_channel}, ts=${d.ts}`);
-    } else {
-      console.error(`[Sidecar] Failed to post thread reply: ${d.error}`);
-    }
-  } catch (e: any) {
-    console.error(`[Sidecar] Failed to post thread reply: ${e.message}`);
-  }
-}
-
-// ── Parse Slack permalink from link if no Slack coords provided ──
-if (_hasSlackToken() && SESSION_META.link && !SESSION_META.slack_channel) {
-  const parsed = parseSlackPermalink(SESSION_META.link);
-  if (parsed) {
-    SESSION_META.slack_channel = parsed.channel;
-    SESSION_META.slack_thread_ts = parsed.thread_ts;
-  }
 }
 
 // ── HTTP Server ─────────────────────────────────────────────────
@@ -158,8 +110,7 @@ export function startMcpHttpServer(createMcpServer: () => McpServer): void {
   });
 
   httpServer.listen(PORT, "0.0.0.0", () => {
-    console.log(`[Sidecar] :${PORT} gh=${_hasGhToken() ? "yes" : "no"} slack=${_hasSlackToken() ? "yes" : "no"} linear=${_hasLinearToken() ? "yes" : "no"}`);
-    initSlackFromPermalink();
+    console.log(`[Sidecar] :${PORT} gh=${hasGhToken() ? "yes" : "no"} linear=${hasLinearToken() ? "yes" : "no"}`);
   });
 
   process.on("SIGTERM", async () => {

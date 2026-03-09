@@ -21,9 +21,6 @@ export const SESSION_META = {
   run_comment_id: process.env.CLAUDEBOX_RUN_COMMENT_ID || "",
   run_url: process.env.CLAUDEBOX_RUN_URL || "",
   link: process.env.CLAUDEBOX_LINK || "",
-  slack_channel: process.env.CLAUDEBOX_SLACK_CHANNEL || "",
-  slack_thread_ts: process.env.CLAUDEBOX_SLACK_THREAD_TS || "",
-  slack_message_ts: process.env.CLAUDEBOX_SLACK_MESSAGE_TS || "",
   base_branch: process.env.CLAUDEBOX_BASE_BRANCH || "next",
 };
 

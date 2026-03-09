@@ -2,7 +2,7 @@
  * Common MCP tool registrar — shared tools for all profile sidecars.
  *
  * Registers: get_context, session_status, set_workspace_name, set_tag,
- * respond_to_user, github_api, slack_api, linear_get_issue, linear_create_issue,
+ * respond_to_user, github_api, linear_get_issue, linear_create_issue,
  * ci_failures, record_stat, create_gist, create_skill.
  */
 
@@ -18,7 +18,7 @@ import {
   otherArtifacts, truncateForSlack,
   respondToUserCalled, setRespondToUserCalled,
 } from "./activity.ts";
-import { getCreds, _hasGhToken, _hasSlackToken, _hasLinearToken, git, sanitizeError, SLACK_WHITELIST } from "./helpers.ts";
+import { getCreds, hasGhToken, hasLinearToken, git, sanitizeError } from "./helpers.ts";
 import { pushToRemote } from "./git-tools.ts";
 
 // ── Workspace name (shared state for branch naming) ─────────────
@@ -122,7 +122,7 @@ For writes, use dedicated tools: create_pr, update_pr, create_gist, create_issue
       accept: z.string().optional().describe("Accept header override"),
     },
     async ({ method, path, accept }) => {
-      if (!_hasGhToken()) return { content: [{ type: "text", text: "No GitHub access configured" }], isError: true };
+      if (!hasGhToken()) return { content: [{ type: "text", text: "No GitHub access configured" }], isError: true };
 
       try {
         const result = await getCreds().github.rawGet(repo, path.replace(/^\//, ""), { accept });
@@ -134,79 +134,12 @@ For writes, use dedicated tools: create_pr, update_pr, create_gist, create_issue
       }
     });
 
-  // ── slack_api ──────────────────────────────────────────────────
-  server.tool("slack_api",
-    `Slack Web API proxy (thread-scoped). Whitelisted: ${[...SLACK_WHITELIST].join(", ")}.
-Channel and thread are locked to this session — you can only read/write your own thread.`,
-    {
-      method: z.string().describe("e.g. chat.postMessage"),
-      args: z.record(z.any()).describe("Method arguments"),
-    },
-    async ({ method, args }) => {
-      if (QUIET_MODE && method === "chat.postMessage")
-        return { content: [{ type: "text", text: "Quiet mode active — use respond_to_user to send your response" }], isError: true };
-      if (!_hasSlackToken()) return { content: [{ type: "text", text: "No Slack access configured" }], isError: true };
-
-      const payload = { ...args };
-
-      if (method !== "users.list") {
-        if (!SESSION_META.slack_channel)
-          return { content: [{ type: "text", text: "No Slack channel configured for this session" }], isError: true };
-        payload.channel = SESSION_META.slack_channel;
-      }
-      if (method === "chat.postMessage") {
-        if (!SESSION_META.slack_thread_ts)
-          return { content: [{ type: "text", text: "No Slack thread configured — use respond_to_user instead" }], isError: true };
-        payload.thread_ts = SESSION_META.slack_thread_ts;
-      }
-      if (method === "chat.update") {
-        if (!SESSION_META.slack_message_ts)
-          return { content: [{ type: "text", text: "No Slack message to update" }], isError: true };
-        payload.ts = SESSION_META.slack_message_ts;
-      }
-      if (method === "conversations.replies") {
-        if (!SESSION_META.slack_thread_ts)
-          return { content: [{ type: "text", text: "No Slack thread configured for this session" }], isError: true };
-        payload.ts = SESSION_META.slack_thread_ts;
-      }
-
-      try {
-        const slack = getCreds().slack;
-        let d: any;
-        switch (method) {
-          case "chat.postMessage": d = await slack.postMessage(payload.text, { channel: payload.channel, threadTs: payload.thread_ts }); break;
-          case "chat.update": d = await slack.updateMessage(payload.text, { channel: payload.channel, ts: payload.ts }); break;
-          case "reactions.add": d = await slack.addReaction(payload.name, { channel: payload.channel, timestamp: payload.timestamp }); break;
-          case "reactions.remove": d = await slack.removeReaction(payload.name, { channel: payload.channel, timestamp: payload.timestamp }); break;
-          case "conversations.replies": d = await slack.getThreadReplies({ channel: payload.channel, ts: payload.ts, limit: payload.limit }); break;
-          case "users.list": d = await slack.listUsers(payload.limit); break;
-          default: return { content: [{ type: "text", text: `Unknown method: ${method}` }], isError: true };
-        }
-        if (!d?.ok) {
-          const hints: Record<string, string> = {
-            not_in_channel: " (bot not invited to this channel — use your session's own channel instead)",
-            missing_scope: ` (need: ${d?.needed || "unknown"}, have: ${d?.provided || "unknown"})`,
-            channel_not_found: " (channel ID may be wrong — check get_context for your session's channel)",
-          };
-          return { content: [{ type: "text", text: `${method}: ${d?.error}${hints[d?.error] || ""}` }], isError: true };
-        }
-        if (method === "conversations.replies") {
-          const text = JSON.stringify(d, null, 2);
-          const maxLen = 50_000;
-          return { content: [{ type: "text", text: text.length > maxLen ? text.slice(0, maxLen) + "\n...(truncated)" : text }] };
-        }
-        return { content: [{ type: "text", text: `OK${d.ts ? ` (ts: ${d.ts})` : ""}` }] };
-      } catch (e: any) {
-        return { content: [{ type: "text", text: e.message }], isError: true };
-      }
-    });
-
   // ── linear_get_issue ───────────────────────────────────────────
   server.tool("linear_get_issue",
     "Fetch a Linear issue by identifier (e.g. UNIFIED-26). Returns title, description, state, assignee, labels, and URL.",
     { identifier: z.string().describe("Issue identifier, e.g. UNIFIED-26 or ENG-1234") },
     async ({ identifier }) => {
-      if (!_hasLinearToken()) return { content: [{ type: "text", text: "No Linear access configured" }], isError: true };
+      if (!hasLinearToken()) return { content: [{ type: "text", text: "No Linear access configured" }], isError: true };
 
       try {
         const issue = await getCreds().linear.getIssue(identifier);
@@ -226,7 +159,7 @@ Channel and thread are locked to this session — you can only read/write your o
       priority: z.number().min(0).max(4).optional().describe("0=none, 1=urgent, 2=high, 3=medium, 4=low"),
     },
     async ({ team, title, description, priority }) => {
-      if (!_hasLinearToken()) return { content: [{ type: "text", text: "No Linear access configured" }], isError: true };
+      if (!hasLinearToken()) return { content: [{ type: "text", text: "No Linear access configured" }], isError: true };
 
       try {
         const result = await getCreds().linear.createIssue({ team, title, description, priority });
@@ -247,7 +180,7 @@ Channel and thread are locked to this session — you can only read/write your o
     `CI status for a PR. Shows the CI3 workflow status on both the PR branch and merge-queue: last pass, last fail, with GitHub Actions links. CI dashboard link included.`,
     { pr: z.number().describe("PR number") },
     async ({ pr }) => {
-      if (!_hasGhToken()) return { content: [{ type: "text", text: "No GitHub access configured" }], isError: true };
+      if (!hasGhToken()) return { content: [{ type: "text", text: "No GitHub access configured" }], isError: true };
 
       const creds = getCreds();
       const ghGet = async (path: string) => creds.github.rawGet(repo, path);
@@ -336,7 +269,7 @@ Channel and thread are locked to this session — you can only read/write your o
       public_gist: z.boolean().default(false).describe("Whether the gist is public (default: false/secret)"),
     },
     async ({ description, files, public_gist }) => {
-      if (!_hasGhToken()) return { content: [{ type: "text", text: "No GitHub access configured" }], isError: true };
+      if (!hasGhToken()) return { content: [{ type: "text", text: "No GitHub access configured" }], isError: true };
 
       const gistFiles: Record<string, { content: string }> = {};
       for (const [name, content] of Object.entries(files)) {
@@ -376,7 +309,7 @@ Creates a draft PR on a skill/<name> branch for human review.`,
       base: z.string().optional().describe("Base branch for the PR (defaults to current branch)"),
     },
     async ({ name, description, argument_hint, body, base }) => {
-      if (!_hasGhToken()) return { content: [{ type: "text", text: "No GitHub access configured" }], isError: true };
+      if (!hasGhToken()) return { content: [{ type: "text", text: "No GitHub access configured" }], isError: true };
 
       const workspace = (opts as any).workspace || "/workspace";
       const skillDir = join(workspace, ".claude", "claudebox", "skills", name);

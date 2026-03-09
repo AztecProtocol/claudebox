@@ -269,6 +269,7 @@ interface Route {
   method: string;
   pattern: RegExp;
   auth: "api" | "basic" | "none";
+  internal?: boolean;
   paramNames?: string[];
   handler: RouteHandler;
 }
@@ -1270,7 +1271,7 @@ const routes: Route[] = [
   },
   // ── Internal API: Slack proxy (sidecar → server) ──────────────
   {
-    method: "POST", pattern: /^\/api\/internal\/slack$/, auth: "api",
+    method: "POST", pattern: /^\/api\/internal\/slack$/, auth: "api", internal: true,
     handler: async (req, res) => {
       let body: any;
       try { body = JSON.parse(await readBody(req)); }
@@ -1306,7 +1307,7 @@ const routes: Route[] = [
 
   // ── Internal API: Root comment update (sidecar → server) ─────
   {
-    method: "POST", pattern: /^\/api\/internal\/comment$/, auth: "api",
+    method: "POST", pattern: /^\/api\/internal\/comment$/, auth: "api", internal: true,
     handler: async (req, res) => {
       let body: any;
       try { body = JSON.parse(await readBody(req)); }
@@ -1377,7 +1378,7 @@ const routes: Route[] = [
 
   // ── Internal API: DM author on completion ─────────────────────
   {
-    method: "POST", pattern: /^\/api\/internal\/dm$/, auth: "api",
+    method: "POST", pattern: /^\/api\/internal\/dm$/, auth: "api", internal: true,
     handler: async (req, res) => {
       let body: any;
       try { body = JSON.parse(await readBody(req)); }
@@ -1395,7 +1396,7 @@ const routes: Route[] = [
 
   // ── Internal API: Unified creds proxy (sidecar → server) ──
   {
-    method: "POST", pattern: /^\/api\/internal\/creds$/, auth: "api",
+    method: "POST", pattern: /^\/api\/internal\/creds$/, auth: "api", internal: true,
     handler: async (req, res) => {
       let body: any;
       try { body = JSON.parse(await readBody(req)); }
@@ -1464,8 +1465,6 @@ export function createHttpServer(
   const allRoutes: Route[] = [...routes, ...dmRoutes];
   if (pluginRuntime) {
     for (const pr of pluginRuntime.getRoutes()) {
-      // Convert Express-style path to regex: "/audit/coverage" → /^\/audit\/coverage$/
-      // Handle :param patterns: "/questions/:id/answer" → /^\/questions\/([^/]+)\/answer$/
       const paramNames: string[] = [];
       const regexStr = pr.path.replace(/:([a-zA-Z_]+)/g, (_m, name) => {
         paramNames.push(name);
@@ -1481,34 +1480,42 @@ export function createHttpServer(
     }
   }
 
-  return createServer(async (req: IncomingMessage, res: ServerResponse) => {
-    // Strip query string so route patterns don't need to account for ?key=val
-    const pathname = (req.url || "/").split("?")[0];
-    for (const route of allRoutes) {
-      if (req.method !== route.method) continue;
-      const m = pathname.match(route.pattern);
-      if (!m) continue;
+  // Split routes into public (internet-facing) and internal (sidecar-only)
+  const publicRoutes = allRoutes.filter(r => !r.internal);
+  const internalRoutes = allRoutes.filter(r => r.internal);
 
-      // Auth check
-      if (route.auth === "api" && !checkApiAuth(req)) { sendUnauthorized(res, "api"); return; }
-      if (route.auth === "basic" && !(await checkSessionAuth(req))) { sendUnauthorized(res, "session"); return; }
+  function buildHandler(routeList: Route[]) {
+    return async (req: IncomingMessage, res: ServerResponse) => {
+      const pathname = (req.url || "/").split("?")[0];
+      for (const route of routeList) {
+        if (req.method !== route.method) continue;
+        const m = pathname.match(route.pattern);
+        if (!m) continue;
 
-      // Extract regex groups as params (use named keys from plugin routes, numeric otherwise)
-      const params: Record<string, string> = {};
-      for (let i = 1; i < m.length; i++) {
-        params[i - 1] = m[i];
-        if (route.paramNames?.[i - 1]) params[route.paramNames[i - 1]] = m[i];
+        if (route.auth === "api" && !checkApiAuth(req)) { sendUnauthorized(res, "api"); return; }
+        if (route.auth === "basic" && !(await checkSessionAuth(req))) { sendUnauthorized(res, "session"); return; }
+
+        const params: Record<string, string> = {};
+        for (let i = 1; i < m.length; i++) {
+          params[i - 1] = m[i];
+          if (route.paramNames?.[i - 1]) params[route.paramNames[i - 1]] = m[i];
+        }
+
+        try {
+          await route.handler(req, res, params, ctx);
+        } catch (e: any) {
+          console.error(`[HTTP] Route error: ${e.message}`);
+          if (!res.headersSent) json(res, 500, { error: "internal error" });
+        }
+        return;
       }
 
-      try {
-        await route.handler(req, res, params, ctx);
-      } catch (e: any) {
-        console.error(`[HTTP] Route error: ${e.message}`);
-        if (!res.headersSent) json(res, 500, { error: "internal error" });
-      }
-      return;
-    }
+      json(res, 404, { error: "not found" });
+    };
+  }
 
-    json(res, 404, { error: "not found" });
-  });
+  return {
+    public: createServer(buildHandler(publicRoutes)),
+    internal: createServer(buildHandler(internalRoutes)),
+  };
 }

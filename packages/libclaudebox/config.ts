@@ -7,6 +7,7 @@ import { homedir } from "os";
 export const SLACK_APP_TOKEN = process.env.SLACK_APP_TOKEN!;
 export const API_SECRET = process.env.CLAUDEBOX_API_SECRET || "";
 export const HTTP_PORT = parseInt(process.env.CLAUDEBOX_PORT || "3000", 10);
+export const INTERNAL_PORT = parseInt(process.env.CLAUDEBOX_INTERNAL_PORT || String(HTTP_PORT + 2), 10);
 export const MAX_CONCURRENT = 10;
 
 // ── Paths ───────────────────────────────────────────────────────

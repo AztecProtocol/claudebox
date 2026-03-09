@@ -137,7 +137,8 @@ describe("Plugin Routes", () => {
     await runtime.loadPlugin(apiAuthPlugin);
     await runtime.loadPlugin(secondPlugin);
 
-    server = createHttpServer(mockStore, mockDocker, runtime);
+    const servers = createHttpServer(mockStore, mockDocker, runtime);
+    server = servers.public;
     server.listen(TEST_PORT);
   });
 

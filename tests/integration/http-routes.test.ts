@@ -97,7 +97,8 @@ describe("HTTP Routes", () => {
       exit_code: 0,
     });
 
-    server = createHttpServer(store, mockDocker);
+    const servers = createHttpServer(store, mockDocker);
+    server = servers.public;
     server.listen(TEST_PORT);
   });
 

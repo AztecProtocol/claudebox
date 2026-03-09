@@ -10,14 +10,15 @@
 
 import { mkdirSync, appendFileSync, readFileSync, existsSync } from "fs";
 import { join } from "path";
+import { z } from "zod";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
-import {
-  z, McpServer,
-  getCreds, SESSION_META, WORKTREE_ID, statusPageUrl, STATS_DIR,
-  sanitizeError, hasScope, pushToRemote,
-  logActivity, updateRootComment, otherArtifacts,
-  registerCommonTools, registerCloneRepo, registerPRTools, startMcpHttpServer,
-} from "../../packages/libclaudebox/mcp/base.ts";
+import { SESSION_META, WORKTREE_ID, statusPageUrl, STATS_DIR, hasScope } from "../../packages/libclaudebox/mcp/env.ts";
+import { logActivity, updateRootComment, otherArtifacts } from "../../packages/libclaudebox/mcp/activity.ts";
+import { getCreds, sanitizeError } from "../../packages/libclaudebox/mcp/helpers.ts";
+import { registerCommonTools } from "../../packages/libclaudebox/mcp/tools.ts";
+import { pushToRemote, registerCloneRepo, registerPRTools } from "../../packages/libclaudebox/mcp/git-tools.ts";
+import { startMcpHttpServer } from "../../packages/libclaudebox/mcp/server.ts";
 
 // ── Profile config ──────────────────────────────────────────────
 const REPO = "AztecProtocol/barretenberg-claude";
@@ -27,7 +28,7 @@ SESSION_META.repo = REPO;
 
 const UPSTREAM_REPO = "AztecProtocol/barretenberg";
 
-const TOOL_LIST = "clone_repo, respond_to_user, get_context, session_status, github_api, slack_api, create_pr, update_pr, create_external_pr, create_issue, close_issue, add_labels, create_audit_label, add_log_link, self_assess, audit_history, create_gist, list_gists, read_gist, update_meta_issue, create_skill, ci_failures, linear_get_issue, linear_create_issue, record_stat";
+const TOOL_LIST = "clone_repo, respond_to_user, get_context, session_status, github_api, create_pr, update_pr, create_external_pr, create_issue, close_issue, add_labels, create_audit_label, add_log_link, self_assess, audit_history, create_gist, list_gists, read_gist, update_meta_issue, create_skill, ci_failures, linear_get_issue, linear_create_issue, record_stat";
 
 // ── Auth check at startup ───────────────────────────────────────
 try {
@@ -114,10 +115,8 @@ function createServer(): McpServer {
       try {
         const creds = getCreds();
 
-        // Verify issue exists
         const issue = await creds.github.getIssue(REPO, issue_number);
 
-        // Post tracking comment with session info
         const logLine = SESSION_META.log_url ? `Log: ${SESSION_META.log_url}` : "";
         const statusLine = statusPageUrl ? `Status: ${statusPageUrl}` : "";
         const commentBody = [
@@ -174,7 +173,6 @@ Use this when you discover a new area worth dedicated audit attention.`,
       const results: string[] = [];
 
       try {
-        // 1. Create the GitHub label
         const labelName = `scope/${slug}`;
         try {
           await creds.github.createLabel(REPO, { name: labelName, color, description });
@@ -187,7 +185,6 @@ Use this when you discover a new area worth dedicated audit attention.`,
           }
         }
 
-        // 2. Commit prompt file via Contents API
         const filePath = `claudebox/prompts/${slug}.md`;
         let sha: string | undefined;
         try {
@@ -202,7 +199,6 @@ Use this when you discover a new area worth dedicated audit attention.`,
         });
         results.push(`Committed: ${filePath}`);
 
-        // 3. Update labels.json
         const labelsJsonPath = "claudebox/labels.json";
         let labelsJson: any = { labels: [], meta_labels: [], area_labels: [] };
         let labelsJsonSha: string | undefined;
@@ -295,22 +291,13 @@ Also rate each quality dimension you covered:
           _log_id: SESSION_META.log_id,
           _worktree_id: WORKTREE_ID,
           _user: SESSION_META.user,
-          rating,
-          modules_reviewed,
-          findings_count,
-          questions_count,
-          confidence,
-          summary,
-          code_rating,
-          crypto_rating,
-          test_rating,
+          rating, modules_reviewed, findings_count, questions_count, confidence, summary,
+          code_rating, crypto_rating, test_rating,
         };
 
-        // Write to stats JSONL
         mkdirSync(STATS_DIR, { recursive: true });
         appendFileSync(join(STATS_DIR, "audit_assessment.jsonl"), JSON.stringify(entry) + "\n");
 
-        // Log to activity for status page
         const dims = [code_rating !== "none" ? `code:${code_rating}` : "", crypto_rating !== "none" ? `crypto:${crypto_rating}` : "", test_rating !== "none" ? `test:${test_rating}` : ""].filter(Boolean).join(", ");
         logActivity("status", `Assessment: ${rating.toUpperCase()} (${Math.round(confidence * 100)}% confidence) [${dims}] — ${summary}`);
         await updateRootComment();
@@ -347,7 +334,6 @@ crypto-2nd-pass is ONLY valid when a DIFFERENT session already reviewed the file
       const summaries = readJsonl("audit_summary.jsonl");
       const artifacts = readJsonl("audit_artifact.jsonl");
 
-      // Dedupe files — keep deepest review per (file_path, dimension) pair
       const depthOrder: Record<string, number> = { cursory: 0, "line-by-line": 1, deep: 2 };
       const dims = ["code", "crypto", "test", "crypto-2nd-pass"] as const;
       const byFileDim = new Map<string, any>();
@@ -360,7 +346,6 @@ crypto-2nd-pass is ONLY valid when a DIFFERENT session already reviewed the file
         }
       }
 
-      // Group by module → dimension
       type DimStats = { files: any[], issues: number };
       const byModule = new Map<string, Record<string, DimStats>>();
       for (const r of byFileDim.values()) {
@@ -380,7 +365,6 @@ crypto-2nd-pass is ONLY valid when a DIFFERENT session already reviewed the file
       lines.push(`Total: ${uniqueFiles.size} unique files, ${assessments.length} sessions, ${artifacts.filter(a => a.artifact_type === "issue").length} issues filed`);
       lines.push(``);
 
-      // Module coverage — compact
       lines.push(`## Module Coverage`);
       const sortedMods = [...byModule.entries()].sort((a, b) => {
         const aTotal = Object.values(a[1]).reduce((s, d) => s + d.files.length, 0);
@@ -399,7 +383,6 @@ crypto-2nd-pass is ONLY valid when a DIFFERENT session already reviewed the file
       }
       lines.push(``);
 
-      // Files eligible for crypto-2nd-pass (reviewed under crypto by a different session)
       const cryptoReviewed = new Map<string, Set<string>>();
       for (const r of reviews) {
         if ((r.quality_dimension || "code") === "crypto") {
@@ -415,14 +398,11 @@ crypto-2nd-pass is ONLY valid when a DIFFERENT session already reviewed the file
       if (eligibleFor2ndPass.length) {
         lines.push(`## Eligible for crypto-2nd-pass (${eligibleFor2ndPass.length} files)`);
         lines.push(`These files have had crypto review and are eligible for independent re-review:`);
-        for (const fp of eligibleFor2ndPass.slice(0, 30)) {
-          lines.push(`- \`${fp}\``);
-        }
+        for (const fp of eligibleFor2ndPass.slice(0, 30)) lines.push(`- \`${fp}\``);
         if (eligibleFor2ndPass.length > 30) lines.push(`  ... and ${eligibleFor2ndPass.length - 30} more`);
         lines.push(``);
       }
 
-      // Recent sessions only (last 5)
       if (assessments.length) {
         const recent = assessments.slice().reverse().slice(0, 5);
         lines.push(`## Recent Sessions (last ${recent.length} of ${assessments.length})`);
@@ -434,13 +414,10 @@ crypto-2nd-pass is ONLY valid when a DIFFERENT session already reviewed the file
         lines.push(``);
       }
 
-      // Recent summaries (last 3)
       if (summaries.length) {
         const recent = summaries.slice().reverse().slice(0, 3);
         lines.push(`## Recent Summary Gists (last ${recent.length} of ${summaries.length})`);
-        for (const s of recent) {
-          lines.push(`- ${s.summary || "no summary"}${s.gist_url ? ` — ${s.gist_url}` : ""}`);
-        }
+        for (const s of recent) lines.push(`- ${s.summary || "no summary"}${s.gist_url ? ` — ${s.gist_url}` : ""}`);
         lines.push(``);
       }
 
@@ -451,9 +428,9 @@ crypto-2nd-pass is ONLY valid when a DIFFERENT session already reviewed the file
       return { content: [{ type: "text", text: lines.join("\n") }] };
     });
 
-  // ── list_gists — read all audit gists ─────────────────────────
+  // ── list_gists ─────────────────────────────────────────────────
   server.tool("list_gists",
-    "List all gists created by the audit bot. Returns description, URL, created date, and filenames for each gist. Use github_api to read a specific gist's contents.",
+    "List all gists created by the audit bot.",
     {
       per_page: z.number().default(100).describe("Results per page (max 100)"),
       page: z.number().default(1).describe("Page number"),
@@ -472,12 +449,10 @@ crypto-2nd-pass is ONLY valid when a DIFFERENT session already reviewed the file
       }
     });
 
-  // ── read_gist — fetch full gist content ────────────────────────
+  // ── read_gist ──────────────────────────────────────────────────
   server.tool("read_gist",
-    "Read the full content of a gist by ID or URL. Returns all files and their contents.",
-    {
-      gist: z.string().describe("Gist ID (hex string) or full gist URL"),
-    },
+    "Read the full content of a gist by ID or URL.",
+    { gist: z.string().describe("Gist ID (hex string) or full gist URL") },
     async ({ gist }) => {
       const id = gist.replace(/.*\/([a-f0-9]+)$/, "$1");
       try {
@@ -493,7 +468,7 @@ crypto-2nd-pass is ONLY valid when a DIFFERENT session already reviewed the file
       }
     });
 
-  // ── update_meta_issue — tracking meta-issue ────────────────────
+  // ── update_meta_issue ──────────────────────────────────────────
   server.tool("update_meta_issue",
     `Create or update an audit tracking meta-issue. The body you provide is used verbatim — you compose the full markdown.
 
@@ -520,15 +495,12 @@ See issue #77 for the gold-standard format — tables for findings, gists, PRs, 
         : `meta/module/${module_name}`;
 
       try {
-        // Ensure labels exist (fire-and-forget)
         await Promise.all([
           creds.github.createLabel(REPO, { name: metaLabel, color: scope === "session" ? "0e8a16" : "1d76db", description: "Audit meta-issue" }).catch(() => {}),
           creds.github.createLabel(REPO, { name: "meta-issue", color: "c5def5", description: "Audit meta-issue" }).catch(() => {}),
         ]);
 
         const allLabels = [metaLabel, "meta-issue", ...(labels || [])];
-
-        // Search for existing meta-issue with this label
         const existing = await creds.github.listIssues(REPO, { labels: metaLabel, state: "open", per_page: "1" });
 
         if (existing.length && existing[0]?.number) {
@@ -566,10 +538,8 @@ Use this for fixes that should go directly to the main barretenberg repo.`,
       }
 
       try {
-        // Push to upstream repo — routed through libcreds
         await pushToRemote(WORKSPACE, UPSTREAM_REPO, branch);
 
-        // Create PR on upstream
         const prBody = body
           + (closes_issues?.length ? "\n\n" + closes_issues.map(n => `Audit fork ref: ${REPO}#${n}`).join("\n") : "")
           + (SESSION_META.log_url ? `\n\nClaudeBox audit log: ${SESSION_META.log_url}` : "");

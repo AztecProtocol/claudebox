@@ -9,7 +9,7 @@ import type { SessionStore } from "./session-store.ts";
 import { SessionStreamer } from "./session-streamer.ts";
 import {
   REPO_DIR, DOCKER_IMAGE, CLAUDEBOX_CODE_DIR, CLAUDE_BINARY,
-  BASTION_SSH_KEY, HTTP_PORT,
+  BASTION_SSH_KEY, INTERNAL_PORT,
   CLAUDEBOX_HOST, CLAUDEBOX_DIR, CLAUDEBOX_STATS_DIR, API_SECRET,
   buildLogUrl,
   incrActiveSessions, decrActiveSessions,
@@ -224,8 +224,8 @@ export class DockerService {
         sidecarBinds.push(`${join(REPO_DIR, ".git")}:/reference-repo/.git:ro`);
       }
 
-      // Server URL for sidecar → server communication (host.docker.internal bridges to host)
-      const serverUrl = `http://host.docker.internal:${HTTP_PORT}`;
+      // Server URL for sidecar → server communication (internal port, not exposed to internet)
+      const serverUrl = `http://host.docker.internal:${INTERNAL_PORT}`;
 
       await this.docker.createContainer({
         name: sidecarName,
@@ -241,7 +241,6 @@ export class DockerService {
           `GIT_COMMITTER_EMAIL=${GIT_IDENTITY.email}`,
           `MCP_PORT=9801`,
           `GH_TOKEN=${getContainerTokens().ghToken}`,
-          `SLACK_BOT_TOKEN=${getContainerTokens().slackBotToken}`,
           `LINEAR_API_KEY=${getContainerTokens().linearApiKey}`,
           // Server client env — sidecar uses these to talk to host server
           `CLAUDEBOX_SERVER_URL=${serverUrl}`,
@@ -254,9 +253,6 @@ export class DockerService {
           `CLAUDEBOX_RUN_COMMENT_ID=${opts.runCommentId || ""}`,
           `CLAUDEBOX_RUN_URL=${opts.runUrl || ""}`,
           `CLAUDEBOX_LINK=${opts.link || ""}`,
-          `CLAUDEBOX_SLACK_CHANNEL=${opts.slackChannel || ""}`,
-          `CLAUDEBOX_SLACK_THREAD_TS=${opts.slackThreadTs || ""}`,
-          `CLAUDEBOX_SLACK_MESSAGE_TS=${opts.slackMessageTs || ""}`,
           `CLAUDEBOX_HOST=${CLAUDEBOX_HOST}`,
           `CLAUDEBOX_BASE_BRANCH=${baseBranch}`,
           `CLAUDEBOX_QUIET=${opts.quiet ? "1" : "0"}`,

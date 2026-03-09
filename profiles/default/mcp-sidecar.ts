@@ -6,18 +6,16 @@
  * Clone strategy: local reference repo (/reference-repo/.git)
  */
 
-import {
-  McpServer,
-  SESSION_META,
-  registerCommonTools, registerCloneRepo, registerPRTools,
-  startMcpHttpServer,
-} from "../../packages/libclaudebox/mcp/base.ts";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { registerCommonTools } from "../../packages/libclaudebox/mcp/tools.ts";
+import { registerCloneRepo, registerPRTools } from "../../packages/libclaudebox/mcp/git-tools.ts";
+import { startMcpHttpServer } from "../../packages/libclaudebox/mcp/server.ts";
 
 // ── Profile config ──────────────────────────────────────────────
 const REPO = "AztecProtocol/aztec-packages";
 const WORKSPACE = process.env.WORKSPACE || "/workspace/aztec-packages";
 
-const TOOL_LIST = "clone_repo, respond_to_user, get_context, session_status, github_api, slack_api, create_pr, update_pr, create_gist, create_skill, ci_failures, linear_get_issue, linear_create_issue, record_stat";
+const TOOL_LIST = "clone_repo, respond_to_user, get_context, session_status, github_api, create_pr, update_pr, create_gist, create_skill, ci_failures, linear_get_issue, linear_create_issue, record_stat";
 
 // ── MCP Server factory ──────────────────────────────────────────
 
