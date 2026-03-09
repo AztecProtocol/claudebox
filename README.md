@@ -1,50 +1,39 @@
 # ClaudeBox
 
-Run Claude agents in isolated Docker containers. Trigger from Slack, HTTP, or CLI.
+Run Claude in isolated Docker containers. Trigger from Slack, HTTP, or CLI.
 
-## Philosophy
+## Design
 
-**The host is the brain; containers are hands.** The server owns all external context — Slack threads, GitHub PRs, session history. Containers run Claude with MCP tools but know nothing about where they were triggered from. They talk to the host through a typed HTTP boundary (`ServerClient`), and the host decides what to do with the results.
+Containers are stateless workers. The host server owns all context — which Slack thread triggered a session, what PRs it touched, where to post updates. Containers talk back through a single HTTP API (`ServerClient → host:3002`). They don't know they're in Slack.
 
-**Profiles are the unit of customization.** A profile is a directory with a plugin config, an MCP sidecar, and a system prompt. It controls what Docker image to use, what tools Claude gets, what channels route to it, and what credentials it needs. The framework provides orchestration; profiles provide purpose.
+Customization lives in **profiles** — a directory with a plugin config, MCP sidecar, and system prompt. The framework handles Docker, sessions, and routing.
 
-**Sessions persist in worktrees.** Each session gets a git worktree that survives across runs. Resume is automatic — reply in the same Slack thread or pass the same worktree ID, and Claude picks up where it left off with full transcript history.
+Sessions persist as **git worktrees**. Resume is automatic: same Slack thread or same worktree ID picks up where it left off.
 
-**Nothing is baked into the image.** Claude, the MCP sidecar, and all code are bind-mounted from the host at runtime. Sidecar changes take effect immediately. No rebuild cycle for iteration.
+All code is **bind-mounted** into containers at runtime. No image rebuild to iterate.
 
 ## Quick Start
 
 ```bash
 npm install
-
-# HTTP-only server (no Slack)
 CLAUDEBOX_SESSION_PASS=secret node --experimental-strip-types server.ts --http-only
 
-# Start a session
 node cli.ts run --server http://localhost:3000 "fix the flaky test"
 node cli.ts sessions
 ```
 
-## Architecture
+## Layout
 
 ```
-Slack / HTTP / CLI  ──▶  server.ts  ──▶  Docker container
-                              │               │
-                         SessionStore     MCP sidecar ──▶ ServerClient ──▶ host
-                         PluginRuntime
-                         Slack handlers
-```
-
-```
-packages/libclaudebox/     # Framework (Docker, sessions, MCP, Slack, HTTP)
-profiles/                  # Profiles (plugin.ts + mcp-sidecar.ts + CLAUDE.md)
+packages/libclaudebox/     # Framework: Docker, sessions, MCP, Slack, HTTP
+profiles/                  # Profiles: plugin.ts + mcp-sidecar.ts + CLAUDE.md
 server.ts                  # Entry point
 cli.ts                     # CLI client
 ```
 
-**Two HTTP servers:**
-- Public (`:3000`) — dashboard, status pages, session API, plugin routes
-- Internal (`:3002`, localhost only) — sidecar→host API (Slack updates, credential proxy, comments)
+Two HTTP servers:
+- Public `:3000` — dashboard, status pages, session API
+- Internal `:3002` (localhost) — sidecar→host boundary
 
 ## Profiles
 
@@ -59,7 +48,6 @@ profiles/my-profile/
 const plugin: Plugin = {
   name: "my-profile",
   docker: { image: "my-image:latest", extraEnv: ["MY_TOKEN"] },
-  requiredCredentials: ["MY_TOKEN"],
   setup() {},
 };
 export default plugin;
@@ -68,38 +56,35 @@ export default plugin;
 ## CLI
 
 ```
-run [--profile <name>] <prompt>       Start a session
-sessions [--user <name>]              List sessions
-cancel <id>                           Cancel session
-status                                Server health
-profiles                              List profiles
-config <key> [value]                  Get/set config
+run [--profile <name>] <prompt>    Start a session
+sessions [--user <name>]           List sessions
+cancel <id>                        Cancel session
+status                             Server health
+profiles                           List profiles
+config <key> [value]               Get/set config
 ```
 
 ## HTTP API
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| `POST` | `/run` | Bearer | Start session (or resume with `worktree_id`) |
+| `POST` | `/run` | Bearer | Start/resume session |
 | `GET` | `/session/<id>` | Bearer | Session JSON |
 | `GET` | `/s/<id>` | Public | Status page |
-| `POST` | `/s/<id>/cancel` | Basic | Cancel session |
+| `POST` | `/s/<id>/cancel` | Basic | Cancel |
 | `DELETE` | `/s/<id>` | Basic | Delete worktree |
 | `GET` | `/dashboard` | Public | Dashboard |
 | `GET` | `/health` | None | Health check |
 
-## Session Model
+## Sessions
 
 ```
 ~/.claudebox/worktrees/<16-hex-id>/
-  workspace/           # Git checkout (subject to GC)
-  claude-projects/     # Session JSONL (preserved)
+  workspace/           # Git checkout (GC'd by disk budget)
+  claude-projects/     # Session JSONL (kept forever)
   activity.jsonl       # Activity log
   meta.json            # Metadata
 ```
-
-Resume: thread reply (Slack), `worktree_id` param (HTTP), or hash reference (`#abc123`).
-GC: workspace dirs cleaned after 1 day when disk exceeds 100GB budget. Metadata and transcripts are never deleted.
 
 ## Deployment
 
@@ -108,20 +93,8 @@ GC: workspace dirs cleaned after 1 day when disk exceeds 100GB budget. Metadata 
 systemctl --user restart claudebox
 ```
 
-| Change | Action |
+| Change | Reload |
 |--------|--------|
-| Profile MCP sidecar | Immediate (bind-mounted) |
-| Profile plugin.ts / server.ts | Server restart |
-| Docker image | `docker pull` / rebuild |
-
-## Settings
-
-`~/.claude/claudebox/settings.json`:
-
-| Key | Default | Description |
-|-----|---------|-------------|
-| `image` | `devbox:latest` | Docker image |
-| `defaultProfile` | `default` | Default profile |
-| `profileDirs` | `[]` | Extra profile directories |
-| `server` | — | Server URL for CLI |
-| `token` | — | API token |
+| MCP sidecar | Immediate |
+| plugin.ts / server.ts | Restart |
+| Docker image | Rebuild |
