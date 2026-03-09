@@ -28,8 +28,8 @@ export type {
 // Re-export policy
 export { LibCredsError } from "./policy.ts";
 
-// Re-export operations
-export { getOperation, allOperations, operationsByService } from "./operations.ts";
+// Re-export operations (internal use only — prefer typed clients over raw operation lookups)
+export { getOperation } from "./operations.ts";
 
 // Re-export grants
 export { getProfileGrant, registerProfileGrant } from "./grants.ts";
@@ -42,7 +42,6 @@ export {
 export { GitHubClient } from "./github.ts";
 export { SlackClient } from "./slack.ts";
 export { LinearClient } from "./linear.ts";
-export { BotClient } from "./bot.ts";
 
 // Re-export singleton
 export { getCreds, initCreds } from "./singleton.ts";
@@ -54,7 +53,6 @@ import type { SessionContext, ProfileGrant } from "./types.ts";
 import { GitHubClient } from "./github.ts";
 import { SlackClient } from "./slack.ts";
 import { LinearClient } from "./linear.ts";
-import { BotClient } from "./bot.ts";
 import { getProfileGrant } from "./grants.ts";
 import { initAuditLog } from "./audit.ts";
 
@@ -67,8 +65,6 @@ export interface Creds {
   slack: SlackClient;
   /** Typed Linear API client — read-only by default. */
   linear: LinearClient;
-  /** Bot operations — always proxied through host. Null in host mode. */
-  bot: BotClient | null;
   /** The immutable session context. */
   ctx: SessionContext;
   /** The active profile grant. */
@@ -163,26 +159,7 @@ export function createCreds(opts: CreateCredsOpts = {}): Creds {
     grant: grant.linear,
   });
 
-  // Bot client: only available in sidecar mode (proxied through host)
-  const bot = proxy
-    ? new BotClient({
-        serverUrl: proxy.serverUrl,
-        serverToken: proxy.serverToken,
-        profile,
-        sessionMeta: {
-          sessionId: ctx.sessionId,
-          slackChannel: ctx.slackChannel,
-          slackThreadTs: ctx.slackThreadTs,
-          slackMessageTs: ctx.slackMessageTs,
-          githubRepo: ctx.githubRepo,
-          githubCommentId: ctx.githubCommentId,
-          user: ctx.user,
-          logId: ctx.logId,
-        },
-      })
-    : null;
-
-  return { github, slack, linear, bot, ctx, grant };
+  return { github, slack, linear, ctx, grant };
 }
 
 /**

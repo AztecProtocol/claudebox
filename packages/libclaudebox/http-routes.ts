@@ -1,8 +1,8 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
 import { SignJWT, jwtVerify, type JWTPayload } from "jose";
 import { API_SECRET, SESSION_PAGE_USER, SESSION_PAGE_PASS, MAX_CONCURRENT, getActiveSessions, getChannelBranches, DEFAULT_BASE_BRANCH } from "./config.ts";
-import { HostSlack } from "../libcreds-host/slack.ts";
-import { HostGitHub } from "../libcreds-host/github.ts";
+import { getHostCreds } from "../libcreds-host/index.ts";
+import { dmAuthor } from "../libcreds-host/slack.ts";
 import { existsSync, readFileSync, readdirSync, statSync, watch, mkdirSync } from "fs";
 import { join } from "path";
 import type { SessionStore } from "./session-store.ts";
@@ -111,7 +111,7 @@ async function getSlackChannelInfo(channelId: string): Promise<SlackChannelInfo>
   }
 
   try {
-    const d = await HostSlack.getChannelInfo(channelId);
+    const d = await getHostCreds().slack.getChannelInfo(channelId);
     if (d.ok && d.channel) {
       const info: SlackChannelInfo = {
         name: d.channel.name || channelId,
@@ -702,7 +702,7 @@ const routes: Route[] = [
       try {
         const url = new URL(req.url || "/", "http://localhost");
         const state = url.searchParams.get("state") || "all";
-        const data = await HostGitHub.listIssues("AztecProtocol/barretenberg-claude", {
+        const data = await getHostCreds().github.listIssues("AztecProtocol/barretenberg-claude", {
           labels: "audit-finding", state, per_page: "50", sort: "updated",
         });
         json(res, 200, data);
@@ -1199,7 +1199,8 @@ const routes: Route[] = [
       // Update Slack
       if (session?.slack_channel && session?.slack_message_ts) {
         try {
-          const d = await HostSlack.updateMessage(session.slack_channel, session.slack_message_ts, buildSlackTextFromSections());
+          const slackCreds = getHostCreds({ slackChannel: session.slack_channel, slackMessageTs: session.slack_message_ts });
+          const d = await slackCreds.slack.updateMessage(buildSlackTextFromSections(), { channel: session.slack_channel, ts: session.slack_message_ts });
           results.push(d?.ok ? "Slack updated" : `Slack: ${d?.error || "unknown"}`);
         } catch (e: any) { results.push(`Slack: ${e.message}`); }
       }
@@ -1207,7 +1208,7 @@ const routes: Route[] = [
       // Update GitHub comment
       if (session?.run_comment_id && session?.repo) {
         try {
-          await HostGitHub.updateIssueComment(session.repo, session.run_comment_id, buildGhBodyFromSections());
+          await getHostCreds().github.updateIssueComment(session.repo, session.run_comment_id, buildGhBodyFromSections());
           results.push("GitHub updated");
         } catch (e: any) { results.push(`GitHub: ${e.message}`); }
       }
@@ -1226,7 +1227,7 @@ const routes: Route[] = [
 
       const { status, trackedPRs, session } = body;
       try {
-        const result = await HostSlack.dmAuthor(session, status, trackedPRs);
+        const result = await dmAuthor(session, status, trackedPRs);
         json(res, 200, result);
       } catch (e: any) {
         console.error(`[HTTP] ${e.message}`); json(res, 500, { ok: false, error: "internal error" });
@@ -1234,7 +1235,7 @@ const routes: Route[] = [
     },
   },
 
-  // ── Internal API: Unified creds proxy (sidecar BotClient → server) ──
+  // ── Internal API: Unified creds proxy (sidecar → server) ──
   {
     method: "POST", pattern: /^\/api\/internal\/creds$/, auth: "api",
     handler: async (req, res) => {

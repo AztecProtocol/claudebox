@@ -58,6 +58,5 @@ export function getSlackBotToken(): string {
 }
 
 // Re-export submodules
-export { HostSlack } from "./slack.ts";
-export { HostGitHub } from "./github.ts";
+export { dmAuthor } from "./slack.ts";
 export { handleCredsEndpoint } from "./creds-endpoint.ts";

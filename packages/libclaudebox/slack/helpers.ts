@@ -4,7 +4,7 @@ import type { DockerService } from "../docker.ts";
 import { truncate, extractHashFromUrl, sessionUrl } from "../util.ts";
 import { toTargetRef } from "../base-branch.ts";
 import { getSummaryPrompt } from "../plugin-loader.ts";
-import { HostSlack } from "../../libcreds-host/slack.ts";
+import { getHostCreds } from "../../libcreds-host/index.ts";
 
 /**
  * Convert Markdown-style links and bare URLs to Slack mrkdwn format.
@@ -107,7 +107,11 @@ export function buildSlackStatusFromActivity(
 
 /** Add or swap a Slack reaction on a message. */
 async function setReaction(channel: string, ts: string, emoji: string, removeEmoji?: string): Promise<void> {
-  await HostSlack.setReaction(channel, ts, emoji, removeEmoji);
+  const creds = getHostCreds({ slackChannel: channel, slackMessageTs: ts });
+  if (removeEmoji) {
+    await creds.slack.removeReaction(removeEmoji, { channel, timestamp: ts }).catch(() => {});
+  }
+  await creds.slack.addReaction(emoji, { channel, timestamp: ts }).catch(() => {});
 }
 
 export async function updateSlackStatus(
@@ -136,7 +140,8 @@ export async function updateSlackStatus(
 
   const text = buildSlackStatusFromActivity(activity, prompt, status, logUrl, worktreeId, logId);
 
-  await HostSlack.updateMessage(channel, messageTs, text);
+  const creds = getHostCreds({ slackChannel: channel, slackMessageTs: messageTs });
+  await creds.slack.updateMessage(text, { channel, ts: messageTs });
 
   // Swap reaction: running → done
   const isSuccess = status.startsWith("completed");

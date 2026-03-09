@@ -37,12 +37,6 @@ All credential operations are logged to session JSONL files:
 
 Blocked operations also print to stderr for container log visibility.
 
-## Bot Credential Tier
-
-The `BotClient` provides container-side bot operations (update comments, DM authors, set reactions).
-All bot operations are **always proxied through the host server** via `POST /api/internal/creds`.
-Containers never hold raw tokens for bot-level operations.
-
 ## Token Isolation
 
 Only `libcreds` (container-side) and `libcreds-host` (server-side) touch token environment variables.

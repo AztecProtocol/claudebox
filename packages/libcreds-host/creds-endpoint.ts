@@ -1,7 +1,7 @@
 /**
  * Unified POST /api/internal/creds endpoint handler.
  *
- * Accepts { op, args, session } from sidecar BotClient proxies,
+ * Accepts { op, args, session } from sidecar proxy calls,
  * routes to the appropriate Slack/GitHub method via libcreds,
  * and returns the API response.
  *

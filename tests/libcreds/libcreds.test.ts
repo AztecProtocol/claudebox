@@ -146,7 +146,7 @@ describe("libcreds e2e", () => {
 
   // ────────────────────────────────────────────────────────────────
 
-  it("sidecar mode: bot client created, slack has proxy, correct runtime detection", () => {
+  it("sidecar mode: slack has proxy, correct runtime detection, host mode when env cleared", () => {
     process.env.CLAUDEBOX_SERVER_URL = "http://host.docker.internal:3000";
     process.env.CLAUDEBOX_SERVER_TOKEN = "tok";
     process.env.MCP_PORT = "8080";
@@ -158,7 +158,6 @@ describe("libcreds e2e", () => {
       });
 
       assert.equal(creds.ctx.runtime, "sidecar");
-      assert.ok(creds.bot !== null, "BotClient should exist in sidecar mode");
       // Slack should report hasToken=true via proxy even without direct token
       assert.equal(creds.slack.hasToken, true);
       // GitHub/Linear don't proxy
@@ -173,7 +172,6 @@ describe("libcreds e2e", () => {
     // Host mode when env cleared
     const hostCreds = createCreds({ profile: "test", auditLogPath: AUDIT_LOG });
     assert.equal(hostCreds.ctx.runtime, "host");
-    assert.equal(hostCreds.bot, null);
   });
 
   // ────────────────────────────────────────────────────────────────

@@ -9,7 +9,7 @@ import { auditDashboardHTML } from "../../packages/libclaudebox/html/audit-dashb
 import { existsSync, readFileSync, readdirSync, statSync } from "fs";
 import { join } from "path";
 import { MAX_CONCURRENT, getActiveSessions } from "../../packages/libclaudebox/config.ts";
-import { HostGitHub } from "../../packages/libcreds-host/github.ts";
+import { getHostCreds } from "../../packages/libcreds-host/index.ts";
 
 const AUDIT_REPO = "AztecProtocol/barretenberg-claude";
 
@@ -54,7 +54,7 @@ export function registerAuditRoutes(ctx: PluginContext): void {
     try {
       const url = new URL(req.url || "/", "http://localhost");
       const state = url.searchParams.get("state") || "all";
-      const data = await HostGitHub.listIssues(AUDIT_REPO, {
+      const data = await getHostCreds().github.listIssues(AUDIT_REPO, {
         labels: "audit-finding", state, per_page: "50", sort: "updated",
       });
       jsonResponse(res, 200, data);
