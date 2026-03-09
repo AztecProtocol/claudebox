@@ -2,7 +2,7 @@ import type { Profile } from "../../packages/libclaudebox/profile.ts";
 
 const plugin: Profile = {
   name: "claudebox-dev",
-  docker: { mountReferenceRepo: false },
+  docker: {},
   setup(_ctx) {},
 };
 

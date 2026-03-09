@@ -126,11 +126,12 @@ export interface PRToolConfig {
 
 export function registerCloneRepo(server: McpServer, config: CloneToolConfig): void {
   const desc = config.description ||
-    `Clone the repo into ${config.workspace}. Safe to call on resume — fetches new refs. Call FIRST before doing any work.`;
+    `Clone the repo into ${config.workspace}. MUST be your FIRST tool call — the workspace is empty until you clone. Do NOT run git, ls, Read, or any file operations before calling this. Safe to call on resume — fetches new refs.`;
   const refHint = config.refHint || "'origin/next', 'abc123'";
 
+  const defaultRef = config.fallbackRef || "origin/main";
   server.tool("clone_repo", desc,
-    { ref: z.string().regex(/^[a-zA-Z0-9._\/@-]+$/).describe(`Branch, tag, or commit hash to check out (e.g. ${refHint})`) },
+    { ref: z.string().regex(/^[a-zA-Z0-9._\/@-]+$/).default(defaultRef).describe(`Branch, tag, or commit hash to check out (default: ${defaultRef}). Examples: ${refHint}`) },
     async ({ ref }) => {
       if (ref.startsWith("-")) return { content: [{ type: "text", text: "Invalid ref: must not start with -" }], isError: true };
       const targetDir = config.workspace;
@@ -274,57 +275,42 @@ export function registerLogTools(server: McpServer, config: { workspace: string 
   }
 
   server.tool("read_log",
-    `Read a CI log by key/hash. Use this to view build logs, session logs, or any ci.aztec-labs.com log.
-
-IMPORTANT: Use this tool instead of:
-- Curling ci.aztec-labs.com directly (will fail — no CI_PASSWORD in container)
-- Using CI_PASSWORD env var (not available)
-- Running ci.sh dlog manually
-
-Pass the log key (hex hash from the URL). Returns the log content.`,
+    `Read a CI log by key/hash. Use instead of curling ci.aztec-labs.com or using CI_PASSWORD.`,
     {
-      key: z.string().regex(/^[a-zA-Z0-9._-]+$/).describe("Log key/hash (the hex string from a ci.aztec-labs.com URL)"),
-      tail: z.number().optional().describe("Only return the last N lines (useful for large logs)"),
+      key: z.string().regex(/^[a-zA-Z0-9._-]+$/).describe("Log key/hash from a ci.aztec-labs.com URL"),
+      tail: z.number().optional().describe("Only return the last N lines"),
       head: z.number().optional().describe("Only return the first N lines"),
     },
     async ({ key, tail, head }) => {
-      const ci3 = findCi3();
-      if (!ci3) {
-        return { content: [{ type: "text", text: "ci3/ not found. Run clone_repo first to make log tools available." }], isError: true };
+      const serverUrl = process.env.CLAUDEBOX_SERVER_URL;
+      const serverToken = process.env.CLAUDEBOX_SERVER_TOKEN;
+      if (!serverUrl || !serverToken) {
+        return { content: [{ type: "text", text: "read_log: no server connection configured" }], isError: true };
       }
 
       try {
-        // ci.sh dlog sources Redis connection scripts and reads the key
-        const ciSh = join(config.workspace, "ci.sh");
-        const cmd = existsSync(ciSh) ? ciSh : join(ci3, "..", "ci.sh");
-        const result = spawnSync("bash", ["-c", `cd "${config.workspace}" && "${cmd}" dlog "${key}"`], {
-          encoding: "utf-8",
-          timeout: 30_000,
-          stdio: ["pipe", "pipe", "pipe"],
-          env: { ...process.env },
+        const resp = await fetch(`${serverUrl}/api/internal/read-log?key=${encodeURIComponent(key)}`, {
+          headers: { "Authorization": `Bearer ${serverToken}` },
         });
-
-        if (result.status !== 0) {
-          const err = (result.stderr || "").trim();
-          return { content: [{ type: "text", text: `read_log failed (exit ${result.status}): ${err.slice(0, 500)}` }], isError: true };
+        if (!resp.ok) {
+          const err = await resp.text();
+          return { content: [{ type: "text", text: `read_log failed: ${err.slice(0, 500)}` }], isError: true };
         }
 
-        let output = result.stdout || "";
+        let output = await resp.text();
         if (!output.trim()) {
           return { content: [{ type: "text", text: `Log '${key}' is empty or not found.` }], isError: true };
         }
 
-        // Apply head/tail filtering
         if (tail || head) {
           const lines = output.split("\n");
           if (tail) output = lines.slice(-tail).join("\n");
           else if (head) output = lines.slice(0, head).join("\n");
         }
 
-        // Truncate very large output
         const MAX = 200_000;
         if (output.length > MAX) {
-          output = output.slice(0, MAX) + `\n\n...(truncated at ${MAX} chars, use tail/head params to paginate)`;
+          output = output.slice(0, MAX) + `\n\n...(truncated at ${MAX} chars, use tail/head params)`;
         }
 
         return { content: [{ type: "text", text: output }] };
