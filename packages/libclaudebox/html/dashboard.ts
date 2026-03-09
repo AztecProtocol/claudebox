@@ -75,7 +75,25 @@ a{color:#7aa2f7;text-decoration:none}a:hover{text-decoration:underline}
 .thread-channel{font-size:11px;color:#e0af68}
 .thread-meta{font-size:11px;color:#444;margin-left:auto;flex-shrink:0}
 .thread-expand{color:#333;font-size:9px;flex-shrink:0;width:12px}
+.thread-context{padding:8px 14px;background:#050505;border-top:1px solid #111;max-height:300px;overflow-y:auto}
+.thread-msg{padding:3px 0;font-size:11px;line-height:1.5}
+.thread-msg.bot{opacity:0.5}
+.thread-msg-user{color:#bb9af7;font-weight:600;margin-right:6px}
+.thread-msg-text{color:#888;word-break:break-word}
+.thread-session-block{margin:4px 14px;padding:8px 12px;background:#0d0d12;border:1px solid #1a1a2a;border-radius:4px;position:relative;overflow:hidden}
+.thread-session-block::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px}
+.thread-session-block.ts-running::before{background:#9ece6a}
+.thread-session-block.ts-error::before{background:#f7768e}
+.thread-session-block.ts-completed::before{background:#444}
+.thread-session-top{display:flex;align-items:center;gap:8px}
+.thread-session-link{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:#7aa2f7;text-decoration:none;font-weight:600}
+.thread-session-link:hover{text-decoration:underline}
+.thread-session-name{color:#aaa;font-weight:normal}
+.thread-session-exit{color:#f7768e;font-size:10px}
+.thread-session-prompt{font-size:10px;color:#555;margin-top:4px;font-style:italic;word-break:break-word}
 .thread-sessions{border-top:1px solid #0d0d0d}
+.thread-msg-link{color:#333;font-size:10px;margin-left:6px;text-decoration:none;flex-shrink:0}
+.thread-msg-link:hover{color:#7aa2f7}
 
 /* Card grid (used by skeleton only) */
 .card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:8px}
@@ -346,10 +364,34 @@ function WorkspaceCard({ w, onRefresh, nested }) {
 
 function ThreadCard({ thread, onRefresh }) {
   const [expanded, setExpanded] = useState(thread.sessions.some(w => w.status === "running"));
+  const [threadMsgs, setThreadMsgs] = useState(null);
   const latest = thread.sessions[0];
   const originCls = "thread-origin " + thread.origin;
   const originLabel = thread.origin === "slack" ? "#" + (latest.channelName || "slack")
     : thread.origin === "github" ? "github" : "http";
+  const threadSlackLink = latest.slackChannel && latest.slackThreadTs
+    ? "https://" + (window.__slackDomain || "slack") + ".slack.com/archives/" + latest.slackChannel + "/p" + latest.slackThreadTs.replace(".", "")
+    : null;
+
+  // Fetch Slack thread context on first expand
+  useEffect(() => {
+    if (!expanded || threadMsgs !== null) return;
+    if (thread.origin !== "slack" || !latest.slackChannel || !latest.slackThreadTs) {
+      setThreadMsgs([]);
+      return;
+    }
+    authFetch("/api/thread?channel=" + latest.slackChannel + "&ts=" + latest.slackThreadTs)
+      .then(r => r.json())
+      .then(d => setThreadMsgs(d.entries || []))
+      .catch(() => setThreadMsgs([]));
+  }, [expanded]);
+
+  // Build session lookup by worktreeId for non-Slack threads
+  const sessionMap = useMemo(() => {
+    const m = {};
+    for (const s of thread.sessions) m[s.worktreeId] = s;
+    return m;
+  }, [thread.sessions]);
 
   return html\`
     <div class="thread-card">
@@ -359,15 +401,45 @@ function ThreadCard({ thread, onRefresh }) {
         <span style="font-size:12px;color:#aaa;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
           \${latest.name || latest.prompt.slice(0, 100) || "Unnamed"}
         </span>
-        <span class="thread-meta">\${thread.sessions.length} session\${thread.sessions.length > 1 ? "s" : ""}</span>
+        <span class="thread-meta">\${thread.sessions.length} run\${thread.sessions.length > 1 ? "s" : ""}</span>
         <span class="thread-meta">\${latest.user}</span>
         <span class="thread-meta">\${timeAgo(latest.started)}</span>
+        \${threadSlackLink ? html\`<a class="thread-msg-link" href=\${threadSlackLink} target="_blank" title="View in Slack" onClick=\${(e) => e.stopPropagation()}>\\u2197</a>\` : null}
+        \${!threadSlackLink && latest.link ? html\`<a class="thread-msg-link" href=\${latest.link} target="_blank" title="View on GitHub" onClick=\${(e) => e.stopPropagation()}>\\u2197</a>\` : null}
         \${thread.sessions.some(w => w.status === "running") ? html\`<span class="status-dot running"></span>\` : null}
       </div>
       \${expanded ? html\`
-        <div class="thread-sessions">
-          \${thread.sessions.map(w => html\`<\${WorkspaceCard} key=\${w.worktreeId} w=\${w} onRefresh=\${onRefresh} nested=\${true} />\`)}
-        </div>
+        \${threadMsgs && threadMsgs.length > 0 ? html\`
+          <div class="thread-context">
+            \${threadMsgs.map((entry, i) => html\`
+              <div key=\${i} class=\${"thread-msg" + (entry.type === "bot" ? " bot" : "")}>
+                <span class="thread-msg-user">\${entry.user}</span>
+                <span class="thread-msg-text">\${entry.text}</span>
+                \${entry.slackLink ? html\`<a class="thread-msg-link" href=\${entry.slackLink} target="_blank" title="View in Slack">\\u2197</a>\` : null}
+              </div>
+              \${entry.session ? html\`
+                <div class=\${"thread-session-block ts-" + entry.session.status}>
+                  <div class="thread-session-top">
+                    <a class="thread-session-link" href=\${"/s/" + (entry.session.logId || entry.session.worktreeId)}>
+                      <span class=\${"status-dot " + entry.session.status}></span>
+                      run \${entry.session.run}/\${entry.session.totalRuns}
+                    </a>
+                    \${entry.session.name ? html\`<span class="thread-session-name">\${entry.session.name}</span>\` : null}
+                    \${entry.session.exitCode != null && entry.session.exitCode !== 0 ? html\`<span class="thread-session-exit">exit \${entry.session.exitCode}</span>\` : null}
+                  </div>
+                  \${entry.session.prompt ? html\`<div class="thread-session-prompt">\${entry.session.prompt}</div>\` : null}
+                </div>
+              \` : null}
+            \`)}
+          </div>
+        \` : threadMsgs === null ? html\`
+          <div class="thread-context" style="color:#333;padding:12px 14px">Loading thread...</div>
+        \` : null}
+        \${threadMsgs !== null && threadMsgs.length === 0 ? html\`
+          <div class="thread-sessions">
+            \${thread.sessions.map(w => html\`<\${WorkspaceCard} key=\${w.worktreeId} w=\${w} onRefresh=\${onRefresh} nested=\${true} />\`)}
+          </div>
+        \` : null}
       \` : null}
     </div>
   \`;
@@ -553,6 +625,7 @@ function DashboardApp() {
         setWorkspaces(d.workspaces || []);
         setActiveCount(d.activeCount || 0);
         setMaxConcurrent(d.maxConcurrent || 0);
+        if (d.slackDomain) window.__slackDomain = d.slackDomain;
       })
       .catch(() => {});
   }, [activeProfile]);
