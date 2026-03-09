@@ -15,7 +15,7 @@ import {
   z, McpServer,
   getCreds, SESSION_META, WORKTREE_ID, statusPageUrl, STATS_DIR,
   sanitizeError, hasScope, pushToRemote,
-  logActivity, updateRootComment, otherArtifacts, getServerClient,
+  logActivity, updateRootComment, otherArtifacts,
   registerCommonTools, registerCloneRepo, registerPRTools, startMcpHttpServer,
 } from "../../packages/libclaudebox/mcp/base.ts";
 

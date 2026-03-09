@@ -197,8 +197,43 @@ export function truncateForSlack(text: string, maxLen = 600): string {
 // ── Activity log ────────────────────────────────────────────────
 export const ACTIVITY_LOG = "/workspace/activity.jsonl";
 
+const _seenArtifactUrls = new Set<string>();
+let _activityDeduped = false;
+
+function _initActivityDedup(): void {
+  if (_activityDeduped) return;
+  _activityDeduped = true;
+  try {
+    if (existsSync(ACTIVITY_LOG)) {
+      for (const line of readFileSync(ACTIVITY_LOG, "utf-8").split("\n")) {
+        if (!line.trim()) continue;
+        try {
+          const entry = JSON.parse(line);
+          if (entry.type === "artifact") {
+            const m = entry.text?.match(/(https?:\/\/[^\s)>\]]+)/);
+            if (m) _seenArtifactUrls.add(m[1].replace(/[.,;:!?]+$/, ""));
+          }
+        } catch {}
+      }
+    }
+  } catch {}
+}
+
 export function logActivity(type: string, text: string): void {
-  getServerClient().logActivity(type, text);
+  _initActivityDedup();
+  if (type === "artifact") {
+    const urlMatch = text.match(/(https?:\/\/[^\s)>\]]+)/);
+    if (urlMatch) {
+      const cleanUrl = urlMatch[1].replace(/[.,;:!?]+$/, "");
+      if (_seenArtifactUrls.has(cleanUrl)) return;
+      _seenArtifactUrls.add(cleanUrl);
+    }
+  }
+  try {
+    const entry: Record<string, string> = { ts: new Date().toISOString(), type, text };
+    if (SESSION_META.log_id) entry.log_id = SESSION_META.log_id;
+    appendFileSync(ACTIVITY_LOG, JSON.stringify(entry) + "\n");
+  } catch {}
 }
 
 // ── Root comment state ──────────────────────────────────────────
@@ -232,19 +267,6 @@ export function addTrackedPR(num: number, title: string, url: string, action: "c
   trackedPRs.set(num, { title, url, action: finalAction });
 }
 
-function buildArtifactsGh(): string {
-  const lines: string[] = [];
-  if (trackedPRs.size > 0) {
-    lines.push("**Pull Requests**");
-    for (const [num, pr] of trackedPRs) {
-      const label = pr.action === "created" ? "Created" : "Updated";
-      lines.push(`- **${label}** [#${num}: ${pr.title}](${pr.url})`);
-    }
-  }
-  if (otherArtifacts.length > 0) lines.push(...otherArtifacts);
-  return lines.join("\n");
-}
-
 function buildArtifactsSlack(): string {
   const prLinks: string[] = [];
   for (const [num, pr] of trackedPRs) {
@@ -253,46 +275,6 @@ function buildArtifactsSlack(): string {
   const lines: string[] = [];
   if (prLinks.length) lines.push(prLinks.join(" "));
   if (otherArtifacts.length > 0) lines.push(...otherArtifacts);
-  return lines.join("\n");
-}
-
-function buildGhBody(_latestStatus: string): string {
-  const lines: string[] = [];
-  const links: string[] = [];
-  if (statusPageUrl) links.push(`[Live status](${statusPageUrl})`);
-  if (SESSION_META.log_url) links.push(`[Log](${SESSION_META.log_url})`);
-  if (links.length) lines.push(links.join(" · "));
-
-  if (commentSections.status) {
-    lines.push("");
-    lines.push(`**Status:** ${commentSections.status}`);
-  }
-
-  if (commentSections.statusLog.length > 1) {
-    lines.push("");
-    lines.push("<details><summary>Progress</summary>");
-    lines.push("");
-    for (const entry of commentSections.statusLog) {
-      const time = new Date(entry.ts).toISOString().slice(11, 16);
-      let text = entry.text;
-      if (text.length > 200) text = text.slice(0, 200) + "…";
-      lines.push(`- \`${time}\` ${text}`);
-    }
-    lines.push("");
-    lines.push("</details>");
-  }
-
-  if (commentSections.response) {
-    lines.push("");
-    lines.push(`**Response:** ${commentSections.response}`);
-  }
-
-  const artifacts = buildArtifactsGh();
-  if (artifacts) {
-    lines.push("");
-    lines.push(artifacts);
-  }
-
   return lines.join("\n");
 }
 
@@ -323,41 +305,19 @@ export async function updateRootComment(status?: string): Promise<string[]> {
   if (status) lastStatus = status;
 
   const client = getServerClient();
-  if (client.hasServer) {
-    try {
-      return await client.updateComment({
-        status: s,
-        logId: SESSION_META.log_id,
-        sections: { ...commentSections },
-        trackedPRs: [...trackedPRs.entries()].map(([num, pr]) => ({ num, ...pr })),
-        otherArtifacts: [...otherArtifacts],
-      });
-    } catch (e: any) {
-      return [`Server: ${e.message}`];
-    }
+  if (!client.hasServer) return [];
+
+  try {
+    return await client.updateComment({
+      status: s,
+      logId: SESSION_META.log_id,
+      sections: { ...commentSections },
+      trackedPRs: [...trackedPRs.entries()].map(([num, pr]) => ({ num, ...pr })),
+      otherArtifacts: [...otherArtifacts],
+    });
+  } catch (e: any) {
+    return [`Server: ${e.message}`];
   }
-
-  // Fallback: direct API calls via libcreds (for legacy/standalone mode)
-  const results: string[] = [];
-  const creds = getCreds();
-
-  if (_hasSlackToken() && SESSION_META.slack_channel && SESSION_META.slack_message_ts) {
-    try {
-      const d = await creds.slack.updateMessage(buildSlackText(s), {
-        channel: SESSION_META.slack_channel, ts: SESSION_META.slack_message_ts,
-      });
-      results.push(d.ok ? "Slack updated" : `Slack: ${d.error}`);
-    } catch (e: any) { results.push(`Slack: ${e.message}`); }
-  }
-
-  if (_hasGhToken() && SESSION_META.run_comment_id && SESSION_META.repo) {
-    try {
-      await creds.github.updateIssueComment(SESSION_META.repo, SESSION_META.run_comment_id, buildGhBody(s));
-      results.push("GitHub updated");
-    } catch (e: any) { results.push(`GitHub: ${e.message}`); }
-  }
-
-  return results;
 }
 
 // ── Claude transcript poller ────────────────────────────────────
@@ -953,79 +913,25 @@ async function dmAuthorOnCompletion(): Promise<void> {
   if (SESSION_META.slack_channel && SESSION_META.slack_channel.startsWith("D")) return;
 
   const client = getServerClient();
-  if (client.hasServer) {
-    const hasError = lastStatus?.includes("error");
-    const status = hasError ? "Task failed" : "Task done";
-    await client.dmAuthor({
-      status,
-      trackedPRs: [...trackedPRs.entries()].map(([num, pr]) => ({ num, ...pr })),
-    });
-    return;
-  }
+  if (!client.hasServer) return;
 
-  // Fallback: direct Slack API via libcreds (legacy/standalone mode)
-  if (!_hasSlackToken()) return;
-  try {
-    const creds = getCreds();
-    const parts: string[] = [];
-    const contextLinks: string[] = [];
-    if (SESSION_META.slack_channel && SESSION_META.slack_thread_ts) {
-      const slackDomain = process.env.SLACK_WORKSPACE_DOMAIN || "slack";
-      const threadLink = `https://${slackDomain}.slack.com/archives/${SESSION_META.slack_channel}/p${SESSION_META.slack_thread_ts.replace(".", "")}`;
-      contextLinks.push(`<${threadLink}|thread>`);
-    }
-    if (SESSION_META.link) {
-      contextLinks.push(`<${SESSION_META.link}|source>`);
-    }
-
-    const prLinks = [...trackedPRs.entries()].map(([num, pr]) => `<${pr.url}|#${num}>`);
-    const hasError = lastStatus?.includes("error");
-    const status = hasError ? "Task failed" : "Task done";
-    parts.push(status + (prLinks.length ? ` ${prLinks.join(" ")}` : ""));
-
-    const footer: string[] = [...contextLinks];
-    if (statusPageUrl) footer.push(`<${statusPageUrl}|status>`);
-    if (footer.length) parts.push(footer.join(" \u2502 "));
-
-    const searchData = await creds.slack.listUsers(200);
-    const slackUser = searchData.members?.find((m: any) =>
-      m.real_name === SESSION_META.user || m.name === SESSION_META.user || m.profile?.display_name === SESSION_META.user
-    );
-    if (!slackUser) {
-      console.log(`[Sidecar] Could not find Slack user for "${SESSION_META.user}", skipping DM`);
-      return;
-    }
-
-    const openData = await creds.slack.openConversation(slackUser.id);
-    if (!openData.ok) {
-      console.log(`[Sidecar] Could not open DM: ${openData.error}`);
-      return;
-    }
-
-    await creds.slack.postMessage(parts.join("\n"), { channel: openData.channel.id });
-    console.log(`[Sidecar] DM'd ${SESSION_META.user} (${slackUser.id}) on completion`);
-  } catch (e: any) {
-    console.error(`[Sidecar] Failed to DM author: ${e.message}`);
-  }
+  const hasError = lastStatus?.includes("error");
+  const status = hasError ? "Task failed" : "Task done";
+  await client.dmAuthor({
+    status,
+    trackedPRs: [...trackedPRs.entries()].map(([num, pr]) => ({ num, ...pr })),
+  });
 }
 
 async function initSlackFromPermalink(): Promise<void> {
   if (!SESSION_META.slack_channel || !SESSION_META.slack_thread_ts || SESSION_META.slack_message_ts) return;
+  if (!_hasSlackToken()) return;
 
-  const client = getServerClient();
   const initText = buildSlackText("Starting…");
-
-  // Try ServerClient first, then fall back to libcreds
-  const doSlackCall = async (method: string, args: Record<string, any>): Promise<any> => {
-    if (client.hasServer) {
-      return client.slack(method, args);
-    }
-    if (!_hasSlackToken()) return { ok: false, error: "no_token" };
-    return getCreds().slack.call(method, args);
-  };
+  const slack = getCreds().slack;
 
   try {
-    const d = await doSlackCall("chat.update", {
+    const d = await slack.call("chat.update", {
       channel: SESSION_META.slack_channel, ts: SESSION_META.slack_thread_ts, text: initText,
     });
     if (d.ok) {
@@ -1040,7 +946,7 @@ async function initSlackFromPermalink(): Promise<void> {
   }
 
   try {
-    const d = await doSlackCall("chat.postMessage", {
+    const d = await slack.call("chat.postMessage", {
       channel: SESSION_META.slack_channel, thread_ts: SESSION_META.slack_thread_ts, text: initText,
     });
     if (d.ok && d.ts) {
