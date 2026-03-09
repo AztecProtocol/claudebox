@@ -1,10 +1,9 @@
 /**
- * End-to-end tests for DM routing, proxy, credentials, and init flow.
+ * End-to-end tests for DM routing and proxy flow.
  *
  * Tests the full pipeline:
  *   - Slack DM events (mocked) routing to local vs personal servers
  *   - DM registry CRUD
- *   - Credential management via `claudebox init`
  *   - Personal server receives proxied events and creates sessions
  *
  * All Slack, Docker, and Claude interactions are mocked.
@@ -12,7 +11,7 @@
 
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, statSync } from "fs";
+import { mkdirSync, writeFileSync, rmSync, statSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
@@ -466,125 +465,8 @@ describe("Slack DM routing (mocked)", () => {
   });
 });
 
-describe("claudebox init CLI", () => {
-  const FAKE_HOME = join(TEST_DIR, "home");
-
-  beforeEach(() => {
-    mkdirSync(FAKE_HOME, { recursive: true });
-  });
-
-  afterEach(() => {
-    rmSync(TEST_DIR, { recursive: true, force: true });
-  });
-
-  it("shows help", () => {
-    const r = spawnSync("node", [...NODE_ARGS, CLI, "init", "--help"], {
-      env: { ...process.env, HOME: FAKE_HOME },
-      encoding: "utf-8",
-      timeout: 10_000,
-    });
-    assert.match(r.stdout, /Set up ClaudeBox credentials/);
-    assert.match(r.stdout, /--add-credentials/);
-  });
-
-  it("saves credentials with --key flag", () => {
-    const r = spawnSync("node", [...NODE_ARGS, CLI, "init", "--key", "sk-ant-test123"], {
-      env: { ...process.env, HOME: FAKE_HOME },
-      encoding: "utf-8",
-      timeout: 10_000,
-    });
-    assert.equal(r.status, 0, `stderr: ${r.stderr}`);
-    assert.match(r.stdout, /Credentials saved/);
-
-    const credPath = join(FAKE_HOME, ".claude", "claudebox", "credentials.json");
-    assert.ok(existsSync(credPath), "Credentials file should exist");
-    const creds = JSON.parse(readFileSync(credPath, "utf-8"));
-    assert.equal(creds.anthropicApiKey, "sk-ant-test123");
-  });
-
-  it("warns about non-standard key format", () => {
-    const r = spawnSync("node", [...NODE_ARGS, CLI, "init", "--key", "not-a-real-key"], {
-      env: { ...process.env, HOME: FAKE_HOME },
-      encoding: "utf-8",
-      timeout: 10_000,
-    });
-    assert.equal(r.status, 0);
-    // Warning goes to stderr via console.warn
-    const combined = r.stdout + r.stderr;
-    assert.match(combined, /Warning.*sk-ant/);
-  });
-
-  it("adds credentials with --add-credentials", () => {
-    // First init
-    spawnSync("node", [...NODE_ARGS, CLI, "init", "--key", "sk-ant-primary"], {
-      env: { ...process.env, HOME: FAKE_HOME },
-      encoding: "utf-8",
-      timeout: 10_000,
-    });
-
-    // Add a second key
-    const r = spawnSync("node", [...NODE_ARGS, CLI, "init", "--add-credentials", "--key", "sk-ant-secondary", "--label", "work"], {
-      env: { ...process.env, HOME: FAKE_HOME },
-      encoding: "utf-8",
-      timeout: 10_000,
-    });
-
-    assert.equal(r.status, 0, `stderr: ${r.stderr}`);
-    assert.match(r.stdout, /Added key to rotation pool/);
-    assert.match(r.stdout, /2 total/);
-
-    // Verify both keys exist
-    const credPath = join(FAKE_HOME, ".claude", "claudebox", "credentials.json");
-    const creds = JSON.parse(readFileSync(credPath, "utf-8"));
-    assert.equal(creds.keys.length, 2);
-    assert.equal(creds.keys[1].label, "work");
-  });
-
-  it("lists keys with --list", () => {
-    spawnSync("node", [...NODE_ARGS, CLI, "init", "--key", "sk-ant-listtest"], {
-      env: { ...process.env, HOME: FAKE_HOME },
-      encoding: "utf-8",
-      timeout: 10_000,
-    });
-
-    const r = spawnSync("node", [...NODE_ARGS, CLI, "init", "--list"], {
-      env: { ...process.env, HOME: FAKE_HOME },
-      encoding: "utf-8",
-      timeout: 10_000,
-    });
-
-    assert.equal(r.status, 0, `stderr: ${r.stderr}`);
-    assert.match(r.stdout, /1 key/);
-    assert.match(r.stdout, /sk-ant-list/);
-    assert.match(r.stdout, /active/);
-  });
-
-  it("detects existing credentials on second run", () => {
-    // First init
-    spawnSync("node", [...NODE_ARGS, CLI, "init", "--key", "sk-ant-first"], {
-      env: { ...process.env, HOME: FAKE_HOME },
-      encoding: "utf-8",
-      timeout: 10_000,
-    });
-
-    // Second init without --key: should ask about re-login
-    // Since stdin is not interactive, it will timeout/default to "n"
-    const r = spawnSync("node", [...NODE_ARGS, CLI, "init"], {
-      env: { ...process.env, HOME: FAKE_HOME },
-      encoding: "utf-8",
-      timeout: 10_000,
-      input: "n\n",
-    });
-
-    assert.match(r.stdout, /already configured/);
-    assert.match(r.stdout, /Re-login/);
-
-    // Original key should be preserved
-    const credPath = join(FAKE_HOME, ".claude", "claudebox", "credentials.json");
-    const creds = JSON.parse(readFileSync(credPath, "utf-8"));
-    assert.equal(creds.anthropicApiKey, "sk-ant-first");
-  });
-});
+// "claudebox init CLI" tests removed — credentials.ts was deleted in the libcreds migration.
+// Credential management is now handled by libcreds.
 
 describe("DM registry HTTP endpoints (via CLI register)", () => {
   it("shows register help", () => {
