@@ -8,7 +8,7 @@ Run Claude in isolated Docker containers. Trigger from Slack, HTTP, or CLI.
 
 **Run** — one Claude execution inside a worktree. Each run gets a log ID (`d9441073aae158ae-3`), writes to the worktree's transcript, and appends to its activity log. Multiple runs share one worktree.
 
-**Profile** — a directory in `profiles/` that configures what Claude can do. Contains a plugin config (`plugin.ts`), an MCP tool server (`mcp-sidecar.ts`), and a system prompt (`container-claude.md`). Profiles control the Docker image, available tools, Slack channel routing, and required credentials.
+**Profile** — a directory in `profiles/` that configures what Claude can do. Contains a plugin config (`plugin.ts`), an MCP tool server (`mcp-sidecar.ts`), and a system prompt (`CLAUDE.md`). Profiles control the Docker image, available tools, Slack channel routing, and required credentials.
 
 **Host / Container boundary** — the host server owns all external context (Slack threads, PR bindings, session history). Containers are stateless workers that talk back through a single HTTP API on an internal port. They don't know how they were triggered.
 
@@ -41,7 +41,7 @@ Two HTTP servers:
 profiles/my-profile/
   plugin.ts            # Docker config, channels, routes, credentials
   mcp-sidecar.ts       # MCP tools (runs inside container)
-  container-claude.md  # System prompt
+  CLAUDE.md  # System prompt
 ```
 
 ```typescript

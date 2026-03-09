@@ -19,7 +19,6 @@ RESUME_ID="${CLAUDEBOX_RESUME_ID:-}"
 MODEL="${CLAUDEBOX_MODEL:-}"
 PROFILE="${CLAUDEBOX_PROFILE:-default}"
 PROMPT_FILE="/workspace/prompt.txt"
-CLAUDE_MD_TEMPLATE="${CLAUDEBOX_CONTAINER_CLAUDE_MD:-/opt/claudebox/profiles/$PROFILE/container-claude.md}"
 PROFILE_DIR="/opt/claudebox-profile"
 
 echo "━━━ Container Bootstrap ━━━"
@@ -41,16 +40,19 @@ cat > /tmp/mcp.json <<EOF
 }
 EOF
 
-# ── Step 2: Install CLAUDE.md ────────────────────────────────────
-# Placed at /workspace/.claude/CLAUDE.md — Claude will start in /workspace.
-# Source from the rw profile mount if available, else fall back to ro /opt/claudebox.
-if [ -f "$PROFILE_DIR/container-claude.md" ]; then
-    mkdir -p /workspace/.claude
-    cp "$PROFILE_DIR/container-claude.md" /workspace/.claude/CLAUDE.md
-elif [ -f "$CLAUDE_MD_TEMPLATE" ]; then
-    mkdir -p /workspace/.claude
-    cp "$CLAUDE_MD_TEMPLATE" /workspace/.claude/CLAUDE.md
-fi
+# ── Step 2: Write session metadata CLAUDE.md ─────────────────────
+# Profile instructions live in $PROFILE_DIR/CLAUDE.md (loaded via --add-dir).
+# This file just injects session-specific context into the workspace.
+mkdir -p /workspace/.claude
+cat > /workspace/.claude/CLAUDE.md <<METAEOF
+# Session
+
+- Profile: $PROFILE
+- Session: $SESSION_UUID
+- MCP: $MCP_URL
+$([ -n "$RESUME_ID" ] && echo "- Resuming: $RESUME_ID")
+$([ -n "$MODEL" ] && echo "- Model: $MODEL")
+METAEOF
 
 # ── Step 3: Read prompt ──────────────────────────────────────────
 if [ ! -f "$PROMPT_FILE" ]; then

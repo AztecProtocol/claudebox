@@ -24,7 +24,7 @@ packages/libclaudebox/     # Framework (Docker, worktrees, MCP, Slack, HTTP)
   mcp/                     # MCP tool modules (env, activity, tools, git-tools, server)
   html/                    # Dashboard templates
   slack/                   # Slack event routing
-profiles/<name>/           # Profiles: plugin.ts + mcp-sidecar.ts + container-claude.md
+profiles/<name>/           # Profiles: plugin.ts + mcp-sidecar.ts + CLAUDE.md
 server.ts                  # Entry point
 cli.ts                     # CLI client
 ```

@@ -144,7 +144,6 @@ export class DockerService {
       throw new Error(`Invalid profile name: ${profileDir}`);
     }
     const sidecarEntrypoint = `/opt/claudebox/profiles/${profileDir}/mcp-sidecar.ts`;
-    const claudeMdPath = `/opt/claudebox/profiles/${profileDir}/container-claude.md`;
     const profile = await loadProfile(profileDir);
     const dockerConfig = profile.docker || {};
     const containerImage = dockerConfig.image || DOCKER_IMAGE;
@@ -302,7 +301,6 @@ export class DockerService {
         "-e", `AZTEC_MCP_SERVER=http://${sidecarName}:9801/creds`,
         "-e", `CLAUDEBOX_SIDECAR_HOST=${sidecarName}`,
         "-e", `CLAUDEBOX_SIDECAR_PORT=9801`,
-        "-e", `CLAUDEBOX_CONTAINER_CLAUDE_MD=${claudeMdPath}`,
         "-e", `PARENT_LOG_ID=${logId}`,
         "-e", `CLAUDEBOX_PROFILE=${profileDir}`,
         "-e", `CLAUDEBOX_MODEL=${opts.model || ""}`,
