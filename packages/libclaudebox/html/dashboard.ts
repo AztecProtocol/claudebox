@@ -94,6 +94,7 @@ a{color:#7aa2f7;text-decoration:none}a:hover{text-decoration:underline}
 .thread-sessions{border-top:1px solid #0d0d0d}
 .thread-msg-link{color:#333;font-size:10px;margin-left:6px;text-decoration:none;flex-shrink:0}
 .thread-msg-link:hover{color:#7aa2f7}
+.thread-artifacts{display:flex;gap:3px;flex-shrink:0}
 
 /* Card grid (used by skeleton only) */
 .card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:8px}
@@ -396,6 +397,17 @@ function ThreadCard({ thread, onRefresh }) {
     ? "https://" + (window.__slackDomain || "slack") + ".slack.com/archives/" + latest.slackChannel + "/p" + latest.slackThreadTs.replace(".", "")
     : null;
 
+  // Collect all artifacts across sessions for collapsed view
+  const allArtifacts = useMemo(() => {
+    const seen = new Map();
+    for (const s of thread.sessions) {
+      for (const a of (s.artifacts || [])) {
+        if (!seen.has(a.url)) seen.set(a.url, a);
+      }
+    }
+    return [...seen.values()];
+  }, [thread.sessions]);
+
   // Fetch Slack thread context on first expand
   useEffect(() => {
     if (!expanded || threadMsgs !== null) return;
@@ -409,28 +421,32 @@ function ThreadCard({ thread, onRefresh }) {
       .catch(() => setThreadMsgs([]));
   }, [expanded]);
 
-  // Build session lookup by worktreeId for non-Slack threads
-  const sessionMap = useMemo(() => {
-    const m = {};
-    for (const s of thread.sessions) m[s.worktreeId] = s;
-    return m;
-  }, [thread.sessions]);
+  const statusCls = thread.sessions.some(w => w.status === "running") ? "running"
+    : latest.status === "error" ? "error" : latest.status || "";
 
   return html\`
     <div class="thread-card">
       <div class="thread-header" onClick=\${() => setExpanded(p => !p)}>
         <span class="thread-expand">\${expanded ? "\\u25BC" : "\\u25B6"}</span>
+        <span class=\${"status-dot " + statusCls}></span>
         <span class=\${originCls}>\${originLabel}</span>
         <span style="font-size:12px;color:#aaa;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
           \${latest.name || latest.prompt.slice(0, 100) || "Unnamed"}
         </span>
-        <span class="thread-meta">\${thread.sessions.length} run\${thread.sessions.length > 1 ? "s" : ""}</span>
+        \${allArtifacts.length > 0 ? html\`
+          <span class="thread-artifacts" onClick=\${(e) => e.stopPropagation()}>
+            \${allArtifacts.map(a => html\`<a key=\${a.url} href=\${a.url} target="_blank" class=\${"card-artifact a-" + a.type}>\${a.text}</a>\`)}
+          </span>
+        \` : null}
+        <span class="thread-meta">\${thread.sessions.length > 1 ? thread.sessions.length + " runs" : ""}</span>
         <span class="thread-meta">\${latest.user}</span>
         <span class="thread-meta">\${timeAgo(latest.started)}</span>
         \${threadSlackLink ? html\`<a class="thread-msg-link" href=\${threadSlackLink} target="_blank" title="View in Slack" onClick=\${(e) => e.stopPropagation()}>\\u2197</a>\` : null}
         \${!threadSlackLink && latest.link ? html\`<a class="thread-msg-link" href=\${latest.link} target="_blank" title="View on GitHub" onClick=\${(e) => e.stopPropagation()}>\\u2197</a>\` : null}
-        \${thread.sessions.some(w => w.status === "running") ? html\`<span class="status-dot running"></span>\` : null}
       </div>
+      \${!expanded && latest.lastReply ? html\`
+        <div class="card-reply" style="margin:0;border-radius:0;border-top:none" onClick=\${() => setExpanded(true)}>\${latest.lastReply}</div>
+      \` : null}
       \${expanded ? html\`
         \${threadMsgs && threadMsgs.length > 0 ? html\`
           <div class="thread-context">
@@ -508,10 +524,7 @@ function WorkspaceList({ workspaces, onRefresh }) {
   }
 
   return html\`
-    \${threads.map(t => t.sessions.length === 1 && !t.sessions[0].threadKey
-      ? html\`<\${WorkspaceCard} key=\${t.sessions[0].worktreeId} w=\${t.sessions[0]} onRefresh=\${onRefresh} />\`
-      : html\`<\${ThreadCard} key=\${t.sessions[0].threadKey || t.sessions[0].worktreeId} thread=\${t} onRefresh=\${onRefresh} />\`
-    )}
+    \${threads.map(t => html\`<\${ThreadCard} key=\${t.sessions[0].threadKey || t.sessions[0].worktreeId} thread=\${t} onRefresh=\${onRefresh} />\`)}
   \`;
 }
 
