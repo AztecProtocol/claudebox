@@ -28,9 +28,6 @@ export type {
 // Re-export policy
 export { LibCredsError } from "./policy.ts";
 
-// Re-export operations (internal use only — prefer typed clients over raw operation lookups)
-export { getOperation } from "./operations.ts";
-
 // Re-export grants
 export { getProfileGrant, registerProfileGrant } from "./grants.ts";
 export {
@@ -42,12 +39,6 @@ export {
 export { GitHubClient } from "./github.ts";
 export { SlackClient } from "./slack.ts";
 export { LinearClient } from "./linear.ts";
-
-// Re-export singleton
-export { getCreds, initCreds } from "./singleton.ts";
-
-// Re-export audit
-export { initAuditLog } from "./audit.ts";
 
 import type { SessionContext, ProfileGrant } from "./types.ts";
 import { GitHubClient } from "./github.ts";

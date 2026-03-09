@@ -1,14 +1,11 @@
 /**
  * ServerClient — MCP sidecar ↔ ClaudeBox server communication.
  *
- * Provides a unified interface for sidecar tools to communicate with the
- * claudebox server. Abstracts away whether the server is local, remote, or absent.
+ * Thin HTTP client for composite server endpoints that orchestrate
+ * multi-service operations (Slack + GitHub comment updates, DMs).
  *
- * Graceful degradation: when no server URL is configured, Slack/comment operations
- * are no-ops (logged to activity only), and profileApi() throws.
+ * Only used from mcp/base.ts. Direct API calls go through libcreds instead.
  */
-
-import { appendFileSync, existsSync, readFileSync } from "fs";
 
 export interface ServerClientOpts {
   /** Profile name (e.g. "default", "barretenberg-audit") */
@@ -17,8 +14,6 @@ export interface ServerClientOpts {
   serverUrl?: string;
   /** Auth token for server internal API */
   serverToken?: string;
-  /** Activity log path (local JSONL file) */
-  activityLog?: string;
   /** Session metadata — passed to server for context */
   sessionMeta?: Record<string, string>;
 }
@@ -33,7 +28,6 @@ export class ServerClient {
   readonly profile: string;
   readonly serverUrl: string | undefined;
   private readonly token: string;
-  private readonly activityLog: string;
   readonly hasServer: boolean;
   private sessionMeta: Record<string, string>;
 
@@ -41,51 +35,8 @@ export class ServerClient {
     this.profile = opts.profile;
     this.serverUrl = opts.serverUrl?.replace(/\/$/, "");
     this.token = opts.serverToken || "";
-    this.activityLog = opts.activityLog || "/workspace/activity.jsonl";
     this.hasServer = !!(this.serverUrl && this.token);
     this.sessionMeta = opts.sessionMeta || {};
-  }
-
-  // ── Activity log (always local) ──────────────────────────────
-
-  private _seenArtifactUrls = new Set<string>();
-  private _activityInitialized = false;
-
-  private initActivityDedup(): void {
-    if (this._activityInitialized) return;
-    this._activityInitialized = true;
-    try {
-      if (existsSync(this.activityLog)) {
-        for (const line of readFileSync(this.activityLog, "utf-8").split("\n")) {
-          if (!line.trim()) continue;
-          try {
-            const entry = JSON.parse(line);
-            if (entry.type === "artifact") {
-              const m = entry.text?.match(/(https?:\/\/[^\s)>\]]+)/);
-              if (m) this._seenArtifactUrls.add(m[1].replace(/[.,;:!?]+$/, ""));
-            }
-          } catch {}
-        }
-      }
-    } catch {}
-  }
-
-  logActivity(type: string, text: string): void {
-    this.initActivityDedup();
-    if (type === "artifact") {
-      const urlMatch = text.match(/(https?:\/\/[^\s)>\]]+)/);
-      if (urlMatch) {
-        const cleanUrl = urlMatch[1].replace(/[.,;:!?]+$/, "");
-        if (this._seenArtifactUrls.has(cleanUrl)) return;
-        this._seenArtifactUrls.add(cleanUrl);
-      }
-    }
-    try {
-      const entry: Record<string, string> = { ts: new Date().toISOString(), type, text };
-      const logId = this.sessionMeta?.log_id;
-      if (logId) entry.log_id = logId;
-      appendFileSync(this.activityLog, JSON.stringify(entry) + "\n");
-    } catch {}
   }
 
   // ── Server HTTP helpers ──────────────────────────────────────
@@ -110,21 +61,6 @@ export class ServerClient {
     const ct = res.headers.get("content-type") || "";
     if (ct.includes("json")) return res.json();
     return res.text();
-  }
-
-  // ── Slack (proxied through server) ───────────────────────────
-
-  /**
-   * Call a Slack Web API method through the server.
-   * Returns the API response, or { ok: false, error: "no_server" } if no server.
-   */
-  async slack(method: string, args: Record<string, any>): Promise<any> {
-    if (!this.hasServer) {
-      return { ok: false, error: "no_server", hint: "No claudebox server configured — Slack operations unavailable" };
-    }
-    return this.serverFetch("/api/internal/slack", {
-      body: { method, args, session: this.sessionMeta },
-    });
   }
 
   // ── Root comment update ──────────────────────────────────────
@@ -166,24 +102,6 @@ export class ServerClient {
     }
   }
 
-  // ── Profile-specific API ─────────────────────────────────────
-
-  /**
-   * Call a profile-specific server endpoint.
-   * Routes to: /api/profiles/<profile>/<path>
-   * Throws if no server is configured.
-   */
-  async profileApi(method: string, path: string, body?: any): Promise<any> {
-    if (!this.hasServer) {
-      throw new Error(`Profile API requires a claudebox server (no CLAUDEBOX_SERVER_URL configured)`);
-    }
-    const cleanPath = path.replace(/^\//, "");
-    return this.serverFetch(`/api/profiles/${this.profile}/${cleanPath}`, {
-      method,
-      body,
-    });
-  }
-
   // ── Session metadata ─────────────────────────────────────────
 
   updateSessionMeta(meta: Record<string, string>): void {
@@ -223,7 +141,6 @@ export function createServerClientFromEnv(extraMeta?: Record<string, string>): S
     profile: process.env.CLAUDEBOX_PROFILE || "default",
     serverUrl: process.env.CLAUDEBOX_SERVER_URL,
     serverToken: process.env.CLAUDEBOX_SERVER_TOKEN,
-    activityLog: "/workspace/activity.jsonl",
     sessionMeta: meta,
   });
 }

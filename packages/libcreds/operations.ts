@@ -64,14 +64,3 @@ export function getOperationOrThrow(name: string): OperationMeta {
   return op;
 }
 
-export function allOperations(): OperationMeta[] {
-  return [...OPERATIONS];
-}
-
-export function operationsByService(service: string): OperationMeta[] {
-  return OPERATIONS.filter(op => op.service === service);
-}
-
-export function dangerLevelOf(name: GitHubOperationName | SlackOperationName | LinearOperationName): string {
-  return getOperationOrThrow(name).danger;
-}
