@@ -147,8 +147,6 @@ export class DockerService {
     const profile = await loadProfile(profileDir);
     const dockerConfig = profile.docker || {};
     const containerImage = dockerConfig.image || DOCKER_IMAGE;
-    const mountRef = dockerConfig.mountReferenceRepo !== false; // default true
-
     console.log(`[DOCKER] Starting session ${logId} (worktree=${worktreeId} profile=${profileDir})`);
     console.log(`[DOCKER]   Sidecar:   ${sidecarName}`);
     console.log(`[DOCKER]   Claude:    ${claudeName}`);
@@ -218,13 +216,11 @@ export class DockerService {
         `${claudeProjectsDir}:${CONTAINER_HOME}/.claude/projects/-workspace:ro`,
         `${CLAUDEBOX_CODE_DIR}:/opt/claudebox:ro`,
         `${profileHostDir}:/opt/claudebox-profile:rw`,
-        `${BASTION_SSH_KEY}:${CONTAINER_HOME}/.ssh/build_instance_key:ro`,
+        `${BASTION_SSH_KEY}:/home/aztec-dev/.ssh/build_instance_key:ro`,
         `${CLAUDEBOX_STATS_DIR}:/stats:rw`,
         `${CLAUDEBOX_DIR}:${CONTAINER_HOME}/.claudebox:rw`,
       ];
-      if (mountRef) {
-        sidecarBinds.push(`${join(REPO_DIR, ".git")}:/reference-repo/.git:ro`);
-      }
+      sidecarBinds.push(`${join(REPO_DIR, ".git")}:/reference-repo/.git:ro`);
 
       // Server URL for sidecar → server communication (internal port, not exposed to internet)
       const serverUrl = `http://host.docker.internal:${INTERNAL_PORT}`;
@@ -301,7 +297,6 @@ export class DockerService {
         "-v", `${join(CLAUDEBOX_CODE_DIR, "profiles", profileDir)}:/opt/claudebox-profile:rw`,
         "-e", `CLAUDEBOX_MCP_URL=${mcpUrl}`,
         "-e", `SESSION_UUID=${sessionUuid}`,
-        "-e", `AZTEC_MCP_SERVER=http://${sidecarName}:9801/creds`,
         "-e", `CLAUDEBOX_SIDECAR_HOST=${sidecarName}`,
         "-e", `CLAUDEBOX_SIDECAR_PORT=9801`,
         "-e", `PARENT_LOG_ID=${logId}`,
@@ -318,10 +313,8 @@ export class DockerService {
       if (dockerConfig.extraBinds) {
         for (const b of dockerConfig.extraBinds) claudeArgs.push("-v", b);
       }
-      // Mount reference repo for profiles that use local clone
-      if (mountRef) {
-        claudeArgs.push("-v", `${join(REPO_DIR, ".git")}:/reference-repo/.git:ro`);
-      }
+      // Mount reference repo for sparse pre-clone
+      claudeArgs.push("-v", `${join(REPO_DIR, ".git")}:/reference-repo/.git:ro`);
 
       // Auto-detect resume
       if (opts.worktreeId) {

@@ -4,4 +4,4 @@
 process.env.CLAUDEBOX_SESSION_PASS = "test-pass";
 process.env.CLAUDEBOX_HOST = "claudebox.test";
 process.env.CLAUDEBOX_DEFAULT_BRANCH = "main";
-process.env.CLAUDEBOX_SESSION_USER = "testadmin";
+process.env.CLAUDEBOX_SESSION_USER = "testaztec";

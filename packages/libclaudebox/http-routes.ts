@@ -525,14 +525,14 @@ const routes: Route[] = [
       const sessions = worktreeId ? store.listByWorktree(worktreeId) : [{ ...session, _log_id: hash }];
       const worktreeAlive = worktreeId ? store.isWorktreeAlive(worktreeId) : false;
 
-      // Extract last reply per session from activity (for collapsed card summaries)
+      // Extract all replies per session from activity (for run card summaries)
       const lastReplies: Record<string, string> = {};
       if (worktreeId) {
         const activity = store.readActivity(worktreeId); // newest first
         const sessionsOldest = [...sessions].reverse();
+        const repliesByRun: Record<string, string[]> = {};
         for (const entry of activity) {
           if (entry.type !== "response") continue;
-          // Find which session this entry belongs to by timestamp
           let logId: string | undefined;
           if ((entry as any).log_id) {
             logId = (entry as any).log_id;
@@ -544,7 +544,14 @@ const routes: Route[] = [
               }
             }
           }
-          if (logId && !lastReplies[logId]) lastReplies[logId] = entry.text;
+          if (logId) {
+            if (!repliesByRun[logId]) repliesByRun[logId] = [];
+            repliesByRun[logId].push(entry.text);
+          }
+        }
+        // Combine all replies (reversed to chronological order)
+        for (const [logId, replies] of Object.entries(repliesByRun)) {
+          lastReplies[logId] = replies.reverse().join("\n\n---\n\n");
         }
       }
 
@@ -1409,6 +1416,36 @@ const routes: Route[] = [
         json(res, result.ok ? 200 : 400, result);
       } catch (e: any) {
         console.error(`[HTTP] ${e.message}`); json(res, 500, { ok: false, error: "internal error" });
+      }
+    },
+  },
+
+  // ── Internal API: CI log read (sidecar → host, host has Redis/SSH) ──
+  {
+    method: "GET", pattern: /^\/api\/internal\/read-log$/, auth: "api", internal: true,
+    handler: async (req, res) => {
+      const url = new URL(req.url!, `http://${req.headers.host}`);
+      const key = url.searchParams.get("key") || "";
+      if (!key || !/^[a-zA-Z0-9._-]+$/.test(key)) { json(res, 400, { error: "invalid key" }); return; }
+
+      try {
+        const { spawnSync } = await import("child_process");
+        const { join } = await import("path");
+        const repoDir = process.env.CLAUDE_REPO_DIR || join(process.env.HOME || "", "repo");
+        const ciSh = join(repoDir, "ci.sh");
+        const result = spawnSync("bash", ["-c", `cd "${repoDir}" && "${ciSh}" dlog "${key}"`], {
+          encoding: "utf-8", timeout: 30_000, stdio: ["pipe", "pipe", "pipe"],
+        });
+        if (result.status !== 0) {
+          json(res, 502, { error: (result.stderr || "").trim().slice(0, 500) });
+          return;
+        }
+        // Strip ci.sh startup noise (Slack listener, PID lines)
+        let output = (result.stdout || "").replace(/^(?:Starting Slack listener\.\.\.\n|Started \(PID \d+\)\n)*/m, "");
+        res.writeHead(200, { "Content-Type": "text/plain" });
+        res.end(output);
+      } catch (e: any) {
+        json(res, 500, { error: e.message });
       }
     },
   },

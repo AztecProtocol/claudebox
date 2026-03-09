@@ -153,8 +153,8 @@ async function main() {
     console.log(`  HTTP (public) listening on :${HTTP_PORT}`);
   });
 
-  internalServer.listen(INTERNAL_PORT, "127.0.0.1", () => {
-    console.log(`  HTTP (internal) listening on 127.0.0.1:${INTERNAL_PORT}`);
+  internalServer.listen(INTERNAL_PORT, () => {
+    console.log(`  HTTP (internal) listening on :${INTERNAL_PORT}`);
   });
 
   // ── Auto-update (polls origin/next, restarts on new commits) ──

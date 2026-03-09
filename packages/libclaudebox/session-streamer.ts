@@ -35,6 +35,7 @@ interface ActivityEvent {
   type: string;
   text: string;
   log_id?: string;
+  subagent?: boolean;
 }
 
 // ── Helpers ─────────────────────────────────────────────────────
@@ -96,9 +97,10 @@ export class SessionStreamer {
     this.denoiseScript = join(opts.repoDir, "ci3", "denoise");
   }
 
-  private writeActivity(type: string, text: string): void {
+  private writeActivity(type: string, text: string, isSubagent = false): void {
     try {
       const event: ActivityEvent = { ts: new Date().toISOString(), type, text, log_id: this.opts.parentLogId };
+      if (isSubagent) event.subagent = true;
       appendFileSync(this.opts.activityLog, JSON.stringify(event) + "\n");
     } catch {}
   }
@@ -144,6 +146,8 @@ export class SessionStreamer {
             const inp = item.input ?? {};
             const desc = inp.description ?? inp.command ?? inp.file_path ?? inp.pattern ?? "";
             this.emit(`  subagent ${name} ${trunc(desc, 120)}`);
+            // Write subagent tool activity — tagged so UI nests it inside AgentSection
+            this.writeToolActivity(name, inp, true);
           }
         }
       }
@@ -174,8 +178,8 @@ export class SessionStreamer {
             const disp = this.smartTrunc(res, "tool-result");
             this.emit(`  ${label}: ${disp}`);
             // Write tool results to activity for MCP tools (get_context etc.)
-            if (!isSubagent && res.trim()) {
-              this.writeActivity("tool_result", trunc(res, 600));
+            if (res.trim()) {
+              this.writeActivity("tool_result", trunc(res, 600), isSubagent);
             }
           } else if (item.type === "text" && item.text?.trim()) {
             this.emit(`USER: ${this.smartTrunc(item.text, "user-msg")}`);
@@ -210,9 +214,7 @@ export class SessionStreamer {
           const inp = item.input ?? {};
 
           // Write activity event for the status page
-          if (!isSubagent) {
-            this.writeToolActivity(name, inp);
-          }
+          this.writeToolActivity(name, inp, isSubagent);
 
           // Pretty-print for cache log
           this.emitToolUse(name, inp);
@@ -239,37 +241,37 @@ export class SessionStreamer {
     }
   }
 
-  private writeToolActivity(name: string, inp: any): void {
+  private writeToolActivity(name: string, inp: any, isSubagent = false): void {
+    const w = (type: string, text: string) => this.writeActivity(type, text, isSubagent);
     if (name === "Agent" && inp.description) {
-      this.writeActivity("agent_start", inp.description);
+      w("agent_start", inp.description);
     } else if (name === "Bash" && inp.command) {
       const desc = inp.description ? `${inp.description}: ` : "";
       const cmd = inp.command.length > 120 ? inp.command.slice(0, 120) + "…" : inp.command;
-      this.writeActivity("tool_use", `${desc}$ ${cmd}`);
+      w("tool_use", `${desc}$ ${cmd}`);
     } else if (name === "Grep") {
       const path = inp.path || inp.file_path || "";
-      this.writeActivity("tool_use", `Grep ${trunc(inp.pattern || "", 60)} ${path}`);
+      w("tool_use", `Grep ${trunc(inp.pattern || "", 60)} ${path}`);
     } else if (["Read", "Glob"].includes(name)) {
       const target = inp.file_path || inp.pattern || inp.path || "";
-      this.writeActivity("tool_use", `${name} ${trunc(target, 80)}`);
+      w("tool_use", `${name} ${trunc(target, 80)}`);
     } else if (["Edit", "Write"].includes(name)) {
-      this.writeActivity("tool_use", `${name} ${inp.file_path || ""}`);
+      w("tool_use", `${name} ${inp.file_path || ""}`);
     } else if (name === "ToolSearch") {
-      this.writeActivity("tool_use", `ToolSearch ${inp.query || ""}`);
+      w("tool_use", `ToolSearch ${inp.query || ""}`);
     } else if (name.startsWith("mcp__claudebox__")) {
       const short = name.replace("mcp__claudebox__", "");
       const args = Object.entries(inp).filter(([_, v]) => v !== undefined && v !== "").map(([k, v]) => {
         const s = String(v);
         return `${k}=${s.length > 60 ? s.slice(0, 60) + "…" : s}`;
       }).join(" ");
-      this.writeActivity("tool_use", `${short}${args ? " " + args : ""}`);
+      w("tool_use", `${short}${args ? " " + args : ""}`);
     } else if (!["mcp__ide__getDiagnostics", "mcp__ide__executeCode", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet"].includes(name)) {
-      // Generic: show tool name + compact args
       const args = Object.entries(inp).filter(([_, v]) => v !== undefined && v !== "").slice(0, 3).map(([k, v]) => {
         const s = typeof v === "object" ? JSON.stringify(v) : String(v);
         return `${k}=${s.length > 40 ? s.slice(0, 40) + "…" : s}`;
       }).join(" ");
-      this.writeActivity("tool_use", `${name}${args ? " " + args : ""}`);
+      w("tool_use", `${name}${args ? " " + args : ""}`);
     }
   }
 

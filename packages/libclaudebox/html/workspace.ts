@@ -525,6 +525,13 @@ function PromptCard({text, time, user, slackLink}){
 
 // ── Artifact helpers ─────────────────────────────────────────────
 
+// Deduplicate artifacts by URL (or full text if no URL), keeping last occurrence
+function dedupArtifacts(artifacts){
+  var seen=new Map();
+  for(var a of artifacts){var t=slackToMd(a.text);var u=t.match(/https?:\\/\\/\\S+/);seen.set(u?u[0]:t,a);}
+  return[...seen.values()];
+}
+
 // Extract PR number from artifact text
 function artifactPrNum(text){
   var m=text.match(/#(\\d+)/);
@@ -534,7 +541,8 @@ function artifactPrNum(text){
 // Build compact artifact chips for a run, marking PR updates
 function ArtifactChips({artifacts, priorPrNums}){
   if(!artifacts||!artifacts.length)return null;
-  return html\`<div class="artifact-chips">\${artifacts.map((a,i)=>{
+  var unique=dedupArtifacts(artifacts);
+  return html\`<div class="artifact-chips">\${unique.map((a,i)=>{
     var text=slackToMd(a.text);
     var prNum=artifactPrNum(text);
     var isUpdate=(prNum&&priorPrNums&&priorPrNums.has(prNum))||/updated/i.test(text);
@@ -544,20 +552,33 @@ function ArtifactChips({artifacts, priorPrNums}){
 }
 
 // ── AgentSection — collapsible agent card ─────────────────────
-function AgentSection({text, agentLogUrl, time, children}){
-  const [expanded,setExpanded]=useState(false);
+function AgentSection({text, agentId, time, children}){
+  const PREVIEW=6;
+  const [expanded,setExpanded]=useState(()=>window.location.hash==="#agent-"+agentId);
+  const [showAll,setShowAll]=useState(false);
+  const total=children?children.length:0;
+  const visible=showAll||total<=PREVIEW?children:(children||[]).slice(0,PREVIEW);
   const linked=linkify(slackToMd(text));
-  const agentInner=agentLogUrl
-    ?'<a href="'+esc(agentLogUrl)+'" target="_blank" class="link" onclick="event.stopPropagation()">'+linked+'</a>'
-    :linked;
-  return html\`<div class=\${"act-agent-card"+(expanded?" expanded":"")}>
-    <div class="act-agent-header" onClick=\${()=>setExpanded(!expanded)}>
+  const ref=useRef(null);
+  useEffect(()=>{if(expanded&&ref.current&&window.location.hash==="#agent-"+agentId)ref.current.scrollIntoView({block:"start"});},[]);
+  function toggle(){
+    const next=!expanded;
+    setExpanded(next);
+    if(next){history.replaceState(null,"","#agent-"+agentId);}
+    else{history.replaceState(null,"",window.location.pathname+window.location.search);}
+  }
+  return html\`<div class=\${"act-agent-card"+(expanded?" expanded":"")} id=\${"agent-"+agentId} ref=\${ref}>
+    <div class="act-agent-header" onClick=\${toggle}>
       <span class="act-agent-chevron">\u25B6</span>
       <span class="act-icon" dangerouslySetInnerHTML=\${{__html:ICONS.agent}}></span>
-      <span dangerouslySetInnerHTML=\${{__html:agentInner}}></span>
+      <span dangerouslySetInnerHTML=\${{__html:linked}}></span>
+      \${total?html\`<span class="dim">(\${total})</span>\`:null}
       <span class="act-ts">\${time}</span>
     </div>
-    \${children&&children.length?html\`<div class="act-agent-body">\${children}</div>\`:null}
+    \${expanded&&visible&&visible.length?html\`<div class="act-agent-body">
+      \${visible}
+      \${!showAll&&total>PREVIEW?html\`<div class="act-row" style="cursor:pointer;color:#5FA7F1" onClick=\${(e)=>{e.stopPropagation();setShowAll(true);}}>show all \${total} entries</div>\`:null}
+    </div>\`:null}
   </div>\`;
 }
 
@@ -568,22 +589,23 @@ function renderActivityItems(activity){
     var item=activity[i];
     var entry=item.entry;
     var key=item.id||("a"+i);
-    // Agent sections — collect subsequent tool calls until next non-tool entry
+    // Agent sections — collect subsequent tool/subagent entries
     if(entry.type==="agent_start"){
       var agentChildren=[];
       var j=i+1;
       while(j<activity.length){
         var nxt=activity[j];
         var nt=nxt.entry.type;
-        // Stop grouping at non-tool entries (but include tool_use/tool_result)
-        if(nt!=="tool_use"&&nt!=="tool_result")break;
-        agentChildren.push(nxt);
-        j++;
+        // Collect tool_use/tool_result (including subagent-tagged ones)
+        if(nt==="tool_use"||nt==="tool_result"||(nxt.entry.subagent&&(nt==="context"||nt==="status"))){
+          agentChildren.push(nxt);
+          j++;
+        }else break;
       }
-      // Render grouped children
       var grouped=renderToolGroups(agentChildren);
-      out.push(html\`<\${AgentSection} key=\${key} text=\${entry.text||""} agentLogUrl=\${item.agentLogUrl} time=\${entry.ts?timeAgo(entry.ts):""}>\${grouped}</\${AgentSection}>\`);
-      i=j-1; // skip grouped items
+      var agentId=key.replace(/[^a-z0-9-]/gi,"");
+      out.push(html\`<\${AgentSection} key=\${key} text=\${entry.text||""} agentId=\${agentId} time=\${entry.ts?timeAgo(entry.ts):""}>\${grouped}</\${AgentSection}>\`);
+      i=j-1;
       continue;
     }
     if(entry.type==="tool_use"){
@@ -778,12 +800,10 @@ function Sidebar({open, status, exitCode, user, baseBranch, sessions, artifacts,
       \${sessions.length&&sessions[0].started?html\`<div class="stat-row"><span class="dim">started</span> \${timeAgo(sessions[0].started)}</div>\`:null}
     </div>
     \${artifacts.length?html\`<div class="sidebar-section">
-      <div class="sidebar-label">Artifacts (\${artifacts.length})</div>
+      \${(()=>{var u=dedupArtifacts(artifacts);return html\`<div class="sidebar-label">Artifacts (\${u.length})</div>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
-      \${artifacts.map((a,i)=>{
-        return html\`<span key=\${i} dangerouslySetInnerHTML=\${{__html:compactArtifact(slackToMd(a.text))}}></span>\`;
-      })}
-      </div>
+      \${u.map((a,i)=>html\`<span key=\${i} dangerouslySetInnerHTML=\${{__html:compactArtifact(slackToMd(a.text))}}></span>\`)}
+      </div>\`;})()}
     </div>\`:null}
     \${sessions.length>1?html\`<div class="sidebar-section">
       <div class="sidebar-label">Runs</div>
@@ -912,6 +932,17 @@ function WorkspacePage(){
 
   const goBack=useCallback(()=>{setSelectedRun(null);},[]);
 
+  // Sync URL with selected run
+  useEffect(()=>{
+    const url=new URL(window.location);
+    if(selectedRun!=null&&runs[selectedRun]){
+      url.searchParams.set("run",runs[selectedRun].logId);
+    }else{
+      url.searchParams.delete("run");
+    }
+    if(url.href!==window.location.href)history.replaceState(null,"",url);
+  },[selectedRun,runs]);
+
   // Auto-open detail when new session starts on a running workspace
   const runsLen=runs.length;
   useEffect(()=>{
@@ -1014,6 +1045,10 @@ function WorkspacePage(){
     if(!newLogId)return;
     var newSession={log_id:newLogId,status:"running",started:new Date().toISOString(),user:D.user,prompt:text,slack_channel:"",slack_message_ts:"",slack_thread_ts:""};
     D.sessions.unshift(newSession);
+    // Clear activity/artifacts for the new run so previous run's entries don't bleed in
+    setActivityByRun(prev=>({...prev,[newLogId]:[]}));
+    setArtifactsByRun(prev=>({...prev,[newLogId]:[]}));
+    setLastReplyByRun(prev=>{const next={...prev};delete next[newLogId];return next;});
     var newIdx;
     setRuns(prev=>{
       var total=prev.length+1;
@@ -1054,7 +1089,23 @@ function WorkspacePage(){
       const wasRunning=statusRef.current==="running";
       setStatus(d.status);
       setExitCode(d.exit_code);
-      if(wasRunning&&d.status!=="running")setTimeout(()=>sendNextQueued(),100);
+      // Update last run's status so RunCard/RunDetail reflect it
+      setRuns(prev=>{if(!prev.length)return prev;const copy=[...prev];copy[copy.length-1]={...copy[copy.length-1],status:d.status,exitCode:d.exit_code};return copy;});
+      // Inject activity entry for terminal states
+      if(wasRunning&&d.status!=="running"){
+        setRuns(prev=>{
+          if(!prev.length)return prev;
+          const lastLogId=prev[prev.length-1].logId;
+          const entry={type:"status",text:"Session "+d.status+(d.exit_code!=null?" (exit "+d.exit_code+")":""),ts:new Date().toISOString()};
+          const mid=msgId(entry.text);
+          if(!seenRef.current.has(mid)){
+            seenRef.current.add(mid);
+            setActivityByRun(ap=>{const n={...ap};n[lastLogId]=[...(n[lastLogId]||[]),{entry,id:mid}];return n;});
+          }
+          return prev;
+        });
+        setTimeout(()=>sendNextQueued(),100);
+      }
     }else if(d.type==="init"){
       if(Array.isArray(d.activity)){
         const results=[];

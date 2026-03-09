@@ -25,7 +25,7 @@ export const BASTION_SSH_KEY = join(homedir(), ".ssh", "build_instance_key");
 
 // ── Interactive session config ──────────────────────────────────
 export const CLAUDEBOX_HOST = process.env.CLAUDEBOX_HOST || "localhost:3000";
-export const SESSION_PAGE_USER = process.env.CLAUDEBOX_SESSION_USER || "admin";
+export const SESSION_PAGE_USER = process.env.CLAUDEBOX_SESSION_USER || "aztec";
 export const SESSION_PAGE_PASS = process.env.CLAUDEBOX_SESSION_PASS || "";
 
 // ── Log URL builder ─────────────────────────────────────────────
