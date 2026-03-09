@@ -129,8 +129,9 @@ export function registerCloneRepo(server: McpServer, config: CloneToolConfig): v
     `Clone the repo into ${config.workspace}. MUST be your FIRST tool call — the workspace is empty until you clone. Do NOT run git, ls, Read, or any file operations before calling this. Safe to call on resume — fetches new refs.`;
   const refHint = config.refHint || "'origin/next', 'abc123'";
 
+  const defaultRef = config.fallbackRef || "origin/main";
   server.tool("clone_repo", desc,
-    { ref: z.string().regex(/^[a-zA-Z0-9._\/@-]+$/).describe(`Branch, tag, or commit hash to check out (e.g. ${refHint})`) },
+    { ref: z.string().regex(/^[a-zA-Z0-9._\/@-]+$/).default(defaultRef).describe(`Branch, tag, or commit hash to check out (default: ${defaultRef}). Examples: ${refHint}`) },
     async ({ ref }) => {
       if (ref.startsWith("-")) return { content: [{ type: "text", text: "Invalid ref: must not start with -" }], isError: true };
       const targetDir = config.workspace;

@@ -48,14 +48,14 @@ function createServer(): McpServer {
   registerCloneRepo(server, {
     repo: REPO, workspace: WORKSPACE,
     strategy: "authenticated-url",
-    fallbackRef: "origin/master",
-    refHint: "'origin/main', 'abc123'",
-    description: "Clone the barretenberg-claude repo (private). Uses authenticated URL. Safe to call on resume — fetches new refs. Call FIRST before doing any work.",
+    fallbackRef: "origin/next",
+    refHint: "'origin/next' (default branch), 'origin/claude-audit-phase0', 'abc123'",
+    description: "Clone the barretenberg-claude repo (private). Uses authenticated URL. Safe to call on resume — fetches new refs. Call FIRST before doing any work. Default branch is 'next' — use ref='origin/next' unless told otherwise.",
   });
 
   registerPRTools(server, {
     repo: REPO, workspace: WORKSPACE,
-    branchPrefix: "audit/", defaultBase: "master",
+    branchPrefix: "audit/", defaultBase: "next",
   });
 
   // ── Helpers ─────────────────────────────────────────────────────
@@ -228,33 +228,17 @@ Use this when you discover a new area worth dedicated audit attention.`,
       }
     });
 
-  // ── add_log_link — cross-reference session on an issue ──────────
+  // ── add_log_link — track cross-reference locally (no GitHub comment) ──
   server.tool("add_log_link",
-    "Add a cross-reference comment to an issue linking it to the current session's log. Use this to build an audit trail connecting issues to the sessions that investigated them.",
+    "Record a cross-reference between an issue and the current session. Tracked locally in activity log — does NOT post a comment on the issue.",
     {
       issue_number: z.number().describe("Issue number to link"),
       context: z.string().describe("What this session did related to this issue (1-2 sentences)"),
     },
     async ({ issue_number, context }) => {
-      try {
-        const body = [
-          `**Session cross-reference**`,
-          ``,
-          context,
-          ``,
-          `- Log: ${SESSION_META.log_url || "n/a"}`,
-          `- Status: ${statusPageUrl || "n/a"}`,
-          `- Session: \`${SESSION_META.log_id || WORKTREE_ID}\``,
-        ].join("\n");
-
-        await getCreds().github.addIssueComment(REPO, issue_number, body);
-
-        logActivity("artifact", `Cross-ref #${issue_number}: ${context}`);
-        await updateRootComment();
-        return { content: [{ type: "text", text: `Linked session to #${issue_number}` }] };
-      } catch (e: any) {
-        return { content: [{ type: "text", text: `add_log_link: ${sanitizeError(e.message)}` }], isError: true };
-      }
+      logActivity("artifact", `Cross-ref #${issue_number}: ${context}`);
+      await updateRootComment();
+      return { content: [{ type: "text", text: `Linked session to #${issue_number} (local tracking only)` }] };
     });
 
   // ── audit_history — read prior audit stats for continuity ───────
