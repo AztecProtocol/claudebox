@@ -86,9 +86,8 @@ export async function loadAllProfiles(only?: string[]): Promise<Profile[]> {
   return profiles;
 }
 
-// ── Convenience functions ────────────────────────────────────────
+// ── Channel map builders (used at startup by server.ts) ──────────
 
-/** Build channel→profile map from all discovered profiles. */
 export async function buildChannelProfileMap(): Promise<Map<string, string>> {
   const map = new Map<string, string>();
   for (const name of discoverProfiles()) {
@@ -98,41 +97,6 @@ export async function buildChannelProfileMap(): Promise<Map<string, string>> {
   return map;
 }
 
-/** Get summaryPrompt for a profile (queued after session completes). */
-export async function getSummaryPrompt(name: string): Promise<string> {
-  const profile = await loadProfile(name);
-  return profile.summaryPrompt || "";
-}
-
-/** Get DockerConfig for a profile. */
-export async function getDockerConfig(name: string): Promise<import("./profile.ts").DockerConfig> {
-  const profile = await loadProfile(name);
-  return profile.docker || {};
-}
-
-/** Get promptSuffix for a profile. */
-export async function getPromptSuffix(name: string): Promise<string> {
-  const profile = await loadProfile(name);
-  return profile.promptSuffix || "";
-}
-
-/** Get tag categories for a profile. */
-export async function getTagCategories(name: string): Promise<string[]> {
-  const profile = await loadProfile(name);
-  return profile.tagCategories || [];
-}
-
-/** Collect tag categories from all discovered profiles. */
-export async function getAllTagCategories(): Promise<string[]> {
-  const all = new Set<string>();
-  for (const name of discoverProfiles()) {
-    const profile = await loadProfile(name);
-    for (const cat of profile.tagCategories || []) all.add(cat);
-  }
-  return [...all];
-}
-
-/** Build channel→branch map from all discovered profiles. */
 export async function buildChannelBranchMap(): Promise<Map<string, string>> {
   const map = new Map<string, string>();
   for (const name of discoverProfiles()) {

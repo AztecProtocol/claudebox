@@ -17,7 +17,7 @@ import { incrActiveSessions, decrActiveSessions } from "./runtime.ts";
 
 // Token env vars — sourced from libcreds-host (the only package that reads token env vars).
 import { getContainerTokens } from "../libcreds-host/index.ts";
-import { getDockerConfig, getPromptSuffix, getSummaryPrompt, getTagCategories } from "./profile-loader.ts";
+import { loadProfile } from "./profile-loader.ts";
 import type { DockerConfig } from "./profile.ts";
 
 // Container user — determined by the Docker image
@@ -145,7 +145,8 @@ export class DockerService {
     }
     const sidecarEntrypoint = `/opt/claudebox/profiles/${profileDir}/mcp-sidecar.ts`;
     const claudeMdPath = `/opt/claudebox/profiles/${profileDir}/container-claude.md`;
-    const dockerConfig = await getDockerConfig(profileDir);
+    const profile = await loadProfile(profileDir);
+    const dockerConfig = profile.docker || {};
     const containerImage = dockerConfig.image || DOCKER_IMAGE;
     const mountRef = dockerConfig.mountReferenceRepo !== false; // default true
 
@@ -166,7 +167,7 @@ export class DockerService {
     fullPrompt += `\nTarget ref: ${opts.targetRef || "origin/next"}`;
     if (opts.runUrl) fullPrompt += `\nRun URL: ${opts.runUrl}`;
     if (opts.link) fullPrompt += `\nLink: ${opts.link}`;
-    const promptSuffix = await getPromptSuffix(profileDir);
+    const promptSuffix = profile.promptSuffix || "";
     if (promptSuffix) fullPrompt += `\n\n${promptSuffix}`;
     writeFileSync(join(workspaceDir, "prompt.txt"), fullPrompt);
 
@@ -304,7 +305,7 @@ export class DockerService {
         "-e", `CLAUDEBOX_MODEL=${opts.model || ""}`,
       ];
       // Pass tag categories to sidecar
-      const tagCats = await getTagCategories(profileDir);
+      const tagCats = profile.tagCategories || [];
       if (tagCats.length) claudeArgs.push("-e", `CLAUDEBOX_TAG_CATEGORIES=${tagCats.join(",")}`);
       // Profile-specific extra env vars and bind mounts
       if (dockerConfig.extraEnv) {

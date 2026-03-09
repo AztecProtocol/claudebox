@@ -3,7 +3,7 @@ import type { WorktreeStore } from "../worktree-store.ts";
 import type { DockerService } from "../docker.ts";
 import { truncate, extractHashFromUrl, sessionUrl } from "../util.ts";
 import { toTargetRef } from "../base-branch.ts";
-import { getSummaryPrompt } from "../profile-loader.ts";
+import { loadProfile } from "../profile-loader.ts";
 import { getHostCreds } from "../../libcreds-host/index.ts";
 
 /**
@@ -217,7 +217,7 @@ async function drainQueueAndResume(
     const sessions = store.listByWorktree(worktreeId);
     const isFirstSession = sessions.length <= 1;
     if (profile && isFirstSession) {
-      const summaryPrompt = await getSummaryPrompt(profile);
+      const summaryPrompt = (await loadProfile(profile)).summaryPrompt || "";
       if (summaryPrompt) {
         console.log(`[SUMMARY] Queueing summary prompt for worktree ${worktreeId} (profile=${profile})`);
         startReplySession(
