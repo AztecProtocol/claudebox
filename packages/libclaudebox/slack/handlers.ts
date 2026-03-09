@@ -1,8 +1,9 @@
 import type { App } from "@slack/bolt";
-import type { SessionStore } from "../session-store.ts";
+import type { WorktreeStore } from "../worktree-store.ts";
 import type { DockerService } from "../docker.ts";
 import type { DmRegistry } from "../dm-registry.ts";
-import { MAX_CONCURRENT, getActiveSessions, getChannelProfiles } from "../config.ts";
+import { MAX_CONCURRENT } from "../config.ts";
+import { getActiveSessions, getChannelProfiles } from "../runtime.ts";
 import { parseMessage, parseKeywords, validateResumeSession, truncate, extractHashFromUrl, sessionUrl } from "../util.ts";
 import {
   resolveUserName, getThreadContext, handleTerminalCommand,
@@ -23,7 +24,7 @@ interface IncomingMessage {
 }
 
 /** Core handler shared by all 3 Slack entry points. */
-async function handleIncomingMessage(msg: IncomingMessage, store: SessionStore, docker: DockerService): Promise<void> {
+async function handleIncomingMessage(msg: IncomingMessage, store: WorktreeStore, docker: DockerService): Promise<void> {
   const cmd = msg.text.trim();
   if (!cmd) {
     await msg.respond({ text: "Usage: `@ClaudeBox <prompt>`", thread_ts: msg.threadTs });
@@ -91,7 +92,7 @@ async function handleIncomingMessage(msg: IncomingMessage, store: SessionStore, 
 }
 
 /** Register all Slack event handlers on the Bolt app. */
-export function registerSlackHandlers(app: App, store: SessionStore, docker: DockerService, dmRegistry?: DmRegistry): void {
+export function registerSlackHandlers(app: App, store: WorktreeStore, docker: DockerService, dmRegistry?: DmRegistry): void {
 
   // ── @mention in channels ──────────────────────────────────────
   app.event("app_mention", async ({ event, client, say }) => {

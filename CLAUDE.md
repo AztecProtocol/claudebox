@@ -1,76 +1,51 @@
 # ClaudeBox
 
-Automated Claude Code session orchestrator — Slack bot + HTTP dashboard + Docker sandboxes.
+Docker container orchestrator for Claude agents. Slack + HTTP + CLI.
 
-## Architecture
+## Concepts
+
+- **Worktree** — persistent workspace (git checkout + transcripts + metadata). Survives across runs.
+- **Run** — one Claude execution in a worktree. Identified by `<worktreeId>-<seq>`.
+- **Profile** — directory in `profiles/` with config, MCP sidecar, and system prompt.
+- **Host/container boundary** — host owns Slack/GitHub context; containers talk back via `HostClient` → internal API on `:3002`.
+
+## Layout
 
 ```
-packages/
-  libclaudebox/          # Generic framework (use-case agnostic)
-profiles/                # Profiles (plugin.ts + mcp-sidecar.ts)
-aztec/                   # Aztec org-specific code (CI, cred proxy)
-server.ts                # Entry point: wires everything together
+packages/libclaudebox/     # Framework (Docker, worktrees, MCP, Slack, HTTP)
+  profile.ts               # Profile interface, ProfileRuntime
+  profile-loader.ts        # Profile discovery and loading
+  docker.ts                # Container lifecycle
+  worktree-store.ts        # Worktree + run persistence, GC
+  http-routes.ts           # HTTP API, dashboard, profile routes
+  config.ts                # Static env config (ports, paths, secrets)
+  runtime.ts               # Mutable runtime state (channel maps, session counter)
+  server-client.ts         # HostClient: container→host HTTP client
+  mcp/                     # MCP tool modules (env, activity, tools, git-tools, server)
+  html/                    # Dashboard templates
+  slack/                   # Slack event routing
+profiles/<name>/           # Profiles: plugin.ts + mcp-sidecar.ts + container-claude.md
+server.ts                  # Entry point
+cli.ts                     # CLI client
 ```
-
-### Key files
-
-- **`packages/libclaudebox/`**
-  - `plugin.ts` — Plugin interface, PluginRuntime, DockerConfig, StatSchema types
-  - `plugin-loader.ts` — Plugin discovery and loading from profiles/ directory
-  - `docker.ts` — Container lifecycle (parameterized by DockerConfig)
-  - `session-store.ts` — JSON file session persistence + worktree GC
-  - `http-routes.ts` — HTTP API + SSE + WebSocket + plugin route mounting
-  - `mcp/` — Composable MCP tool registrars (env, activity, helpers, tools, git-tools, server)
-  - `html/templates.ts` — Dashboard HTML (workspace, main, personal)
-  - `slack/` — Slack event routing and message composition
-  - `config.ts` — Environment variable config
-  - `stat-schemas.ts` — Extensible stat collection framework (register/query)
-  - `settings.ts` — User settings (~/.claude/claudebox/settings.json)
-
-- **`profiles/<name>/`** — Each profile has:
-  - `plugin.ts` — Plugin config: Docker settings, channels, schemas, routes
-  - `mcp-sidecar.ts` — MCP tool server (runs inside Docker container)
-  - `container-claude.md` — System prompt for Claude
-
-## Plugin System
-
-Plugins run in **two contexts**:
-- **Host**: `plugin.ts` declares Docker config, channels, routes, schemas, credentials
-- **Container**: `mcp-sidecar.ts` composes MCP tools from `libclaudebox/mcp/` modules
-
-Profiles are auto-discovered by scanning `profiles/*/` for `plugin.ts` or `mcp-sidecar.ts`.
 
 ## Key Patterns
 
-- **MCP sidecar changes** take effect immediately (bind-mounted, no rebuild)
-- **server.ts changes** require `systemctl --user restart claudebox`
-- **Dockerfile changes** require `docker build`
-- **Template literal regex**: `\[` must be `\\[` inside backtick strings
-- **All operations must be async** — sync calls block Slack WebSocket heartbeats
+- MCP sidecar changes take effect immediately (bind-mounted)
+- server.ts / profile changes require `systemctl --user restart claudebox`
+- Template literal regex: `\[` must be `\\[` inside backtick strings
+- All operations must be async — sync calls block Slack heartbeats
 
 ## Secrets
 
-All secrets via environment variables. **Never hardcode secrets.**
+All via environment variables. Never hardcode.
 
 Required: `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `GH_TOKEN`, `CLAUDEBOX_API_SECRET`, `CLAUDEBOX_SESSION_PASS`
-Optional: `LINEAR_API_KEY`, `CI_PASSWORD`
+Optional: `LINEAR_API_KEY`
 
 ## Development
 
 ```bash
 npm install
 CLAUDEBOX_SESSION_PASS=dev CLAUDEBOX_HTTP_ONLY=1 node --experimental-strip-types --no-warnings server.ts --http-only
-```
-
-## Deployment
-
-```bash
-# Install as systemd user service
-./scripts/setup-systemd.sh
-
-# View logs
-journalctl --user -u claudebox -f
-
-# Restart after changes
-systemctl --user restart claudebox
 ```

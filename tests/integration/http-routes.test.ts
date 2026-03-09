@@ -28,7 +28,7 @@ process.env.CLAUDEBOX_SESSION_PASS = TEST_PASS;
 process.env.MAX_CONCURRENT = "5";
 
 // Dynamic imports to ensure env vars are set before config.ts IIFE runs
-const { SessionStore } = await import("../../packages/libclaudebox/session-store.ts");
+const { WorktreeStore } = await import("../../packages/libclaudebox/worktree-store.ts");
 const { createHttpServer } = await import("../../packages/libclaudebox/http-routes.ts");
 
 const TEST_DIR = join(tmpdir(), `cb-http-test-${Date.now()}`);
@@ -37,7 +37,7 @@ const WORKTREES_DIR = join(TEST_DIR, "worktrees");
 const TEST_PORT = 18_000 + Math.floor(Math.random() * 1000);
 
 let server: http.Server;
-let store: InstanceType<typeof SessionStore>;
+let store: InstanceType<typeof WorktreeStore>;
 
 // Minimal mock docker — just enough to not crash
 const mockDocker = {
@@ -84,7 +84,7 @@ describe("HTTP Routes", () => {
   before(() => {
     mkdirSync(SESSIONS_DIR, { recursive: true });
     mkdirSync(WORKTREES_DIR, { recursive: true });
-    store = new SessionStore(SESSIONS_DIR, WORKTREES_DIR);
+    store = new WorktreeStore(SESSIONS_DIR, WORKTREES_DIR);
 
     // Seed a test session
     store.save("deadbeef01234567-1", {

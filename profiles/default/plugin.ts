@@ -1,7 +1,7 @@
-import type { Plugin } from "../../packages/libclaudebox/plugin.ts";
+import type { Profile } from "../../packages/libclaudebox/profile.ts";
 import { register } from "../../packages/libclaudebox/stat-schemas.ts";
 
-const plugin: Plugin = {
+const plugin: Profile = {
   name: "default",
   docker: { mountReferenceRepo: true },
   tagCategories: [

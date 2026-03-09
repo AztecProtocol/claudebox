@@ -10,8 +10,8 @@
 import { spawn, type ChildProcess } from "child_process";
 import { join } from "path";
 import { mkdirSync, existsSync } from "fs";
-import type { ContainerSessionOpts, SessionMeta } from "../../packages/libclaudebox/types.ts";
-import type { SessionStore } from "../../packages/libclaudebox/session-store.ts";
+import type { ContainerSessionOpts, RunMeta } from "../../packages/libclaudebox/types.ts";
+import type { WorktreeStore } from "../../packages/libclaudebox/worktree-store.ts";
 
 export interface MockContainer {
   name: string;
@@ -85,7 +85,7 @@ export class MockDockerService {
 
   async runMockSession(
     opts: ContainerSessionOpts,
-    store: SessionStore,
+    store: WorktreeStore,
     mockClaudePath: string,
   ): Promise<number> {
     const wt = store.getOrCreateWorktree(opts.worktreeId);

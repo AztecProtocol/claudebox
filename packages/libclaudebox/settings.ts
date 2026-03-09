@@ -40,7 +40,3 @@ export function loadUserSettings(): UserSettings {
   _cached = {};
   return _cached;
 }
-
-export function getSettingsPath(): string {
-  return SETTINGS_PATH;
-}

@@ -114,8 +114,8 @@ async function resolveSession(nameOrId: string, opts: { server?: { url: string; 
   }
 
   // Local mode: check session store
-  const { SessionStore } = await import("./packages/libclaudebox/session-store.ts");
-  const store = new SessionStore();
+  const { WorktreeStore } = await import("./packages/libclaudebox/worktree-store.ts");
+  const store = new WorktreeStore();
 
   // Direct worktree ID match (hex pattern)
   if (/^[a-f0-9]{16}$/.test(stripped)) {
@@ -181,8 +181,8 @@ function printActivityEntry(entry: any): void {
  * Returns when the session completes or the AbortSignal fires.
  */
 async function tailActivity(worktreeId: string, signal?: AbortSignal): Promise<void> {
-  const { SessionStore } = await import("./packages/libclaudebox/session-store.ts");
-  const store = new SessionStore();
+  const { WorktreeStore } = await import("./packages/libclaudebox/worktree-store.ts");
+  const store = new WorktreeStore();
   const activityPath = join(store.worktreesDir, worktreeId, "workspace", "activity.jsonl");
 
   let linesRead = 0;
@@ -387,19 +387,19 @@ Config file: ${CONFIG_FILE}
   console.log(`Profile: ${profile}`);
 
   const rootDir = dirname(import.meta.url.replace("file://", ""));
-  const { setPluginsDir, loadPlugin } = await import("./packages/libclaudebox/plugin-loader.ts");
-  setPluginsDir(join(rootDir, "profiles"));
-  const plugin = await loadPlugin(profile);
-  if (plugin.requiresServer) {
+  const { setProfilesDir, loadProfile } = await import("./packages/libclaudebox/profile-loader.ts");
+  setProfilesDir(join(rootDir, "profiles"));
+  const profileConfig = await loadProfile(profile);
+  if (profileConfig.requiresServer) {
     console.error(`Error: profile "${profile}" requires a claudebox server.`);
     console.error(`Configure one in ${CONFIG_FILE} or pass --server <url>.`);
     process.exit(1);
   }
 
-  const { SessionStore } = await import("./packages/libclaudebox/session-store.ts");
+  const { WorktreeStore } = await import("./packages/libclaudebox/worktree-store.ts");
   const { DockerService } = await import("./packages/libclaudebox/docker.ts");
 
-  const store = new SessionStore();
+  const store = new WorktreeStore();
   const docker = new DockerService();
 
   if (detach) {
@@ -505,8 +505,8 @@ Options:
   if (positional.length === 0) {
     // No session specified: list recent sessions to pick from
     if (!server.url) {
-      const { SessionStore } = await import("./packages/libclaudebox/session-store.ts");
-      const store = new SessionStore();
+      const { WorktreeStore } = await import("./packages/libclaudebox/worktree-store.ts");
+      const store = new WorktreeStore();
       const sessions = store.listAll().slice(0, 10);
       if (sessions.length === 0) {
         console.log("No sessions found.");
@@ -597,9 +597,9 @@ Options:
   }
 
   // Local resume
-  const { SessionStore } = await import("./packages/libclaudebox/session-store.ts");
+  const { WorktreeStore } = await import("./packages/libclaudebox/worktree-store.ts");
   const { DockerService } = await import("./packages/libclaudebox/docker.ts");
-  const store = new SessionStore();
+  const store = new WorktreeStore();
   const docker = new DockerService();
   const session = store.findByWorktreeId(worktreeId);
 
@@ -707,8 +707,8 @@ Options:
   }
 
   // Local mode
-  const { SessionStore } = await import("./packages/libclaudebox/session-store.ts");
-  const store = new SessionStore();
+  const { WorktreeStore } = await import("./packages/libclaudebox/worktree-store.ts");
+  const store = new WorktreeStore();
 
   // Build a deduplicated list by worktree (show latest session per worktree)
   const allSessions = store.listAll();
@@ -803,8 +803,8 @@ Sends SIGTERM, waits 10 seconds, then SIGKILL. Worktree is preserved.
 
   const worktreeId = await resolveSession(sessionRef);
 
-  const { SessionStore } = await import("./packages/libclaudebox/session-store.ts");
-  const store = new SessionStore();
+  const { WorktreeStore } = await import("./packages/libclaudebox/worktree-store.ts");
+  const store = new WorktreeStore();
 
   // Find the running session for this worktree
   const sessions = store.listByWorktree(worktreeId);
@@ -869,8 +869,8 @@ Running sessions are never cleaned.
 
   const force = opts.force === "true";
 
-  const { SessionStore } = await import("./packages/libclaudebox/session-store.ts");
-  const store = new SessionStore();
+  const { WorktreeStore } = await import("./packages/libclaudebox/worktree-store.ts");
+  const store = new WorktreeStore();
 
   if (!existsSync(store.worktreesDir)) {
     console.log("No worktrees found.");
@@ -1105,8 +1105,8 @@ async function statusCommand(args: string[]): Promise<void> {
   }
 
   // Local mode: show local session summary
-  const { SessionStore } = await import("./packages/libclaudebox/session-store.ts");
-  const store = new SessionStore();
+  const { WorktreeStore } = await import("./packages/libclaudebox/worktree-store.ts");
+  const store = new WorktreeStore();
   const sessions = store.listAll();
   const running = sessions.filter(s => s.status === "running");
 
@@ -1126,10 +1126,10 @@ async function statusCommand(args: string[]): Promise<void> {
 
 async function profilesCommand(): Promise<void> {
   const rootDir = dirname(import.meta.url.replace("file://", ""));
-  const { setPluginsDir, discoverPlugins, loadPlugin } = await import("./packages/libclaudebox/plugin-loader.ts");
-  setPluginsDir(join(rootDir, "profiles"));
+  const { setProfilesDir, discoverProfiles, loadProfile } = await import("./packages/libclaudebox/profile-loader.ts");
+  setProfilesDir(join(rootDir, "profiles"));
 
-  const names = discoverPlugins();
+  const names = discoverProfiles();
   if (names.length === 0) {
     console.log("No profiles found.");
     return;
@@ -1137,7 +1137,7 @@ async function profilesCommand(): Promise<void> {
 
   console.log("Available profiles:\n");
   for (const name of names) {
-    const p = await loadPlugin(name);
+    const p = await loadProfile(name);
     const flags: string[] = [];
     if (p.requiresServer) flags.push("requires-server");
     if (p.channels?.length) flags.push(`channels: ${p.channels.join(", ")}`);

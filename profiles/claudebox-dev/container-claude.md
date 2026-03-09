@@ -10,17 +10,14 @@ The repo is `AztecProtocol/claudebox` (private). After cloning, it lives at `/wo
 Key directories:
 - `server.ts` — Slack bot + HTTP server entry point
 - `packages/libclaudebox/` — core library (generic, reusable)
-  - `mcp/base.ts` — shared MCP tool infrastructure
+  - `mcp/` — composable MCP tool modules (env, activity, helpers, tools, git-tools, server)
   - `docker.ts` — Docker container lifecycle
   - `session-store.ts` — session CRUD + worktree management
   - `http-routes.ts` — HTTP API + dashboard
   - `html/templates.ts` — dashboard HTML
   - `slack/` — Slack handlers + helpers
-- `sidecar/` — proxy services (redis-proxy, http-proxy)
-- `aztec/` — Aztec org-specific config + credential proxy
 - `profiles/` — profile-specific sidecars and system prompts
 - `tests/` — unit, integration, security tests
-- `Dockerfile` — Claude container image
 - `container-entrypoint.sh` — container bootstrap script
 
 ## Environment
@@ -80,13 +77,8 @@ Keep it to 1-2 SHORT sentences. Print verbose output to stdout and reference the
 ## Running Tests
 
 ```bash
-# Unit tests (libclaudebox + proxy)
-node --experimental-strip-types --no-warnings --import ./tests/setup.ts --test 'tests/libclaudebox/**/*.test.ts'
-node --experimental-strip-types --no-warnings --test tests/unit/*.test.ts
-
-# Integration tests (docker-compose, needs Docker)
-npm run test:credproxy
-npm run test:proxy
+# Integration tests
+npx tsx --no-warnings tests/integration/plugin-routes.test.ts
 ```
 
 ## Tips
@@ -95,9 +87,8 @@ npm run test:proxy
 - **No `gh` CLI or `git push`**: Use MCP tools for all GitHub interaction
 - **Always use full GitHub URLs**: `https://github.com/AztecProtocol/claudebox/pull/1` not `#1`
 - **`session_status` edits in place**: Call often, won't create noise
-- Changes to `profiles/*/mcp-sidecar.ts` and `packages/libclaudebox/mcp/base.ts` take effect for new sessions immediately (bind-mounted)
+- Changes to `profiles/*/mcp-sidecar.ts` and `packages/libclaudebox/mcp/` modules take effect for new sessions immediately (bind-mounted)
 - Changes to `server.ts` require `systemctl --user restart claudebox-slack` on the host
-- Changes to `Dockerfile` require `docker build` to update the Claude container image
 
 ## Rules
 - Update status frequently via `session_status`

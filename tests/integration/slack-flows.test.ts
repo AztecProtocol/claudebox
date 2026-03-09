@@ -108,7 +108,7 @@ function createMockSlackClient() {
 
 // ── Mock Session Store ───────────────────────────────────────────
 
-class MockSessionStore {
+class MockWorktreeStore {
   sessions: Map<string, any> = new Map();
   bindings: Map<string, string> = new Map();
   worktreeCounter = 0;
@@ -241,7 +241,7 @@ const TEST_CHANNEL = "C_TEST_CHANNEL";
 describe("Slack message handling flows", () => {
   let mockApp: MockSlackApp;
   let mockClient: ReturnType<typeof createMockSlackClient>;
-  let mockStore: MockSessionStore;
+  let mockStore: MockWorktreeStore;
   let mockDocker: MockDockerService;
 
   before(async () => {
@@ -253,12 +253,12 @@ describe("Slack message handling flows", () => {
     mkdirSync(fakeProfileDir, { recursive: true });
     writeFileSync(join(fakeProfileDir, "mcp-sidecar.ts"), "// stub\nexport default {};\n");
 
-    // Point plugin discovery to our fake profiles dir so parseKeywords recognizes the profile
-    const { setPluginsDir } = await import("../../packages/libclaudebox/plugin-loader.ts");
-    setPluginsDir(fakeProfilesDir);
+    // Point profile discovery to our fake profiles dir so parseKeywords recognizes the profile
+    const { setProfilesDir } = await import("../../packages/libclaudebox/profile-loader.ts");
+    setProfilesDir(fakeProfilesDir);
 
     // Set up channel -> profile mapping
-    const { setChannelMaps } = await import("../../packages/libclaudebox/config.ts");
+    const { setChannelMaps } = await import("../../packages/libclaudebox/runtime.ts");
     setChannelMaps(
       { [TEST_CHANNEL]: "main" },
       { [TEST_CHANNEL]: "default" },
@@ -272,7 +272,7 @@ describe("Slack message handling flows", () => {
   beforeEach(() => {
     mockApp = new MockSlackApp();
     mockClient = createMockSlackClient();
-    mockStore = new MockSessionStore();
+    mockStore = new MockWorktreeStore();
     mockDocker = new MockDockerService();
   });
 
@@ -466,7 +466,8 @@ describe("Slack message handling flows", () => {
     await registerHandlers();
 
     // Bump active sessions to MAX_CONCURRENT (which is const 10 in config.ts)
-    const { incrActiveSessions, decrActiveSessions, getActiveSessions, MAX_CONCURRENT } = await import("../../packages/libclaudebox/config.ts");
+    const { MAX_CONCURRENT } = await import("../../packages/libclaudebox/config.ts");
+    const { incrActiveSessions, decrActiveSessions, getActiveSessions } = await import("../../packages/libclaudebox/runtime.ts");
     const initialActive = getActiveSessions();
     const needed = MAX_CONCURRENT - initialActive;
     for (let i = 0; i < needed; i++) incrActiveSessions();

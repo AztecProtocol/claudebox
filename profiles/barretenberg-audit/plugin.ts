@@ -1,5 +1,5 @@
 /**
- * Barretenberg Audit Plugin — self-contained audit profile.
+ * Barretenberg Audit Profile — self-contained audit profile.
  *
  * Registers:
  *   - /audit dashboard page
@@ -8,13 +8,13 @@
  *   - Audit stat schemas (assessment, file_review, artifact, summary)
  */
 
-import type { Plugin } from "../../packages/libclaudebox/plugin.ts";
+import type { Profile } from "../../packages/libclaudebox/profile.ts";
 import { register } from "../../packages/libclaudebox/stat-schemas.ts";
 import { registerAuditRoutes } from "./routes.ts";
 
 const AUDIT_CHANNEL = "C0AJCUKUNGP";
 
-const plugin: Plugin = {
+const plugin: Profile = {
   name: "barretenberg-audit",
 
   docker: {

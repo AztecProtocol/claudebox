@@ -1,9 +1,9 @@
-import type { SessionMeta } from "../types.ts";
-import type { SessionStore } from "../session-store.ts";
+import type { RunMeta } from "../types.ts";
+import type { WorktreeStore } from "../worktree-store.ts";
 import type { DockerService } from "../docker.ts";
 import { truncate, extractHashFromUrl, sessionUrl } from "../util.ts";
 import { toTargetRef } from "../base-branch.ts";
-import { getSummaryPrompt } from "../plugin-loader.ts";
+import { loadProfile } from "../profile-loader.ts";
 import { getHostCreds } from "../../libcreds-host/index.ts";
 
 /**
@@ -116,7 +116,7 @@ async function setReaction(channel: string, ts: string, emoji: string, removeEmo
 
 export async function updateSlackStatus(
   channel: string, messageTs: string, status: string, logUrl: string,
-  worktreeId: string | undefined, store: SessionStore, prompt: string,
+  worktreeId: string | undefined, store: WorktreeStore, prompt: string,
   logId?: string,
 ): Promise<void> {
   // Build from activity log — never read back from Slack
@@ -152,14 +152,14 @@ export async function updateSlackStatus(
 export async function handleTerminalCommand(
   cmd: string, channel: string, threadTs: string, isReply: boolean,
   respond: (msg: any) => Promise<any>,
-  store: SessionStore,
+  store: WorktreeStore,
 ): Promise<boolean> {
   const m = cmd.match(/^terminal(?:\s+(.+))?$/i);
   if (!m) return false;
 
   const arg = (m[1] || "").trim();
   let hash: string | null = null;
-  let session: SessionMeta | null = null;
+  let session: RunMeta | null = null;
 
   if (arg) {
     const urlHash = extractHashFromUrl(arg);
@@ -194,7 +194,7 @@ export async function handleTerminalCommand(
 /** Drain queued Slack messages for a worktree and auto-resume if any exist. */
 async function drainQueueAndResume(
   client: any, channel: string, threadTs: string | null,
-  worktreeId: string, store: SessionStore, docker: DockerService,
+  worktreeId: string, store: WorktreeStore, docker: DockerService,
   baseBranch: string, channelName: string,
 ): Promise<void> {
   try {
@@ -212,12 +212,12 @@ async function drainQueueAndResume(
       return;
     }
 
-    // No user messages queued — check for plugin summary prompt (only on first session, not on resumes)
+    // No user messages queued — check for profile summary prompt (only on first session, not on resumes)
     const profile = session.profile || "";
     const sessions = store.listByWorktree(worktreeId);
     const isFirstSession = sessions.length <= 1;
     if (profile && isFirstSession) {
-      const summaryPrompt = await getSummaryPrompt(profile);
+      const summaryPrompt = (await loadProfile(profile)).summaryPrompt || "";
       if (summaryPrompt) {
         console.log(`[SUMMARY] Queueing summary prompt for worktree ${worktreeId} (profile=${profile})`);
         startReplySession(
@@ -238,7 +238,7 @@ export async function startNewSession(
   prompt: string,
   threadContext: string,
   userName: string,
-  store: SessionStore,
+  store: WorktreeStore,
   docker: DockerService,
   baseBranch = "next",
   quiet = false,
@@ -302,9 +302,9 @@ export async function startReplySession(
   channel: string,
   threadTs: string | null,
   message: string,
-  session: SessionMeta,
+  session: RunMeta,
   userName: string,
-  store: SessionStore,
+  store: WorktreeStore,
   docker: DockerService,
   baseBranch = "next",
   quiet = false,

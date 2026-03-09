@@ -1,4 +1,4 @@
-import type { Plugin } from "../../packages/libclaudebox/plugin.ts";
+import type { Profile } from "../../packages/libclaudebox/profile.ts";
 
 const extraEnv: string[] = [];
 
@@ -7,7 +7,7 @@ if (process.env.CLAUDEBOX_USE_MOCK === "1") {
   extraEnv.push("CLAUDE_BINARY=/opt/claudebox/profiles/test/mock-claude.sh");
 }
 
-const plugin: Plugin = {
+const plugin: Profile = {
   name: "test",
   docker: {
     mountReferenceRepo: true,

@@ -1,4 +1,4 @@
-export type { SessionMeta } from "../types.ts";
+export type { RunMeta } from "../types.ts";
 
 export function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
@@ -65,8 +65,8 @@ export interface ActivityEntry {
 
 export interface WorkspacePageData {
   hash: string;            // current session log_id
-  session: SessionMeta;    // current session
-  sessions: SessionMeta[]; // all sessions for this worktree (newest first)
+  session: RunMeta;    // current session
+  sessions: RunMeta[]; // all sessions for this worktree (newest first)
   worktreeAlive: boolean;
   activity: ActivityEntry[];  // newest first
   /** Last reply text per session log_id (for collapsed run card summaries) */

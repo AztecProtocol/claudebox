@@ -91,7 +91,7 @@ function createMockSlackClient() {
 
 // ── Mock Docker + Session Store ──────────────────────────────────
 
-class MockSessionStore {
+class MockWorktreeStore {
   sessions: Map<string, any> = new Map();
   bindings: Map<string, string> = new Map();
   worktreeCounter = 0;
@@ -129,6 +129,7 @@ class MockSessionStore {
     this.bindings.set(`${channel}:${threadTs}`, worktreeId);
   }
   clearThreadBinding(): void {}
+  listByWorktree(_worktreeId: string): any[] { return []; }
   queueMessage(): void {}
   drainQueue(): any[] { return []; }
   findLatestClaudeSessionId(): string { return ""; }
@@ -328,7 +329,7 @@ describe("proxyDmToServer", () => {
 describe("Slack DM routing (mocked)", () => {
   let mockApp: MockSlackApp;
   let mockClient: ReturnType<typeof createMockSlackClient>;
-  let mockStore: MockSessionStore;
+  let mockStore: MockWorktreeStore;
   let mockDocker: MockDockerService;
   let dmRegistry: DmRegistry;
   let personalServer: Awaited<ReturnType<typeof createMockPersonalServer>>;
@@ -337,7 +338,7 @@ describe("Slack DM routing (mocked)", () => {
     mkdirSync(TEST_DIR, { recursive: true });
     mockApp = new MockSlackApp();
     mockClient = createMockSlackClient();
-    mockStore = new MockSessionStore();
+    mockStore = new MockWorktreeStore();
     mockDocker = new MockDockerService();
     dmRegistry = new DmRegistry(join(TEST_DIR, "dm-registry.json"));
     personalServer = await createMockPersonalServer();
@@ -533,7 +534,7 @@ describe("end-to-end: DM → proxy → session", () => {
     // 2. Set up mock Slack app with handlers
     const mockApp = new MockSlackApp();
     const mockClient = createMockSlackClient();
-    const mockStore = new MockSessionStore();
+    const mockStore = new MockWorktreeStore();
     const mockDocker = new MockDockerService();
 
     const { registerSlackHandlers } = await import("../../packages/libclaudebox/slack/handlers.ts");
@@ -576,7 +577,7 @@ describe("end-to-end: DM → proxy → session", () => {
 
     const mockApp = new MockSlackApp();
     const mockClient = createMockSlackClient();
-    const mockStore = new MockSessionStore();
+    const mockStore = new MockWorktreeStore();
     const mockDocker = new MockDockerService();
 
     const { registerSlackHandlers } = await import("../../packages/libclaudebox/slack/handlers.ts");

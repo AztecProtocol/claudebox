@@ -1,17 +1,18 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
 import { SignJWT, jwtVerify, type JWTPayload } from "jose";
-import { API_SECRET, SESSION_PAGE_USER, SESSION_PAGE_PASS, MAX_CONCURRENT, getActiveSessions, getChannelBranches, DEFAULT_BASE_BRANCH } from "./config.ts";
+import { API_SECRET, SESSION_PAGE_USER, SESSION_PAGE_PASS, MAX_CONCURRENT, DEFAULT_BASE_BRANCH } from "./config.ts";
+import { getActiveSessions, getChannelBranches } from "./runtime.ts";
 import { getHostCreds } from "../libcreds-host/index.ts";
 import { dmAuthor } from "../libcreds-host/slack.ts";
 import { existsSync, readFileSync, readdirSync, statSync, watch, mkdirSync } from "fs";
 import { join } from "path";
-import type { SessionStore } from "./session-store.ts";
+import type { WorktreeStore } from "./worktree-store.ts";
 import type { DockerService } from "./docker.ts";
-import type { SessionMeta, Artifact, EnrichedWorkspace, ThreadGroup, ChannelGroup } from "./types.ts";
+import type { RunMeta, Artifact, EnrichedWorkspace, ThreadGroup, ChannelGroup } from "./types.ts";
 import { workspacePageHTML, dashboardHTML, auditDashboardHTML, personalDashboardHTML, type WorkspaceCard } from "./html/templates.ts";
 import { parseMessage, parseKeywords, validateResumeSession, truncate, prKeyFromUrl } from "./util.ts";
 import { updateSlackStatus } from "./slack/helpers.ts";
-import { discoverPlugins } from "./plugin-loader.ts";
+import { discoverProfiles } from "./profile-loader.ts";
 
 // ── Helpers ─────────────────────────────────────────────────────
 
@@ -141,7 +142,7 @@ function stripSlackContext(prompt: string): string {
 
 // ── Dashboard builder ──────────────────────────────────────────
 
-async function buildDashboardData(store: SessionStore, profileFilter?: string): Promise<WorkspaceCard[]> {
+async function buildDashboardData(store: WorktreeStore, profileFilter?: string): Promise<WorkspaceCard[]> {
   const all = store.listAll();
 
   // Group sessions by worktree_id (or by _log_id for sessions without a worktree)
@@ -239,7 +240,7 @@ async function buildDashboardData(store: SessionStore, profileFilter?: string): 
  *  - <worktreeId>-<seq> session log ID
  *  - 32-hex legacy session hash
  */
-function resolveSession(param: string, store: SessionStore): { worktreeId: string; session: SessionMeta } | null {
+function resolveSession(param: string, store: WorktreeStore): { worktreeId: string; session: RunMeta } | null {
   // Try as worktree ID (16 hex) — returns latest session
   if (/^[a-f0-9]{16}$/.test(param)) {
     const session = store.findByWorktreeId(param);
@@ -262,7 +263,7 @@ function resolveSession(param: string, store: SessionStore): { worktreeId: strin
 
 type RouteHandler = (
   req: IncomingMessage, res: ServerResponse, params: Record<string, string>,
-  ctx: { store: SessionStore; docker: DockerService },
+  ctx: { store: WorktreeStore; docker: DockerService },
 ) => Promise<void>;
 
 interface Route {
@@ -747,7 +748,7 @@ const routes: Route[] = [
   {
     method: "GET", pattern: /^\/api\/profiles$/, auth: "basic",
     handler: async (_req, res) => {
-      json(res, 200, { profiles: discoverPlugins() });
+      json(res, 200, { profiles: discoverProfiles() });
     },
   },
 
@@ -1087,7 +1088,7 @@ const routes: Route[] = [
       }
 
       // Group by worktree first (like buildDashboardData), then enrich
-      const worktreeMap = new Map<string, SessionMeta[]>();
+      const worktreeMap = new Map<string, RunMeta[]>();
       for (const s of all) {
         const key = s.worktree_id || `_single_${s._log_id}`;
         if (!worktreeMap.has(key)) worktreeMap.set(key, []);
@@ -1416,9 +1417,9 @@ const routes: Route[] = [
 // ── Server factory ──────────────────────────────────────────────
 
 export function createHttpServer(
-  store: SessionStore,
+  store: WorktreeStore,
   docker: DockerService,
-  pluginRuntime?: import("./plugin.ts").PluginRuntime,
+  profileRuntime?: import("./profile.ts").ProfileRuntime,
   dmRegistry?: import("./dm-registry.ts").DmRegistry,
 ) {
   const ctx = { store, docker };
@@ -1461,10 +1462,10 @@ export function createHttpServer(
     );
   }
 
-  // Adapt plugin routes into internal Route format
+  // Adapt profile routes into internal Route format
   const allRoutes: Route[] = [...routes, ...dmRoutes];
-  if (pluginRuntime) {
-    for (const pr of pluginRuntime.getRoutes()) {
+  if (profileRuntime) {
+    for (const pr of profileRuntime.getRoutes()) {
       const paramNames: string[] = [];
       const regexStr = pr.path.replace(/:([a-zA-Z_]+)/g, (_m, name) => {
         paramNames.push(name);
