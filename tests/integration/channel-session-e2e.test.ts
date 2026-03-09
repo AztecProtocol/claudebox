@@ -242,7 +242,7 @@ describe("Channel → Session → HTTP (e2e)", () => {
     mkdirSync(TEST_DIR, { recursive: true });
 
     // Set up channel → profile mapping so barretenberg-audit channel is recognized
-    const { setChannelMaps } = await import("../../packages/libclaudebox/config.ts");
+    const { setChannelMaps } = await import("../../packages/libclaudebox/runtime.ts");
     setChannelMaps(
       { [BB_AUDIT_CHANNEL]: "master" },  // branch map
       { [BB_AUDIT_CHANNEL]: "barretenberg-audit" },  // profile map

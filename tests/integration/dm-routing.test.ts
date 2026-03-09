@@ -129,6 +129,7 @@ class MockWorktreeStore {
     this.bindings.set(`${channel}:${threadTs}`, worktreeId);
   }
   clearThreadBinding(): void {}
+  listByWorktree(_worktreeId: string): any[] { return []; }
   queueMessage(): void {}
   drainQueue(): any[] { return []; }
   findLatestClaudeSessionId(): string { return ""; }

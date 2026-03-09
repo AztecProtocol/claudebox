@@ -258,7 +258,7 @@ describe("Slack message handling flows", () => {
     setProfilesDir(fakeProfilesDir);
 
     // Set up channel -> profile mapping
-    const { setChannelMaps } = await import("../../packages/libclaudebox/config.ts");
+    const { setChannelMaps } = await import("../../packages/libclaudebox/runtime.ts");
     setChannelMaps(
       { [TEST_CHANNEL]: "main" },
       { [TEST_CHANNEL]: "default" },
@@ -466,7 +466,8 @@ describe("Slack message handling flows", () => {
     await registerHandlers();
 
     // Bump active sessions to MAX_CONCURRENT (which is const 10 in config.ts)
-    const { incrActiveSessions, decrActiveSessions, getActiveSessions, MAX_CONCURRENT } = await import("../../packages/libclaudebox/config.ts");
+    const { MAX_CONCURRENT } = await import("../../packages/libclaudebox/config.ts");
+    const { incrActiveSessions, decrActiveSessions, getActiveSessions } = await import("../../packages/libclaudebox/runtime.ts");
     const initialActive = getActiveSessions();
     const needed = MAX_CONCURRENT - initialActive;
     for (let i = 0; i < needed; i++) incrActiveSessions();
