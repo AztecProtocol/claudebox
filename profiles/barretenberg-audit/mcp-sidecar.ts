@@ -13,8 +13,8 @@ import { join } from "path";
 
 import {
   z, McpServer,
-  GH_TOKEN, SESSION_META, WORKTREE_ID, statusPageUrl, STATS_DIR,
-  buildCommonGhWhitelist, sanitizeError, hasScope, pushToRemote,
+  getCreds, SESSION_META, WORKTREE_ID, statusPageUrl, STATS_DIR,
+  sanitizeError, hasScope, pushToRemote,
   logActivity, updateRootComment, otherArtifacts, getServerClient,
   registerCommonTools, registerCloneRepo, registerPRTools, startMcpHttpServer,
 } from "../../packages/libclaudebox/mcp/base.ts";
@@ -22,33 +22,20 @@ import {
 // ── Profile config ──────────────────────────────────────────────
 const REPO = "AztecProtocol/barretenberg-claude";
 const WORKSPACE = "/workspace/barretenberg-claude";
-const R = `repos/${REPO}`;
 
 SESSION_META.repo = REPO;
 
 const UPSTREAM_REPO = "AztecProtocol/barretenberg";
 
-const GH_WHITELIST = [
-  ...buildCommonGhWhitelist(R),
-  // Read-only extras for github_api — all writes go through dedicated MCP tools
-  { method: "GET",  pattern: new RegExp(`^${R}/labels(\\?.*)?$`) },
-  { method: "POST", pattern: new RegExp(`^${R}/issues/\\d+/labels$`) },
-];
-
 const TOOL_LIST = "clone_repo, respond_to_user, get_context, session_status, github_api, slack_api, create_pr, update_pr, create_external_pr, create_issue, close_issue, add_labels, create_audit_label, add_log_link, self_assess, audit_history, create_gist, list_gists, read_gist, update_meta_issue, create_skill, ci_failures, linear_get_issue, linear_create_issue, record_stat";
 
 // ── Auth check at startup ───────────────────────────────────────
-if (GH_TOKEN) {
-  const authRes = await fetch(`https://api.github.com/repos/${REPO}`, {
-    headers: { Authorization: `Bearer ${GH_TOKEN}` },
-  });
-  if (!authRes.ok) {
-    console.error(`[FATAL] Cannot access ${REPO} (${authRes.status}). Token may lack permissions.`);
-    process.exit(1);
-  }
+try {
+  const creds = getCreds();
+  await creds.github.apiGet(REPO, `repos/${REPO}`);
   console.log(`[AUDIT] Verified access to ${REPO}`);
-} else {
-  console.error(`[FATAL] No GH_TOKEN — cannot access private repo ${REPO}`);
+} catch (e: any) {
+  console.error(`[FATAL] Cannot access ${REPO}: ${e.message}`);
   process.exit(1);
 }
 
@@ -57,7 +44,7 @@ if (GH_TOKEN) {
 function createServer(): McpServer {
   const server = new McpServer({ name: "claudebox-audit", version: "1.0.0" });
 
-  registerCommonTools(server, { repo: REPO, workspace: WORKSPACE, tools: TOOL_LIST, ghWhitelist: GH_WHITELIST });
+  registerCommonTools(server, { repo: REPO, workspace: WORKSPACE, tools: TOOL_LIST });
 
   registerCloneRepo(server, {
     repo: REPO, workspace: WORKSPACE,
@@ -100,27 +87,14 @@ function createServer(): McpServer {
       modules: z.array(z.string()).optional().describe("Affected barretenberg modules, e.g. ['ecc', 'crypto']"),
     },
     async ({ title, body, labels, quality_dimension, severity, modules }) => {
-      if (!GH_TOKEN) return { content: [{ type: "text", text: "No GH_TOKEN" }], isError: true };
-
       try {
-        const res = await fetch(`https://api.github.com/repos/${REPO}/issues`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${GH_TOKEN}`,
-            Accept: "application/vnd.github.v3+json",
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ title, body, labels: labels || [] }),
-        });
-        const issue = await res.json() as any;
-        if (!res.ok)
-          return { content: [{ type: "text", text: `Failed: ${issue.message || JSON.stringify(issue)}` }], isError: true };
+        const creds = getCreds();
+        const issue = await creds.github.createIssue(REPO, { title, body, labels: labels || [] });
 
         otherArtifacts.push(`- [Issue #${issue.number}: ${title}](${issue.html_url})`);
         logActivity("artifact", `Issue #${issue.number}: ${title} — ${issue.html_url}`);
         await updateRootComment();
 
-        // Auto-record artifact for correlation
         recordArtifact("issue", issue.html_url, String(issue.number), quality_dimension, severity, modules || [], title);
 
         return { content: [{ type: "text", text: `${issue.html_url}\n#${issue.number}` }] };
@@ -137,18 +111,11 @@ function createServer(): McpServer {
       reason: z.string().describe("Why the issue is being closed (e.g. 'fixed in PR #5', 'not a real vulnerability', 'duplicate of #3')"),
     },
     async ({ issue_number, reason }) => {
-      if (!GH_TOKEN) return { content: [{ type: "text", text: "No GH_TOKEN" }], isError: true };
-      const headers = {
-        Authorization: `Bearer ${GH_TOKEN}`,
-        Accept: "application/vnd.github.v3+json",
-        "Content-Type": "application/json",
-      };
-
       try {
+        const creds = getCreds();
+
         // Verify issue exists
-        const getRes = await fetch(`https://api.github.com/repos/${REPO}/issues/${issue_number}`, { headers });
-        if (!getRes.ok) return { content: [{ type: "text", text: `Issue #${issue_number} not found (HTTP ${getRes.status})` }], isError: true };
-        const issue = await getRes.json() as any;
+        const issue = await creds.github.getIssue(REPO, issue_number);
 
         // Post tracking comment with session info
         const logLine = SESSION_META.log_url ? `Log: ${SESSION_META.log_url}` : "";
@@ -161,20 +128,8 @@ function createServer(): McpServer {
           statusLine,
         ].filter(Boolean).join("\n");
 
-        await fetch(`https://api.github.com/repos/${REPO}/issues/${issue_number}/comments`, {
-          method: "POST", headers,
-          body: JSON.stringify({ body: commentBody }),
-        });
-
-        // Close the issue
-        const closeRes = await fetch(`https://api.github.com/repos/${REPO}/issues/${issue_number}`, {
-          method: "PATCH", headers,
-          body: JSON.stringify({ state: "closed" }),
-        });
-        if (!closeRes.ok) {
-          const err = await closeRes.json() as any;
-          return { content: [{ type: "text", text: `Failed to close: ${err.message || JSON.stringify(err)}` }], isError: true };
-        }
+        await creds.github.addIssueComment(REPO, issue_number, commentBody);
+        await creds.github.updateIssue(REPO, issue_number, { state: "closed" });
 
         logActivity("artifact", `Closed issue #${issue_number}: ${issue.title} — ${issue.html_url}`);
         await updateRootComment();
@@ -193,23 +148,8 @@ function createServer(): McpServer {
       labels: z.array(z.string()).describe("Labels to add, e.g. ['merge-to-aztec-packages', 'security']"),
     },
     async ({ issue_number, labels }) => {
-      if (!GH_TOKEN) return { content: [{ type: "text", text: "No GH_TOKEN" }], isError: true };
-
       try {
-        const res = await fetch(`https://api.github.com/repos/${REPO}/issues/${issue_number}/labels`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${GH_TOKEN}`,
-            Accept: "application/vnd.github.v3+json",
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ labels }),
-        });
-        if (!res.ok) {
-          const err = await res.json() as any;
-          return { content: [{ type: "text", text: `Failed: ${err.message || JSON.stringify(err)}` }], isError: true };
-        }
-        const result = await res.json() as any[];
+        const result = await getCreds().github.addLabels(REPO, issue_number, labels);
         const applied = result.map((l: any) => l.name).join(", ");
         return { content: [{ type: "text", text: `Labels on #${issue_number}: ${applied}` }] };
       } catch (e: any) {
@@ -230,81 +170,61 @@ Use this when you discover a new area worth dedicated audit attention.`,
       modules: z.array(z.string()).describe("Source paths this scope covers, e.g. ['barretenberg/cpp/src/barretenberg/ecc']"),
     },
     async ({ slug, description, color, prompt, modules }) => {
-      if (!GH_TOKEN) return { content: [{ type: "text", text: "No GH_TOKEN" }], isError: true };
-      const headers = {
-        Authorization: `Bearer ${GH_TOKEN}`,
-        Accept: "application/vnd.github.v3+json",
-        "Content-Type": "application/json",
-      };
+      const creds = getCreds();
       const results: string[] = [];
 
       try {
         // 1. Create the GitHub label
         const labelName = `scope/${slug}`;
-        const labelRes = await fetch(`https://api.github.com/repos/${REPO}/labels`, {
-          method: "POST", headers,
-          body: JSON.stringify({ name: labelName, color, description }),
-        });
-        const labelData = await labelRes.json() as any;
-        if (labelRes.ok) {
+        try {
+          await creds.github.createLabel(REPO, { name: labelName, color, description });
           results.push(`Label created: ${labelName}`);
-        } else if (labelData.errors?.[0]?.code === "already_exists") {
-          results.push(`Label already exists: ${labelName}`);
-        } else {
-          return { content: [{ type: "text", text: `Label creation failed: ${labelData.message || JSON.stringify(labelData)}` }], isError: true };
+        } catch (e: any) {
+          if (e.message?.includes("already_exists") || e.message?.includes("422")) {
+            results.push(`Label already exists: ${labelName}`);
+          } else {
+            return { content: [{ type: "text", text: `Label creation failed: ${sanitizeError(e.message)}` }], isError: true };
+          }
         }
 
         // 2. Commit prompt file via Contents API
         const filePath = `claudebox/prompts/${slug}.md`;
-        const content = Buffer.from(prompt).toString("base64");
-
-        // Check if file exists (get SHA for update)
         let sha: string | undefined;
-        const existingRes = await fetch(`https://api.github.com/repos/${REPO}/contents/${filePath}`, { headers });
-        if (existingRes.ok) {
-          const existing = await existingRes.json() as any;
+        try {
+          const existing = await creds.github.getContents(REPO, filePath);
           sha = existing.sha;
-        }
+        } catch {}
 
-        const commitRes = await fetch(`https://api.github.com/repos/${REPO}/contents/${filePath}`, {
-          method: "PUT", headers,
-          body: JSON.stringify({
-            message: `audit: add scope prompt for ${labelName}`,
-            content,
-            ...(sha ? { sha } : {}),
-          }),
+        await creds.github.putContents(REPO, filePath, {
+          message: `audit: add scope prompt for ${labelName}`,
+          content: prompt,
+          ...(sha ? { sha } : {}),
         });
-        if (!commitRes.ok) {
-          const err = await commitRes.json() as any;
-          return { content: [{ type: "text", text: `Prompt file commit failed: ${err.message || JSON.stringify(err)}` }], isError: true };
-        }
         results.push(`Committed: ${filePath}`);
 
         // 3. Update labels.json
         const labelsJsonPath = "claudebox/labels.json";
         let labelsJson: any = { labels: [], meta_labels: [], area_labels: [] };
         let labelsJsonSha: string | undefined;
-        const ljRes = await fetch(`https://api.github.com/repos/${REPO}/contents/${labelsJsonPath}`, { headers });
-        if (ljRes.ok) {
-          const ljData = await ljRes.json() as any;
+        try {
+          const ljData = await creds.github.getContents(REPO, labelsJsonPath);
           labelsJsonSha = ljData.sha;
           try { labelsJson = JSON.parse(Buffer.from(ljData.content, "base64").toString()); } catch {}
-        }
-        // Add or update entry
-        const existing = labelsJson.labels?.findIndex((l: any) => l.name === labelName);
+        } catch {}
+
+        const existingIdx = labelsJson.labels?.findIndex((l: any) => l.name === labelName);
         const entry = { name: labelName, color, description, prompt_file: `prompts/${slug}.md`, modules };
-        if (existing >= 0) labelsJson.labels[existing] = entry;
+        if (existingIdx >= 0) labelsJson.labels[existingIdx] = entry;
         else (labelsJson.labels ??= []).push(entry);
 
-        const ljCommitRes = await fetch(`https://api.github.com/repos/${REPO}/contents/${labelsJsonPath}`, {
-          method: "PUT", headers,
-          body: JSON.stringify({
+        try {
+          await creds.github.putContents(REPO, labelsJsonPath, {
             message: `audit: update labels.json for ${labelName}`,
-            content: Buffer.from(JSON.stringify(labelsJson, null, 2)).toString("base64"),
+            content: JSON.stringify(labelsJson, null, 2),
             ...(labelsJsonSha ? { sha: labelsJsonSha } : {}),
-          }),
-        });
-        if (ljCommitRes.ok) results.push("Updated labels.json");
+          });
+          results.push("Updated labels.json");
+        } catch {}
 
         logActivity("artifact", `Created audit label: ${labelName}`);
         await updateRootComment();
@@ -323,8 +243,6 @@ Use this when you discover a new area worth dedicated audit attention.`,
       context: z.string().describe("What this session did related to this issue (1-2 sentences)"),
     },
     async ({ issue_number, context }) => {
-      if (!GH_TOKEN) return { content: [{ type: "text", text: "No GH_TOKEN" }], isError: true };
-
       try {
         const body = [
           `**Session cross-reference**`,
@@ -336,19 +254,7 @@ Use this when you discover a new area worth dedicated audit attention.`,
           `- Session: \`${SESSION_META.log_id || WORKTREE_ID}\``,
         ].join("\n");
 
-        const res = await fetch(`https://api.github.com/repos/${REPO}/issues/${issue_number}/comments`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${GH_TOKEN}`,
-            Accept: "application/vnd.github.v3+json",
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ body }),
-        });
-        if (!res.ok) {
-          const err = await res.json() as any;
-          return { content: [{ type: "text", text: `Failed: ${err.message || JSON.stringify(err)}` }], isError: true };
-        }
+        await getCreds().github.addIssueComment(REPO, issue_number, body);
 
         logActivity("artifact", `Cross-ref #${issue_number}: ${context}`);
         await updateRootComment();
@@ -553,13 +459,8 @@ crypto-2nd-pass is ONLY valid when a DIFFERENT session already reviewed the file
       page: z.number().default(1).describe("Page number"),
     },
     async ({ per_page, page }) => {
-      if (!GH_TOKEN) return { content: [{ type: "text", text: "No GH_TOKEN" }], isError: true };
       try {
-        const res = await fetch(`https://api.github.com/gists?per_page=${per_page}&page=${page}`, {
-          headers: { Authorization: `Bearer ${GH_TOKEN}`, Accept: "application/vnd.github.v3+json" },
-        });
-        if (!res.ok) return { content: [{ type: "text", text: `${res.status}: ${await res.text()}` }], isError: true };
-        const gists = await res.json() as any[];
+        const gists = await getCreds().github.listGists({ per_page: String(per_page), page: String(page) });
         const lines = gists.map((g: any) => {
           const files = Object.keys(g.files || {}).join(", ");
           return `- [${g.description || "(no description)"}](${g.html_url}) — ${files} (${g.created_at})`;
@@ -578,24 +479,13 @@ crypto-2nd-pass is ONLY valid when a DIFFERENT session already reviewed the file
       gist: z.string().describe("Gist ID (hex string) or full gist URL"),
     },
     async ({ gist }) => {
-      if (!GH_TOKEN) return { content: [{ type: "text", text: "No GH_TOKEN" }], isError: true };
       const id = gist.replace(/.*\/([a-f0-9]+)$/, "$1");
       try {
-        const res = await fetch(`https://api.github.com/gists/${id}`, {
-          headers: { Authorization: `Bearer ${GH_TOKEN}`, Accept: "application/vnd.github.v3+json" },
-        });
-        if (!res.ok) return { content: [{ type: "text", text: `${res.status}: ${await res.text()}` }], isError: true };
-        const g = await res.json() as any;
+        const g = await getCreds().github.getGist(id);
         const parts = [`# ${g.description || "(no description)"}\n`];
         for (const [name, file] of Object.entries(g.files || {})) {
           const f = file as any;
-          // For truncated files, fetch raw content
-          let content = f.content || "";
-          if (f.truncated && f.raw_url) {
-            const raw = await fetch(f.raw_url, { headers: { Authorization: `Bearer ${GH_TOKEN}` } });
-            if (raw.ok) content = await raw.text();
-          }
-          parts.push(`## ${name}\n\`\`\`\n${content}\n\`\`\``);
+          parts.push(`## ${name}\n\`\`\`\n${f.content || ""}\n\`\`\``);
         }
         return { content: [{ type: "text", text: parts.join("\n\n") }] };
       } catch (e: any) {
@@ -622,61 +512,32 @@ See issue #77 for the gold-standard format — tables for findings, gists, PRs, 
       labels: z.array(z.string()).optional().describe("Extra labels beyond the auto-applied meta label"),
     },
     async ({ scope, module_name, title, body, labels }) => {
-      if (!GH_TOKEN) return { content: [{ type: "text", text: "No GH_TOKEN" }], isError: true };
       if (scope === "module" && !module_name) return { content: [{ type: "text", text: "module_name required for scope=module" }], isError: true };
 
-      const headers = {
-        Authorization: `Bearer ${GH_TOKEN}`,
-        Accept: "application/vnd.github.v3+json",
-        "Content-Type": "application/json",
-      };
-
+      const creds = getCreds();
       const metaLabel = scope === "session"
         ? `meta/session/${SESSION_META.log_id || WORKTREE_ID}`
         : `meta/module/${module_name}`;
 
       try {
         // Ensure labels exist (fire-and-forget)
-        const ensureLabel = (name: string, color: string) =>
-          fetch(`https://api.github.com/repos/${REPO}/labels`, {
-            method: "POST", headers,
-            body: JSON.stringify({ name, color, description: `Audit meta-issue` }),
-          }).catch(() => {});
         await Promise.all([
-          ensureLabel(metaLabel, scope === "session" ? "0e8a16" : "1d76db"),
-          ensureLabel("meta-issue", "c5def5"),
+          creds.github.createLabel(REPO, { name: metaLabel, color: scope === "session" ? "0e8a16" : "1d76db", description: "Audit meta-issue" }).catch(() => {}),
+          creds.github.createLabel(REPO, { name: "meta-issue", color: "c5def5", description: "Audit meta-issue" }).catch(() => {}),
         ]);
 
         const allLabels = [metaLabel, "meta-issue", ...(labels || [])];
 
         // Search for existing meta-issue with this label
-        const searchRes = await fetch(
-          `https://api.github.com/repos/${REPO}/issues?labels=${encodeURIComponent(metaLabel)}&state=open&per_page=1`,
-          { headers },
-        );
-        const existing = await searchRes.json() as any[];
+        const existing = await creds.github.listIssues(REPO, { labels: metaLabel, state: "open", per_page: "1" });
 
         if (existing.length && existing[0]?.number) {
-          // Update existing
           const num = existing[0].number;
-          const patchRes = await fetch(`https://api.github.com/repos/${REPO}/issues/${num}`, {
-            method: "PATCH", headers,
-            body: JSON.stringify({ title, body }),
-          });
-          if (!patchRes.ok) {
-            const err = await patchRes.json() as any;
-            return { content: [{ type: "text", text: `Update failed: ${err.message}` }], isError: true };
-          }
+          await creds.github.updateIssue(REPO, num, { title, body });
           logActivity("artifact", `Updated meta #${num} — ${existing[0].html_url}`);
           return { content: [{ type: "text", text: `Updated #${num}: ${existing[0].html_url}` }] };
         } else {
-          // Create new
-          const createRes = await fetch(`https://api.github.com/repos/${REPO}/issues`, {
-            method: "POST", headers,
-            body: JSON.stringify({ title, body, labels: allLabels }),
-          });
-          const issue = await createRes.json() as any;
-          if (!createRes.ok) return { content: [{ type: "text", text: `Create failed: ${issue.message}` }], isError: true };
+          const issue = await creds.github.createIssue(REPO, { title, body, labels: allLabels });
           logActivity("artifact", `Created meta #${issue.number} — ${issue.html_url}`);
           otherArtifacts.push(`- [Meta #${issue.number}](${issue.html_url})`);
           await updateRootComment();
@@ -703,31 +564,19 @@ Use this for fixes that should go directly to the main barretenberg repo.`,
       if (!hasScope("create-external-pr")) {
         return { content: [{ type: "text", text: "Permission denied: this session does not have the 'create-external-pr' scope. Ask the operator to grant it." }], isError: true };
       }
-      if (!GH_TOKEN) return { content: [{ type: "text", text: "No GH_TOKEN" }], isError: true };
 
       try {
-        // Push to upstream repo
-        pushToRemote(WORKSPACE, UPSTREAM_REPO, branch);
+        // Push to upstream repo — routed through libcreds
+        await pushToRemote(WORKSPACE, UPSTREAM_REPO, branch);
 
         // Create PR on upstream
         const prBody = body
           + (closes_issues?.length ? "\n\n" + closes_issues.map(n => `Audit fork ref: ${REPO}#${n}`).join("\n") : "")
           + (SESSION_META.log_url ? `\n\nClaudeBox audit log: ${SESSION_META.log_url}` : "");
 
-        const prRes = await fetch(`https://api.github.com/repos/${UPSTREAM_REPO}/pulls`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${GH_TOKEN}`,
-            Accept: "application/vnd.github.v3+json",
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ title, base, draft: true, head: branch, body: prBody }),
+        const pr = await getCreds().github.createPull(UPSTREAM_REPO, {
+          title, base, draft: true, head: branch, body: prBody,
         });
-        const pr = await prRes.json() as any;
-        if (!prRes.ok) {
-          const errors = pr.errors?.map((e: any) => e.message || JSON.stringify(e)).join("; ") || "";
-          return { content: [{ type: "text", text: `PR failed (${prRes.status}): ${pr.message || "unknown"}${errors ? ` — ${errors}` : ""}\nBase: ${base}, Head: ${branch}` }], isError: true };
-        }
 
         otherArtifacts.push(`- [Upstream PR #${pr.number}: ${title}](${pr.html_url})`);
         logActivity("artifact", `Upstream PR #${pr.number}: ${title} — ${pr.html_url}`);
@@ -737,59 +586,6 @@ Use this for fixes that should go directly to the main barretenberg repo.`,
         return { content: [{ type: "text", text: `${pr.html_url}\nBranch: ${branch}\n#${pr.number} (upstream: ${UPSTREAM_REPO})` }] };
       } catch (e: any) {
         return { content: [{ type: "text", text: `create_external_pr: ${sanitizeError(e.message)}` }], isError: true };
-      }
-    });
-
-  // ── ask_user_question — post questions to server for human operator ──
-  server.tool("ask_user_question",
-    "Ask the human operator a question. The session will pause until all questions are answered. " +
-    "Use this when you need human direction, approval, or clarification before proceeding. " +
-    "You can batch multiple questions in one call.",
-    {
-      questions: z.array(z.object({
-        description: z.string().describe("Short summary of the question (one line)"),
-        body: z.string().describe("Detailed context: reasoning, code references, implementation plan"),
-        text: z.string().describe("The actual question to ask"),
-        context: z.string().describe("Why this decision matters"),
-        options: z.array(z.object({
-          label: z.string().describe("Option label (e.g. 'Option A', 'Yes', 'Skip')"),
-          description: z.string().describe("What this option means"),
-        })).min(2).max(5).describe("Multiple-choice options (2-5)"),
-        urgency: z.enum(["critical", "important", "nice-to-have"])
-          .describe("critical=30min, important=2h, nice-to-have=24h before auto-expiry"),
-      })).min(1).max(10).describe("Questions to ask the operator"),
-    },
-    async ({ questions }) => {
-      const client = getServerClient();
-      if (!client.hasServer) {
-        return {
-          content: [{ type: "text", text: "No server configured — cannot post questions." }],
-          isError: true,
-        };
-      }
-      if (!WORKTREE_ID) {
-        return {
-          content: [{ type: "text", text: "No worktree ID — cannot post questions outside a session." }],
-          isError: true,
-        };
-      }
-      try {
-        const result = await client.postQuestions(WORKTREE_ID, questions);
-        const ids = result?.question_ids || [];
-        logActivity("status", `Asked ${questions.length} question(s) — waiting for answers`);
-        return {
-          content: [{
-            type: "text",
-            text: `Posted ${questions.length} question(s) (IDs: ${ids.join(", ")}). ` +
-              `The session will be auto-resumed when all questions are answered or expired. ` +
-              `You should now exit cleanly — the operator will see these questions in the dashboard or CLI.`,
-          }],
-        };
-      } catch (e: any) {
-        return {
-          content: [{ type: "text", text: `Failed to post questions: ${sanitizeError(e.message)}` }],
-          isError: true,
-        };
       }
     });
 

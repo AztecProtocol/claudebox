@@ -6,10 +6,10 @@
 
 import type { PluginContext } from "../../packages/libclaudebox/plugin.ts";
 import { auditDashboardHTML } from "../../packages/libclaudebox/html/audit-dashboard.ts";
-import { QuestionStore } from "../../packages/libclaudebox/question-store.ts";
 import { existsSync, readFileSync, readdirSync, statSync } from "fs";
 import { join } from "path";
-import { MAX_CONCURRENT, getActiveSessions, GH_TOKEN } from "../../packages/libclaudebox/config.ts";
+import { MAX_CONCURRENT, getActiveSessions } from "../../packages/libclaudebox/config.ts";
+import { HostGitHub } from "../../packages/libcreds-host/github.ts";
 
 const AUDIT_REPO = "AztecProtocol/barretenberg-claude";
 
@@ -49,30 +49,18 @@ export function registerAuditRoutes(ctx: PluginContext): void {
     res.end(auditDashboardHTML());
   }, "none");
 
-  // ── GET /api/audit/questions ──
-  ctx.route("GET", "/api/audit/questions", async ({ req, res }) => {
-    const url = new URL(req.url || "/", "http://localhost");
-    const status = url.searchParams.get("state") || url.searchParams.get("status") || undefined;
-    const worktreeId = url.searchParams.get("worktree_id") || undefined;
-    const questionStore = new QuestionStore();
-    if (worktreeId) {
-      jsonResponse(res, 200, questionStore.getQuestions(worktreeId, status === "all" ? undefined : status));
-    } else {
-      jsonResponse(res, 200, questionStore.getAll(status === "all" ? undefined : status));
-    }
-  });
-
   // ── GET /api/audit/findings ──
   ctx.route("GET", "/api/audit/findings", async ({ req, res }) => {
-    if (!GH_TOKEN) { jsonResponse(res, 500, { error: "No GH_TOKEN configured" }); return; }
-    const url = new URL(req.url || "/", "http://localhost");
-    const state = url.searchParams.get("state") || "all";
-    const ghRes = await fetch(
-      `https://api.github.com/repos/${AUDIT_REPO}/issues?labels=audit-finding&state=${state}&per_page=50&sort=updated`,
-      { headers: { Authorization: `Bearer ${GH_TOKEN}`, Accept: "application/vnd.github.v3+json" } },
-    );
-    const data = await ghRes.json();
-    jsonResponse(res, ghRes.status, data);
+    try {
+      const url = new URL(req.url || "/", "http://localhost");
+      const state = url.searchParams.get("state") || "all";
+      const data = await HostGitHub.listIssues(AUDIT_REPO, {
+        labels: "audit-finding", state, per_page: "50", sort: "updated",
+      });
+      jsonResponse(res, 200, data);
+    } catch (e: any) {
+      jsonResponse(res, 500, { error: e.message });
+    }
   });
 
   // ── GET /api/audit/assessments ──
@@ -221,69 +209,4 @@ export function registerAuditRoutes(ctx: PluginContext): void {
     });
   });
 
-  // ── POST /api/audit/questions/:id/answer ──
-  ctx.route("POST", "/api/audit/questions/:id/answer", async ({ req, res, params, store, docker }) => {
-    let body: any;
-    try { body = JSON.parse(await readBody(req)); }
-    catch { jsonResponse(res, 400, { error: "invalid JSON" }); return; }
-
-    const questionId = params.id;
-    const selectedOption = body.selected_option;
-    const freeformAnswer = body.freeform_answer || "";
-    const answeredBy = body.answered_by || "web";
-
-    if (!selectedOption) { jsonResponse(res, 400, { error: "selected_option required" }); return; }
-
-    const questionStore = new QuestionStore();
-    const allQuestions = questionStore.getAll();
-    const target = allQuestions.find(q => q.id === questionId);
-    if (!target) { jsonResponse(res, 404, { error: `Question ${questionId} not found` }); return; }
-
-    const ok = questionStore.answerQuestion(target.worktree_id, questionId, selectedOption, freeformAnswer, answeredBy);
-    if (!ok) { jsonResponse(res, 409, { error: "Question already answered or expired" }); return; }
-
-    const allResolved = questionStore.allResolved(target.worktree_id);
-    let resumed = false;
-
-    if (allResolved) {
-      const session = store.findByWorktreeId(target.worktree_id);
-      if (session && session.status !== "running" && store.isWorktreeAlive(target.worktree_id) && getActiveSessions() < MAX_CONCURRENT) {
-        const resumePrompt = questionStore.buildResumePrompt(target.worktree_id);
-        resumed = true;
-        docker.runContainerSession({
-          prompt: resumePrompt,
-          userName: session.user || "auto-resume",
-          worktreeId: target.worktree_id,
-          targetRef: session.base_branch ? `origin/${session.base_branch}` : undefined,
-          profile: session.profile || undefined,
-        }, store).then(() => {
-          console.log(`[AUDIT] Auto-resumed session for worktree ${target.worktree_id}`);
-        }).catch(e => {
-          console.error(`[AUDIT] Auto-resume failed for ${target.worktree_id}: ${e.message}`);
-        });
-      }
-    }
-
-    if (GH_TOKEN) {
-      questionStore.pushToQuestionsBranch(target.worktree_id, AUDIT_REPO, GH_TOKEN).catch(e => {
-        console.error(`[AUDIT] Failed to push to questions branch: ${e.message}`);
-      });
-    }
-
-    jsonResponse(res, 200, { ok: true, all_resolved: allResolved, resumed, worktree_id: target.worktree_id });
-  });
-
-  // ── POST /api/audit/questions/direction ──
-  ctx.route("POST", "/api/audit/questions/direction", async ({ req, res }) => {
-    let body: any;
-    try { body = JSON.parse(await readBody(req)); }
-    catch { jsonResponse(res, 400, { error: "invalid JSON" }); return; }
-
-    const { worktree_id, text, author } = body;
-    if (!worktree_id || !text) { jsonResponse(res, 400, { error: "worktree_id and text required" }); return; }
-
-    const questionStore = new QuestionStore();
-    questionStore.setDirection(worktree_id, text, author || "web");
-    jsonResponse(res, 200, { ok: true });
-  });
 }

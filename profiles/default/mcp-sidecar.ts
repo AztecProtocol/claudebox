@@ -9,7 +9,6 @@
 import {
   McpServer,
   SESSION_META,
-  buildCommonGhWhitelist,
   registerCommonTools, registerCloneRepo, registerPRTools,
   startMcpHttpServer,
 } from "../../packages/libclaudebox/mcp/base.ts";
@@ -17,11 +16,6 @@ import {
 // ── Profile config ──────────────────────────────────────────────
 const REPO = "AztecProtocol/aztec-packages";
 const WORKSPACE = process.env.WORKSPACE || "/workspace/aztec-packages";
-const R = `repos/${REPO}`;
-
-SESSION_META.repo = REPO;
-
-const GH_WHITELIST = buildCommonGhWhitelist(R);
 
 const TOOL_LIST = "clone_repo, respond_to_user, get_context, session_status, github_api, slack_api, create_pr, update_pr, create_gist, create_skill, ci_failures, linear_get_issue, linear_create_issue, record_stat";
 
@@ -30,7 +24,7 @@ const TOOL_LIST = "clone_repo, respond_to_user, get_context, session_status, git
 function createServer(): McpServer {
   const server = new McpServer({ name: "claudebox-default", version: "1.0.0" });
 
-  registerCommonTools(server, { repo: REPO, workspace: WORKSPACE, tools: TOOL_LIST, ghWhitelist: GH_WHITELIST });
+  registerCommonTools(server, { repo: REPO, workspace: WORKSPACE, tools: TOOL_LIST });
 
   registerCloneRepo(server, {
     repo: REPO, workspace: WORKSPACE,
