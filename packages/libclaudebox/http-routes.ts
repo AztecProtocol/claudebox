@@ -1233,6 +1233,24 @@ const routes: Route[] = [
       }
     },
   },
+
+  // ── Internal API: Unified creds proxy (sidecar BotClient → server) ──
+  {
+    method: "POST", pattern: /^\/api\/internal\/creds$/, auth: "api",
+    handler: async (req, res) => {
+      let body: any;
+      try { body = JSON.parse(await readBody(req)); }
+      catch { json(res, 400, { error: "invalid JSON" }); return; }
+
+      try {
+        const { handleCredsEndpoint } = await import("../libcreds-host/index.ts");
+        const result = await handleCredsEndpoint(body);
+        json(res, result.ok ? 200 : 400, result);
+      } catch (e: any) {
+        console.error(`[HTTP] ${e.message}`); json(res, 500, { ok: false, error: "internal error" });
+      }
+    },
+  },
 ];
 
 // ── Server factory ──────────────────────────────────────────────
