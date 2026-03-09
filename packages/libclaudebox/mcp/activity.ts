@@ -69,7 +69,6 @@ export let lastStatus = "";
 export let respondToUserCalled = false;
 
 export function setRespondToUserCalled(v: boolean): void { respondToUserCalled = v; }
-export function setLastStatus(v: string): void { lastStatus = v; }
 
 export const commentSections = {
   status: "" as string,

@@ -18,9 +18,6 @@ export function setProfilesDir(dir: string): void {
   _profilesDir = dir;
 }
 
-export function getProfilesDir(): string {
-  return _profilesDir;
-}
 
 /** Check if a directory looks like a profile (has plugin.ts or mcp-sidecar.ts). */
 function isProfileDir(dir: string, name: string): boolean {
