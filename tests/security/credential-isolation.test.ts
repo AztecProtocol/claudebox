@@ -126,6 +126,9 @@ server.listen(9801, () => console.log("sidecar ready"));
       "run", "-d",
       "--name", CLAUDE_CTR,
       "--network", NETWORK,
+      "--user", "aztec-dev",
+      "--cap-drop", "ALL",
+      "--security-opt", "no-new-privileges:true",
       "-e", `HOME=/home/aztec-dev`,
       "-e", `CLAUDEBOX_MCP_URL=http://${SIDECAR}:9801/mcp`,
       "-e", `CLAUDEBOX_SIDECAR_HOST=${SIDECAR}`,
@@ -269,13 +272,13 @@ server.listen(9801, () => console.log("sidecar ready"));
   it("cannot inspect sidecar container from Claude container", () => {
     const r = dockerExec(CLAUDE_CTR, [
       "bash", "-c",
-      "docker inspect " + SIDECAR + " 2>&1 || true",
+      "docker inspect " + SIDECAR + " 2>&1",
     ]);
+    const out = r.stdout + r.stderr;
     assert.ok(
-      r.exitCode !== 0 || r.stdout.includes("not found") || r.stderr.includes("not found") ||
-      r.stdout.includes("Cannot connect") || r.stderr.includes("Cannot connect") ||
-      r.stdout.includes("permission denied") || r.stderr.includes("permission denied"),
-      "Docker inspect of sidecar should fail from Claude container",
+      r.exitCode !== 0 || out.includes("not found") || out.includes("Cannot connect") ||
+      out.includes("permission denied") || out.includes("command not found"),
+      `Docker inspect of sidecar should fail from Claude container. exit=${r.exitCode} out=${out.slice(0, 300)}`,
     );
     assertCanaryNotFound(r.stdout, "docker inspect sidecar");
   });
@@ -288,19 +291,20 @@ server.listen(9801, () => console.log("sidecar ready"));
   });
 
   it("cannot sudo", () => {
-    const r = dockerExec(CLAUDE_CTR, ["bash", "-c", "sudo id 2>&1 || true"]);
+    const r = dockerExec(CLAUDE_CTR, ["bash", "-c", "sudo id 2>&1"]);
+    const out = r.stdout + r.stderr;
     assert.ok(
-      r.exitCode !== 0 || r.stdout.includes("not found") || r.stderr.includes("not found") ||
-      r.stdout.includes("not allowed") || r.stderr.includes("not allowed"),
-      "sudo should not work",
+      r.exitCode !== 0 || out.includes("not found") || out.includes("not allowed") ||
+      out.includes("effective uid is not 0") || out.includes("setuid"),
+      `sudo should not work. exit=${r.exitCode} out=${out.slice(0, 300)}`,
     );
   });
 
   it("cannot nsenter into other namespaces", () => {
     const r = dockerExec(CLAUDE_CTR, [
-      "bash", "-c", "nsenter -t 1 -m -u -i -n -p -- env 2>&1 || true",
+      "bash", "-c", "nsenter -t 1 -m -u -i -n -p -- env 2>&1",
     ]);
-    assert.ok(r.exitCode !== 0, "nsenter should fail");
+    assert.ok(r.exitCode !== 0, `nsenter should fail. exit=${r.exitCode} out=${(r.stdout + r.stderr).slice(0, 300)}`);
     assertCanaryNotFound(r.stdout, "nsenter");
   });
 

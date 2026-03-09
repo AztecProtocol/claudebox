@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 
 import {
   truncate, extractHashFromUrl, parseMessage, parseKeywords,
-  validateResumeSession, sessionUrl, worktreeIdFromLogUrl,
-  hashFromLogUrl, prKeyFromUrl,
+  validateResumeSession, sessionUrl,
+  hashFromLogUrl, prKeyFromUrl, worktreeIdFromLogUrl,
 } from "../../packages/libclaudebox/util.ts";
 import { LOG_BASE_URL, CLAUDEBOX_HOST } from "../../packages/libclaudebox/config.ts";
 import type { SessionMeta, ParseResult } from "../../packages/libclaudebox/types.ts";
@@ -214,6 +214,7 @@ describe("worktreeIdFromLogUrl", () => {
     );
   });
 });
+
 
 describe("hashFromLogUrl", () => {
   it("extracts full log ID", () => {

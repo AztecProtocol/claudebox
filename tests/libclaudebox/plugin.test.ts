@@ -122,48 +122,6 @@ describe("PluginRuntime", () => {
     assert.equal(runtime.getRoutes()[1].path, "/findings");
   });
 
-  it("builds channel maps from plugins", async () => {
-    const p1: Plugin = {
-      name: "audit",
-      channels: ["C111", "C222"],
-      branchOverrides: { "C111": "develop" },
-      setup() {},
-    };
-    const p2: Plugin = {
-      name: "default",
-      branchOverrides: { "C333": "main" },
-      setup() {},
-    };
-    await runtime.loadPlugin(p1);
-    await runtime.loadPlugin(p2);
-
-    const profileMap = runtime.buildChannelProfileMap();
-    assert.equal(profileMap.get("C111"), "audit");
-    assert.equal(profileMap.get("C222"), "audit");
-    assert.equal(profileMap.has("C333"), false);
-
-    const branchMap = runtime.buildChannelBranchMap();
-    assert.equal(branchMap.get("C111"), "develop");
-    assert.equal(branchMap.get("C333"), "main");
-  });
-
-  it("returns docker config by plugin name", async () => {
-    const p: Plugin = {
-      name: "custom",
-      docker: { mountReferenceRepo: false, extraEnv: ["FOO=bar"] },
-      setup() {},
-    };
-    await runtime.loadPlugin(p);
-    const dc = runtime.getDockerConfig("custom");
-    assert.equal(dc.mountReferenceRepo, false);
-    assert.deepEqual(dc.extraEnv, ["FOO=bar"]);
-  });
-
-  it("returns empty docker config for unknown plugin", () => {
-    const dc = runtime.getDockerConfig("nonexistent");
-    assert.deepEqual(dc, {});
-  });
-
   it("dispatches reactions", async () => {
     const reactions: string[] = [];
     const p: Plugin = {

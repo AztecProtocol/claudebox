@@ -53,6 +53,18 @@ Then create a gist titled "Session Summary" with a detailed breakdown:
 - Key decisions and reasoning
 - Any follow-up items`,
 
+  buildPromptContext(store) {
+    const recent = store.listAll().slice(0, 20);
+    if (recent.length === 0) return "";
+    const lines = recent.map(s => {
+      const status = s.status || "?";
+      const prompt = (s.prompt || "").slice(0, 100);
+      const tags = store.getWorktreeTags(s.worktree_id || "").join(",");
+      return `- [${status}]${tags ? ` (${tags})` : ""} ${prompt}`;
+    });
+    return `## Recent sessions\n${lines.join("\n")}`;
+  },
+
   setup() {
     for (const s of plugin.schemas || []) register(s);
   },

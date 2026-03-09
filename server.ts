@@ -30,6 +30,7 @@ import { createHttpServer } from "./packages/libclaudebox/http-routes.ts";
 import { DmRegistry } from "./packages/libclaudebox/dm-registry.ts";
 import { setPluginsDir, buildChannelProfileMap, buildChannelBranchMap, loadAllPlugins } from "./packages/libclaudebox/plugin-loader.ts";
 import { PluginRuntime } from "./packages/libclaudebox/plugin.ts";
+import { startAutoUpdate } from "./packages/libclaudebox/auto-update.ts";
 import { join, dirname } from "path";
 
 // Prevent unhandled Slack/WebSocket rejections from crashing the process
@@ -153,6 +154,11 @@ async function main() {
   httpServer.listen(HTTP_PORT, () => {
     console.log(`  HTTP listening on :${HTTP_PORT}`);
   });
+
+  // ── Auto-update (polls origin/next, restarts on new commits) ──
+  if (process.argv.includes("--auto-update")) {
+    startAutoUpdate(rootDir);
+  }
 }
 
 main().catch((e) => {
