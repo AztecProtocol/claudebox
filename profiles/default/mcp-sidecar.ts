@@ -26,7 +26,9 @@ function createServer(): McpServer {
     repo: REPO, workspace: WORKSPACE,
     strategy: "local-reference",
     remoteUrl: "https://github.com/AztecProtocol/aztec-packages.git",
-    refHint: "'origin/next', 'abc123'",
+    fallbackRef: "origin/next",
+    refHint: "'origin/next' (default branch), 'abc123'",
+    description: `Clone the repo into ${WORKSPACE}. MUST be your FIRST tool call — the workspace is empty until you clone. Do NOT run git, ls, Read, or any file operations before calling this. Safe to call on resume — fetches new refs. Default branch is 'next' — use ref='origin/next' unless told otherwise.`,
   });
 
   registerPRTools(server, {
