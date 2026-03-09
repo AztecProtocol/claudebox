@@ -17,7 +17,7 @@ import { SESSION_META, WORKTREE_ID, statusPageUrl, STATS_DIR, hasScope } from ".
 import { logActivity, updateRootComment, otherArtifacts } from "../../packages/libclaudebox/mcp/activity.ts";
 import { getCreds, sanitizeError } from "../../packages/libclaudebox/mcp/helpers.ts";
 import { registerCommonTools } from "../../packages/libclaudebox/mcp/tools.ts";
-import { pushToRemote, registerCloneRepo, registerPRTools, registerGitProxy } from "../../packages/libclaudebox/mcp/git-tools.ts";
+import { pushToRemote, registerCloneRepo, registerPRTools, registerGitProxy, registerLogTools } from "../../packages/libclaudebox/mcp/git-tools.ts";
 import { startMcpHttpServer } from "../../packages/libclaudebox/mcp/server.ts";
 
 // ── Profile config ──────────────────────────────────────────────
@@ -28,7 +28,7 @@ SESSION_META.repo = REPO;
 
 const UPSTREAM_REPO = "AztecProtocol/barretenberg";
 
-const TOOL_LIST = "clone_repo, respond_to_user, get_context, session_status, github_api, create_pr, update_pr, create_external_pr, create_issue, close_issue, add_labels, create_audit_label, add_log_link, audit_history, create_gist, list_gists, read_gist, update_meta_issue, ci_failures, linear_get_issue, linear_create_issue, record_stat, git_fetch, git_pull, submodule_update";
+const TOOL_LIST = "clone_repo, respond_to_user, get_context, session_status, github_api, create_pr, update_pr, create_external_pr, create_issue, close_issue, add_labels, create_audit_label, add_log_link, audit_history, create_gist, update_gist, list_gists, read_gist, update_meta_issue, ci_failures, linear_get_issue, linear_create_issue, record_stat, git_fetch, git_pull, submodule_update, read_log, write_log";
 
 // ── Auth check at startup ───────────────────────────────────────
 try {
@@ -511,6 +511,7 @@ Use this for fixes that should go directly to the main barretenberg repo.`,
     });
 
   registerGitProxy(server, { workspace: WORKSPACE });
+  registerLogTools(server, { workspace: WORKSPACE });
 
   return server;
 }

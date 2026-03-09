@@ -58,7 +58,10 @@ The skills load PRINCIPLES.md (known bug classes) and CRITERIA.md (code quality 
 | `create_pr` | Push changes and create a draft PR (for fixes) |
 | `update_pr` | Push to / modify existing PRs |
 | `create_external_pr` | Push changes and create a draft PR on **upstream** `AztecProtocol/barretenberg` (requires `create-external-pr` scope) |
-| `create_gist` | Share complex multi-artifact output (detailed analysis, build logs, structured data) |
+| `read_log` | Read a CI log by key/hash. Use instead of curling ci.aztec-labs.com or CI_PASSWORD. |
+| `write_log` | Write content to a CI log — lightweight alternative to create_gist for build output. |
+| `create_gist` | Create a gist (one per session, then use update_gist) |
+| `update_gist` | Add/update files in an existing gist |
 | `list_gists` | List all audit gists — review prior session summaries |
 | `read_gist` | Read full gist content by ID or URL |
 | `update_meta_issue` | Create/update a meta-issue tracking session or module audit progress |
@@ -89,7 +92,7 @@ create_issue(
 6. `record_stat` — record each file reviewed with `audit_file_review` schema
 7. `create_issue` — file each finding with severity, impact, and reproduction details
 8. `add_log_link` — cross-reference related issues to this session
-9. `create_gist` — **create a summary gist** with detailed findings, coverage table, open questions
+9. `create_gist` — create a summary gist (use `update_gist` if you need to add more files)
 10. `record_stat` — record `audit_summary` with the gist URL
 11. `update_meta_issue` — create session meta-issue linking all artifacts
 12. **`respond_to_user`** — final summary (REQUIRED, 1-2 sentences + gist link)
@@ -143,9 +146,9 @@ record_stat(schema="audit_file_review", data={
 })
 ```
 
-### Session summary gist — `create_gist` + `record_stat`
+### Session summary gist
 
-**Before finishing, create a summary gist.** This is the primary record of your work — the Slack response should be short, the gist should be thorough. The gist MUST contain these four sections:
+Create a summary gist before finishing. Use `update_gist` to add files if needed. The gist MUST contain these four sections:
 
 1. **Executive Summary** (2-4 lines) — What you reviewed, key findings, overall risk assessment.
 2. **Skill Improvements** — What changes to Claude skills/prompts would help future audit sessions? Missing context, unhelpful instructions, tools that should exist, knowledge gaps.

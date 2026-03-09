@@ -40,14 +40,14 @@ For public repos, bare `git fetch` works but prefer the MCP tools for consistenc
 
 ## CI Logs
 
-Download and view CI logs using `dlog` via `ci.sh` (in the repo root, NOT in `ci3/`):
-```bash
-/workspace/aztec-packages/ci.sh dlog <hash>                 # view a log by hash
-/workspace/aztec-packages/ci.sh dlog <hash> | head -100     # first 100 lines
-/workspace/aztec-packages/ci.sh dlog <hash> > /tmp/log.txt  # save to file for analysis
-```
-For CI log URLs, extract the hash and use `dlog`.
-Prefer `dlog` over curling log URLs directly — it's faster and handles auth.
+**IMPORTANT**: Do NOT use `CI_PASSWORD`, curl `ci.aztec-labs.com` directly, or run `ci.sh dlog` manually. Use the MCP tools instead:
+
+- **`read_log(key="<hash>")`** — read a CI log by key. Supports `head`/`tail` params for large logs.
+- **`write_log(content="...", key="my-key")`** — write content to a CI log. Returns a shareable URL.
+
+For CI log URLs like `http://ci.aztec-labs.com/<hash>`, extract the hash and pass it to `read_log`.
+
+`write_log` is a lightweight alternative to `create_gist` for build output, command logs, and quick shareable content.
 
 ## Communication — MCP Tools
 
@@ -69,7 +69,10 @@ Do NOT use `gh api`, `gh pr`, `gh` commands, or `git push` — they will all fai
 | `slack_api` | Slack API proxy — channel/thread auto-injected |
 | `create_pr` | Stage all changes, commit, push, create a **draft** PR (auto-labeled `claudebox`) |
 | `update_pr` | Push to / modify existing PRs. Only `claudebox`-labeled PRs. |
-| `create_gist` | Create a GitHub gist for complex multi-artifact output (detailed analysis, build logs, structured data) |
+| `read_log` | Read a CI log by key/hash. Use instead of curling ci.aztec-labs.com or CI_PASSWORD. |
+| `write_log` | Write content to a CI log — lightweight alternative to create_gist for build output. |
+| `create_gist` | Create a gist (one per session, then use update_gist) |
+| `update_gist` | Add/update files in an existing gist |
 | `ci_failures` | CI status for a PR — failed jobs, pass/fail history, links |
 | `linear_get_issue` | Fetch a Linear issue by identifier (e.g. `A-453`) |
 | `linear_create_issue` | Create a new Linear issue |
@@ -175,26 +178,30 @@ cd /workspace/aztec-packages/barretenberg/cpp && ./bootstrap.sh
 
 The container has all required toolchains (Rust, Node, etc.).
 
-### Build logs — `cache_log`
+### Build logs
 
-**ALWAYS** pipe long-running commands (`./bootstrap.sh`, `make`, test suites, cargo builds) through `cache_log` so a persistent log link is created. This lets users see build output even after the session ends.
+For long-running commands (`./bootstrap.sh`, `make`, test suites), capture the output and use `write_log` to create a persistent shareable link:
 
 ```bash
-# From the repo root — pipe through cache_log with DUP=1 to also show output in real-time
+# Run build, capture output
+make yarn-project 2>&1 | tee /tmp/build.log
+# Share via write_log MCP tool
+write_log(content=<contents of /tmp/build.log>, key="make-yarn-project")
+```
+
+Or pipe through `cache_log` directly for real-time streaming:
+```bash
 ./bootstrap.sh 2>&1 | DUP=1 ci3/cache_log "yarn-project-bootstrap"
-make yarn-project 2>&1 | DUP=1 ci3/cache_log "make-yarn-project"
-cd barretenberg/cpp && cmake --build build 2>&1 | DUP=1 ci3/cache_log "bb-cpp-build"
 ```
 
 After the command finishes, **report status** via `session_status` so users can track progress.
-
-If the command fails, the log link still persists — making it easy to diagnose failures after the fact.
 
 ## Tips — avoiding common failures
 
 - **Absolute paths**: Always use absolute paths (e.g. `/workspace/aztec-packages/...`) with `Read`, `Glob`, `Grep`. Relative paths will fail if your cwd changed.
 - **Large files**: If `Read` fails with "exceeds maximum", use `offset`+`limit` to read chunks, or `Grep` to find what you need.
 - **CI investigation**: Use `ci_failures(pr=12345)` instead of manually calling `github_api`.
+- **CI logs**: Use `read_log(key="<hash>")` to read logs. **Never** use `CI_PASSWORD`, curl `ci.aztec-labs.com`, or `ci.sh dlog` directly.
 - **JSON parsing**: Use `jq` — it handles large/truncated input gracefully.
 - **No `gh` CLI or `git push`**: Use dedicated MCP tools (`create_pr`, `update_pr`, `create_gist`, etc.). `github_api` is read-only.
 - **No direct `git fetch`/`git pull`**: Use the `git_fetch` and `git_pull` MCP tools — they handle authentication.

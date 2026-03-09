@@ -8,14 +8,14 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerCommonTools } from "../../packages/libclaudebox/mcp/tools.ts";
-import { registerCloneRepo, registerPRTools, registerGitProxy } from "../../packages/libclaudebox/mcp/git-tools.ts";
+import { registerCloneRepo, registerPRTools, registerGitProxy, registerLogTools } from "../../packages/libclaudebox/mcp/git-tools.ts";
 import { startMcpHttpServer } from "../../packages/libclaudebox/mcp/server.ts";
 
 // ── Profile config ──────────────────────────────────────────────
 const REPO = "AztecProtocol/aztec-packages";
 const WORKSPACE = process.env.WORKSPACE || "/workspace/aztec-packages";
 
-const TOOL_LIST = "clone_repo, respond_to_user, get_context, session_status, github_api, create_pr, update_pr, create_gist, ci_failures, linear_get_issue, linear_create_issue, record_stat, git_fetch, git_pull, submodule_update";
+const TOOL_LIST = "clone_repo, respond_to_user, get_context, session_status, github_api, create_pr, update_pr, create_gist, update_gist, ci_failures, linear_get_issue, linear_create_issue, record_stat, git_fetch, git_pull, submodule_update, read_log, write_log";
 
 // ── MCP Server factory ──────────────────────────────────────────
 
@@ -42,6 +42,7 @@ function createServer(): McpServer {
   });
 
   registerGitProxy(server, { workspace: WORKSPACE });
+  registerLogTools(server, { workspace: WORKSPACE });
 
   return server;
 }
