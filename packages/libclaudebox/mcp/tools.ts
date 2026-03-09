@@ -260,9 +260,13 @@ For writes, use dedicated tools: create_pr, update_pr, create_gist, create_issue
       }
     });
 
-  // ── create_gist ──────────────────────────────────────────────────
+  // ── create_gist / update_gist ───────────────────────────────────
+  // Track the session gist — only one create_gist per session, then use update_gist.
+  let sessionGistId = "";
+  let sessionGistUrl = "";
+
   server.tool("create_gist",
-    "Create a GitHub gist. Useful for sharing verbose output, logs, or large data that doesn't belong in a Slack message or PR description.",
+    `Create a GitHub gist. One per session — use update_gist to add files after. Prefer write_log for build output.`,
     {
       description: z.string().describe("Short description of the gist"),
       files: z.record(z.string()).describe("Map of filename → content, e.g. {\"output.log\": \"...\", \"analysis.md\": \"...\"}"),
@@ -270,6 +274,9 @@ For writes, use dedicated tools: create_pr, update_pr, create_gist, create_issue
     },
     async ({ description, files, public_gist }) => {
       if (!hasGhToken()) return { content: [{ type: "text", text: "No GitHub access configured" }], isError: true };
+      if (sessionGistId) {
+        return { content: [{ type: "text", text: `A gist was already created this session: ${sessionGistUrl}\nUse update_gist(gist_id="${sessionGistId}", ...) to add or update files instead of creating another gist.` }], isError: true };
+      }
 
       const gistFiles: Record<string, { content: string }> = {};
       for (const [name, content] of Object.entries(files)) {
@@ -278,12 +285,37 @@ For writes, use dedicated tools: create_pr, update_pr, create_gist, create_issue
 
       try {
         const gist = await getCreds().github.createGist({ description, files: gistFiles, public: public_gist });
+        sessionGistId = gist.id;
+        sessionGistUrl = gist.html_url;
         logActivity("artifact", `Gist: ${gist.html_url}`);
         otherArtifacts.push(`- [Gist: ${description}](${gist.html_url})`);
         await updateRootComment();
         return { content: [{ type: "text", text: `${gist.html_url}\nID: ${gist.id}` }] };
       } catch (e: any) {
         return { content: [{ type: "text", text: `create_gist: ${e.message}` }], isError: true };
+      }
+    });
+
+  server.tool("update_gist",
+    `Update an existing gist — add new files, replace file content, or update the description. Use read_gist first to see existing files if needed.`,
+    {
+      gist_id: z.string().describe("Gist ID (from create_gist result or read_gist)"),
+      description: z.string().optional().describe("New description (optional)"),
+      files: z.record(z.string()).describe("Map of filename → new content. New filenames add files, existing filenames replace content."),
+    },
+    async ({ gist_id, description, files }) => {
+      if (!hasGhToken()) return { content: [{ type: "text", text: "No GitHub access configured" }], isError: true };
+
+      const gistFiles: Record<string, { content: string }> = {};
+      for (const [name, content] of Object.entries(files)) {
+        gistFiles[name] = { content };
+      }
+
+      try {
+        const gist = await getCreds().github.updateGist(gist_id, { description, files: gistFiles });
+        return { content: [{ type: "text", text: `Updated: ${gist.html_url}\nFiles: ${Object.keys(files).join(", ")}` }] };
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `update_gist: ${e.message}` }], isError: true };
       }
     });
 

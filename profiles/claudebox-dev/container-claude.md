@@ -42,7 +42,8 @@ Key directories:
 | `create_pr` | Push changes and create a draft PR targeting `main` |
 | `update_pr` | Push to / modify existing PRs |
 | `push_branch` | Push directly to `main` without creating a PR |
-| `create_gist` | Share verbose output |
+| `create_gist` | Create a gist (one per session, then use update_gist) |
+| `update_gist` | Add/update files in an existing gist |
 | `ci_failures` | CI status for a PR |
 | `linear_get_issue` | Fetch a Linear issue |
 | `linear_create_issue` | Create a Linear issue |

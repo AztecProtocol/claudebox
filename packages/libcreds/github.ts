@@ -236,6 +236,17 @@ export class GitHubClient {
     });
   }
 
+  async updateGist(gistId: string, opts: {
+    description?: string;
+    files: Record<string, { content: string } | null>;
+  }): Promise<any> {
+    audit("github", "write", `PATCH gists/${gistId}`, true);
+    return this.ghJson(`gists/${gistId}`, {
+      method: "PATCH",
+      body: { ...(opts.description ? { description: opts.description } : {}), files: opts.files },
+    });
+  }
+
   async putContents(repo: string, path: string, opts: {
     message: string; content: string; branch?: string; sha?: string;
   }): Promise<any> {

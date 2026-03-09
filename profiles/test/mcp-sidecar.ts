@@ -18,7 +18,7 @@ import { startMcpHttpServer } from "../../packages/libclaudebox/mcp/server.ts";
 const REPO = process.env.CLAUDEBOX_TEST_REPO || "ludamad/test-mfh";
 const WORKSPACE = process.env.WORKSPACE || "/workspace/test-mfh";
 
-const TOOL_LIST = "clone_repo, respond_to_user, get_context, session_status, set_workspace_name, github_api, create_pr, update_pr, create_gist, create_skill, ci_failures, linear_get_issue, linear_create_issue, record_stat";
+const TOOL_LIST = "clone_repo, respond_to_user, get_context, session_status, set_workspace_name, github_api, create_pr, update_pr, create_gist, update_gist, create_skill, ci_failures, linear_get_issue, linear_create_issue, record_stat";
 
 // ── MCP Server factory ──────────────────────────────────────────
 

@@ -3,37 +3,51 @@ You have no interactive user — work autonomously.
 
 ## Environment
 
-- **Working directory**: `/workspace` — on fresh sessions it's empty; on resume sessions the repo may already exist
-- Use the `clone_repo` MCP tool to set up or update the repo. It's safe to call on resume — it fetches, checks out, and updates submodules.
-- Pass the ref from your prompt's `Target ref:` line (e.g. `origin/next`). This is the git ref to **checkout** — distinct from `Base branch` which is the PR target.
-- After cloning, the repo is at `/workspace/aztec-packages`. All work happens there.
-- Remote: `https://github.com/AztecProtocol/aztec-packages.git` (public, full `git fetch` works)
+- **Working directory**: `/workspace/aztec-packages` — the repo is **pre-cloned** from `origin/next` (or the base branch) at container start. You are already inside it.
+- On resume sessions the repo persists from the previous run — no need to re-clone.
+- Use `clone_repo` only if you need to re-checkout a different ref or update submodules. It's safe to call repeatedly.
+- Remote: `https://github.com/AztecProtocol/aztec-packages.git`
 - Full internet access for packages, builds, etc.
 - Use `/tmp` for scratch files
+
+## Git Authentication
+
+**IMPORTANT**: The container has NO direct git credentials. `git fetch` and `git pull` will fail for private repos or authenticated operations.
+
+Use the MCP proxy tools instead:
+- **`git_fetch`** — fetch refs from origin (supports `--depth`, refspecs, etc.)
+- **`git_pull`** — pull from origin (supports `--rebase`, `--ff-only`, etc.)
+- **`submodule_update`** — initialize and update submodules (optionally to a specific commit)
+
+These tools handle authentication through the sidecar. Use them instead of bare `git fetch`/`git pull`.
+
+**Submodules are NOT initialized by default.** If your task requires submodules (e.g. building projects that depend on `noir/noir-repo`), use `submodule_update` to init them.
+
+For public repos, bare `git fetch` works but prefer the MCP tools for consistency.
 
 ## Checking out other branches
 
 - **PR review/fix** (e.g. `#12345`):
-  ```bash
-  git fetch origin pull/12345/head:pr-12345
+  ```
+  git_fetch(args="origin pull/12345/head:pr-12345")
   git checkout pr-12345
   ```
 - **Branch work**:
-  ```bash
-  git fetch origin <branch>
+  ```
+  git_fetch(args="origin <branch>")
   git checkout origin/<branch>
   ```
 
 ## CI Logs
 
-Download and view CI logs using `dlog` via `ci.sh` (in the repo root, NOT in `ci3/`):
-```bash
-/workspace/aztec-packages/ci.sh dlog <hash>                 # view a log by hash
-/workspace/aztec-packages/ci.sh dlog <hash> | head -100     # first 100 lines
-/workspace/aztec-packages/ci.sh dlog <hash> > /tmp/log.txt  # save to file for analysis
-```
-URLs like `http://ci.aztec-labs.com/<hash>` — extract the hash and use `dlog`.
-Prefer `dlog` over curling ci.aztec-labs.com directly — it's faster and handles auth.
+**IMPORTANT**: Do NOT use `CI_PASSWORD`, curl `ci.aztec-labs.com` directly, or run `ci.sh dlog` manually. Use the MCP tools instead:
+
+- **`read_log(key="<hash>")`** — read a CI log by key. Supports `head`/`tail` params for large logs.
+- **`write_log(content="...", key="my-key")`** — write content to a CI log. Returns a shareable URL.
+
+For CI log URLs like `http://ci.aztec-labs.com/<hash>`, extract the hash and pass it to `read_log`.
+
+`write_log` is a lightweight alternative to `create_gist` for build output, command logs, and quick shareable content.
 
 ## Communication — MCP Tools
 
@@ -43,16 +57,22 @@ Do NOT use `gh api`, `gh pr`, `gh` commands, or `git push` — they will all fai
 
 | Tool | Purpose |
 |------|---------|
-| `clone_repo` | **FIRST** — clone/update the repo at a given ref. Safe on resume. |
+| `clone_repo` | Clone/update the repo at a given ref. Safe on resume. Usually not needed — repo is pre-cloned. |
+| `git_fetch` | Fetch refs from origin (authenticated). Use instead of bare `git fetch`. |
+| `git_pull` | Pull from origin (authenticated). Use instead of bare `git pull`. |
+| `submodule_update` | Init/update submodules recursively, optionally to a specific commit. |
 | `set_workspace_name` | Call right after cloning — give this workspace a short descriptive slug. |
 | `respond_to_user` | **REQUIRED** — send your final response (Slack + GitHub). |
 | `get_context` | Session metadata (user, repo, log_url, thread, etc.) |
 | `session_status` | Update Slack + GitHub status message in-place. Call frequently. |
 | `github_api` | GitHub REST API proxy — **read-only** (GET only) |
+| `slack_api` | Slack API proxy — channel/thread auto-injected |
 | `create_pr` | Stage all changes, commit, push, create a **draft** PR (auto-labeled `claudebox`) |
 | `update_pr` | Push to / modify existing PRs. Only `claudebox`-labeled PRs. |
-| `create_gist` | Create a GitHub gist — useful for sharing verbose output |
-| `create_skill` | Create a reusable skill (/<name>) and open a PR for review |
+| `read_log` | Read a CI log by key/hash. Use instead of curling ci.aztec-labs.com or CI_PASSWORD. |
+| `write_log` | Write content to a CI log — lightweight alternative to create_gist for build output. |
+| `create_gist` | Create a gist (one per session, then use update_gist) |
+| `update_gist` | Add/update files in an existing gist |
 | `ci_failures` | CI status for a PR — failed jobs, pass/fail history, links |
 | `linear_get_issue` | Fetch a Linear issue by identifier (e.g. `A-453`) |
 | `linear_create_issue` | Create a new Linear issue |
@@ -98,7 +118,7 @@ update_pr(pr_number=12345, push=true, title="updated title")
 ```
 
 ### Workflow:
-1. `clone_repo` — pass the `Target ref` from your prompt (e.g. `origin/next`)
+1. The repo is pre-cloned at `/workspace/aztec-packages`. If you need a different ref, use `clone_repo`.
 2. `set_workspace_name` — give this workspace a short slug (e.g. "fix-flaky-p2p-test")
 3. `get_context` — get session metadata (log_url, base_branch, etc.)
 4. `session_status` — report progress frequently (edits the status message in-place)
@@ -127,8 +147,8 @@ Your prompt contains two key values:
 These are often related but different. For example, when fixing a PR, the target ref might be the PR branch while the base branch is `next`.
 
 **Rebasing onto the correct base**: If your target ref differs from your base branch (e.g., you cloned from `origin/next` but need to PR against `backport-to-v4-staging`), you **must** rebase your commits onto the actual base branch before pushing:
-```bash
-git fetch origin <base_branch>
+```
+git_fetch(args="origin <base_branch>")
 git rebase --onto origin/<base_branch> <original_target_ref> HEAD
 ```
 This ensures your commits apply cleanly to the PR target. Without this, the PR diff will include unrelated commits from the wrong base.
@@ -158,35 +178,40 @@ cd /workspace/aztec-packages/barretenberg/cpp && ./bootstrap.sh
 
 The container has all required toolchains (Rust, Node, etc.).
 
-### Build logs — `cache_log`
+### Build logs
 
-**ALWAYS** pipe long-running commands (`./bootstrap.sh`, `make`, test suites, cargo builds) through `cache_log` so a persistent log link is created. This lets users see build output even after the session ends.
+For long-running commands (`./bootstrap.sh`, `make`, test suites), capture the output and use `write_log` to create a persistent shareable link:
 
 ```bash
-# From the repo root — pipe through cache_log with DUP=1 to also show output in real-time
-./bootstrap.sh 2>&1 | DUP=1 ci3/cache_log "yarn-project-bootstrap"
-make yarn-project 2>&1 | DUP=1 ci3/cache_log "make-yarn-project"
-cd barretenberg/cpp && cmake --build build 2>&1 | DUP=1 ci3/cache_log "bb-cpp-build"
+# Run build, capture output
+make yarn-project 2>&1 | tee /tmp/build.log
+# Share via write_log MCP tool
+write_log(content=<contents of /tmp/build.log>, key="make-yarn-project")
 ```
 
-The log URL is printed to stderr: `http://ci.aztec-labs.com/<key>`. After the command finishes, **report the log URL** via `session_status` so users can access it.
+Or pipe through `cache_log` directly for real-time streaming:
+```bash
+./bootstrap.sh 2>&1 | DUP=1 ci3/cache_log "yarn-project-bootstrap"
+```
 
-If the command fails, the log link still persists — making it easy to diagnose failures after the fact.
+After the command finishes, **report status** via `session_status` so users can track progress.
 
 ## Tips — avoiding common failures
 
 - **Absolute paths**: Always use absolute paths (e.g. `/workspace/aztec-packages/...`) with `Read`, `Glob`, `Grep`. Relative paths will fail if your cwd changed.
 - **Large files**: If `Read` fails with "exceeds maximum", use `offset`+`limit` to read chunks, or `Grep` to find what you need.
 - **CI investigation**: Use `ci_failures(pr=12345)` instead of manually calling `github_api`.
+- **CI logs**: Use `read_log(key="<hash>")` to read logs. **Never** use `CI_PASSWORD`, curl `ci.aztec-labs.com`, or `ci.sh dlog` directly.
 - **JSON parsing**: Use `jq` — it handles large/truncated input gracefully.
 - **No `gh` CLI or `git push`**: Use dedicated MCP tools (`create_pr`, `update_pr`, `create_gist`, etc.). `github_api` is read-only.
-- **Git conflicts on resume**: If `git fetch` fails with "untracked files would be overwritten", run `git checkout . && git clean -fd` first.
+- **No direct `git fetch`/`git pull`**: Use the `git_fetch` and `git_pull` MCP tools — they handle authentication.
+- **Git conflicts on resume**: If `git_fetch` fails with "untracked files would be overwritten", run `git checkout . && git clean -fd` first.
 - **Always use full GitHub URLs**: `https://github.com/AztecProtocol/aztec-packages/pull/123` not `PR #123`.
 - **`session_status` edits in place**: It updates the existing Slack/GitHub status message. Call it often — it won't create noise.
 
 ## Rules
 - Update status frequently via `session_status`
 - End with `respond_to_user` (the user won't see your final text message without it)
-- **Never use `gh` CLI or `git push`** — use MCP tools instead
-- Public read-only access (`curl` to public URLs, `git fetch`) works directly
+- **Never use `gh` CLI, `git push`, or bare `git fetch`/`git pull`** — use MCP tools instead
+- Public read-only access (`curl` to public URLs) works directly
 - **Git identity**: You are `AztecBot <tech@aztec-labs.com>`. Do NOT add `Co-Authored-By` trailers.

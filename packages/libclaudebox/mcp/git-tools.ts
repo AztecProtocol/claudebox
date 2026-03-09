@@ -2,7 +2,7 @@
  * Clone and PR tool registration for MCP sidecars.
  */
 
-import { execFileSync } from "child_process";
+import { execFileSync, spawnSync } from "child_process";
 import { existsSync, writeFileSync, unlinkSync } from "fs";
 import { join } from "path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -15,7 +15,7 @@ import { workspaceName } from "./tools.ts";
 
 // ── Shared clone helper ─────────────────────────────────────────
 
-export function cloneRepoCheckoutAndInit(targetDir: string, ref: string, fallbackRef = "origin/next", opts?: { skipSubmodules?: boolean }): { text: string; isError?: boolean } {
+export function cloneRepoCheckoutAndInit(targetDir: string, ref: string, fallbackRef = "origin/next", opts?: { initSubmodules?: boolean }): { text: string; isError?: boolean } {
   let checkedOutRef = ref;
   try {
     execFileSync("git", ["-C", targetDir, "checkout", "--detach", ref], { timeout: 30_000, stdio: "pipe" });
@@ -36,13 +36,15 @@ export function cloneRepoCheckoutAndInit(targetDir: string, ref: string, fallbac
   const refNote = checkedOutRef !== ref ? ` (WARNING: ${ref} not found, fell back to ${checkedOutRef})` : "";
 
   let submoduleMsg = "";
-  if (!opts?.skipSubmodules) {
+  if (opts?.initSubmodules) {
     try {
       execFileSync("git", ["-C", targetDir, "submodule", "update", "--init", "--recursive"], { timeout: 300_000, stdio: "pipe" });
       submoduleMsg = " Submodules initialized.";
     } catch (e: any) {
-      submoduleMsg = ` ERROR: submodule init failed: ${e.message}. Builds may fail — try running: git submodule update --init --recursive`;
+      submoduleMsg = ` Warning: submodule init failed: ${e.message}`;
     }
+  } else {
+    submoduleMsg = " Submodules not initialized — use submodule_update tool if needed.";
   }
 
   return { text: `${head}${refNote}.${submoduleMsg}` };
@@ -103,7 +105,7 @@ export interface CloneToolConfig {
   fallbackRef?: string;
   refHint?: string;
   description?: string;
-  skipSubmodules?: boolean;
+  initSubmodules?: boolean;
 }
 
 export interface PRToolConfig {
@@ -135,11 +137,16 @@ export function registerCloneRepo(server: McpServer, config: CloneToolConfig): v
 
       if (existsSync(join(targetDir, ".git"))) {
         try {
+          // Disable sparse checkout if active (from pre-clone) to get full working tree
+          try {
+            execFileSync("git", ["-C", targetDir, "sparse-checkout", "disable"], { timeout: 10_000, stdio: "pipe" });
+          } catch {}
+
           try {
             execFileSync("git", ["-C", targetDir, "fetch", "origin"], { timeout: 120_000, stdio: "pipe" });
           } catch {}
 
-          const result = cloneRepoCheckoutAndInit(targetDir, ref, config.fallbackRef, { skipSubmodules: config.skipSubmodules });
+          const result = cloneRepoCheckoutAndInit(targetDir, ref, config.fallbackRef, { initSubmodules: config.initSubmodules });
           if (result.isError) return { content: [{ type: "text", text: result.text }], isError: true };
           return { content: [{ type: "text", text: `Repo already cloned. Checked out ${ref} (${result.text}) Work in ${targetDir}.` }] };
         } catch (e: any) {
@@ -169,12 +176,206 @@ export function registerCloneRepo(server: McpServer, config: CloneToolConfig): v
           } finally { try { unlinkSync(askpass); } catch {} }
         }
 
-        const result = cloneRepoCheckoutAndInit(targetDir, ref, config.fallbackRef, { skipSubmodules: config.skipSubmodules });
+        const result = cloneRepoCheckoutAndInit(targetDir, ref, config.fallbackRef, { initSubmodules: config.initSubmodules });
         if (result.isError) return { content: [{ type: "text", text: `Clone succeeded but: ${result.text}` }], isError: true };
         logActivity("clone", `Cloned ${config.repo} at ${ref} (${result.text})`);
         return { content: [{ type: "text", text: `Cloned ${config.repo} to ${targetDir} at ${ref} (${result.text}) Work in ${targetDir}.` }] };
       } catch (e: any) {
         return { content: [{ type: "text", text: `Clone failed: ${sanitizeError(e.message)}` }], isError: true };
+      }
+    });
+}
+
+// ── registerGitProxy (git_fetch + git_pull — authenticated via sidecar) ──
+
+export function registerGitProxy(server: McpServer, config: { workspace: string }): void {
+  // Helper: run git with GH_TOKEN auth via GIT_ASKPASS
+  function gitWithAuth(args: string[], timeoutMs = 120_000): string {
+    const askpass = join("/tmp", `.git-askpass-${process.pid}-${Date.now()}`);
+    writeFileSync(askpass, `#!/bin/sh\necho "$GIT_PASSWORD"\n`, { mode: 0o700 });
+    try {
+      return execFileSync("git", args, {
+        timeout: timeoutMs, encoding: "utf-8", stdio: "pipe",
+        env: { ...process.env, GIT_ASKPASS: askpass, GIT_PASSWORD: process.env.GH_TOKEN || "" },
+      });
+    } finally { try { unlinkSync(askpass); } catch {} }
+  }
+
+  server.tool("git_fetch", "Fetch from origin (authenticated). Use this instead of bare `git fetch` which may lack auth for private repos.",
+    { ref: z.string().optional().describe("Optional refspec to fetch (e.g. 'next', 'pull/123/head:pr-123')") },
+    async ({ ref }) => {
+      const workspace = config.workspace;
+      if (!existsSync(join(workspace, ".git"))) {
+        return { content: [{ type: "text", text: "No repo at " + workspace }], isError: true };
+      }
+      try {
+        const args = ["-C", workspace, "fetch", "origin"];
+        if (ref) args.push(ref);
+        const out = gitWithAuth(args);
+        return { content: [{ type: "text", text: `Fetched${ref ? " " + ref : ""} successfully.\n${out}`.trim() }] };
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `Fetch failed: ${sanitizeError(e.message)}` }], isError: true };
+      }
+    });
+
+  server.tool("submodule_update", "Initialize and update git submodules recursively, optionally to a specific commit.",
+    {
+      path: z.string().optional().describe("Submodule path (e.g. 'noir/noir-repo'). If omitted, updates all submodules."),
+      commit: z.string().optional().describe("Checkout submodule to this commit/ref after update"),
+    },
+    async ({ path, commit }) => {
+      const workspace = config.workspace;
+      if (!existsSync(join(workspace, ".git"))) {
+        return { content: [{ type: "text", text: "No repo at " + workspace }], isError: true };
+      }
+      try {
+        const args = ["-C", workspace, "submodule", "update", "--init", "--recursive"];
+        if (path) args.push("--", path);
+        const out = gitWithAuth(args, 300_000);
+        let result = "Submodule" + (path ? " " + path : "s") + " initialized and updated.\n" + out;
+        if (commit && path) {
+          const subDir = join(workspace, path);
+          execFileSync("git", ["-C", subDir, "checkout", commit], { timeout: 30_000, encoding: "utf-8", stdio: "pipe" });
+          result += "\nChecked out " + path + " to " + commit;
+        }
+        return { content: [{ type: "text", text: result.trim() }] };
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `Submodule update failed: ${sanitizeError(e.message)}` }], isError: true };
+      }
+    });
+
+  server.tool("git_pull", "Pull from origin (authenticated rebase). Use this instead of bare `git pull`.",
+    { ref: z.string().optional().describe("Remote branch to pull (default: current tracking branch)") },
+    async ({ ref }) => {
+      const workspace = config.workspace;
+      if (!existsSync(join(workspace, ".git"))) {
+        return { content: [{ type: "text", text: "No repo at " + workspace }], isError: true };
+      }
+      try {
+        const args = ["-C", workspace, "pull", "--rebase", "origin"];
+        if (ref) args.push(ref);
+        const out = gitWithAuth(args);
+        return { content: [{ type: "text", text: `Pulled${ref ? " " + ref : ""} successfully.\n${out}`.trim() }] };
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `Pull failed: ${sanitizeError(e.message)}` }], isError: true };
+      }
+    });
+}
+
+// ── registerLogTools (read_log + write_log — CI log access) ─────
+
+export function registerLogTools(server: McpServer, config: { workspace: string }): void {
+  // Locate ci3/ scripts in the workspace repo
+  function findCi3(): string | null {
+    // Check workspace for ci3/ (available after clone_repo)
+    const wsPath = join(config.workspace, "ci3");
+    if (existsSync(join(wsPath, "cache_log"))) return wsPath;
+    return null;
+  }
+
+  server.tool("read_log",
+    `Read a CI log by key/hash. Use this to view build logs, session logs, or any ci.aztec-labs.com log.
+
+IMPORTANT: Use this tool instead of:
+- Curling ci.aztec-labs.com directly (will fail — no CI_PASSWORD in container)
+- Using CI_PASSWORD env var (not available)
+- Running ci.sh dlog manually
+
+Pass the log key (hex hash from the URL). Returns the log content.`,
+    {
+      key: z.string().regex(/^[a-zA-Z0-9._-]+$/).describe("Log key/hash (the hex string from a ci.aztec-labs.com URL)"),
+      tail: z.number().optional().describe("Only return the last N lines (useful for large logs)"),
+      head: z.number().optional().describe("Only return the first N lines"),
+    },
+    async ({ key, tail, head }) => {
+      const ci3 = findCi3();
+      if (!ci3) {
+        return { content: [{ type: "text", text: "ci3/ not found. Run clone_repo first to make log tools available." }], isError: true };
+      }
+
+      try {
+        // ci.sh dlog sources Redis connection scripts and reads the key
+        const ciSh = join(config.workspace, "ci.sh");
+        const cmd = existsSync(ciSh) ? ciSh : join(ci3, "..", "ci.sh");
+        const result = spawnSync("bash", ["-c", `cd "${config.workspace}" && "${cmd}" dlog "${key}"`], {
+          encoding: "utf-8",
+          timeout: 30_000,
+          stdio: ["pipe", "pipe", "pipe"],
+          env: { ...process.env },
+        });
+
+        if (result.status !== 0) {
+          const err = (result.stderr || "").trim();
+          return { content: [{ type: "text", text: `read_log failed (exit ${result.status}): ${err.slice(0, 500)}` }], isError: true };
+        }
+
+        let output = result.stdout || "";
+        if (!output.trim()) {
+          return { content: [{ type: "text", text: `Log '${key}' is empty or not found.` }], isError: true };
+        }
+
+        // Apply head/tail filtering
+        if (tail || head) {
+          const lines = output.split("\n");
+          if (tail) output = lines.slice(-tail).join("\n");
+          else if (head) output = lines.slice(0, head).join("\n");
+        }
+
+        // Truncate very large output
+        const MAX = 200_000;
+        if (output.length > MAX) {
+          output = output.slice(0, MAX) + `\n\n...(truncated at ${MAX} chars, use tail/head params to paginate)`;
+        }
+
+        return { content: [{ type: "text", text: output }] };
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `read_log: ${sanitizeError(e.message)}` }], isError: true };
+      }
+    });
+
+  server.tool("write_log",
+    `Write content to a CI log (ci.aztec-labs.com). Creates a persistent, shareable log link.
+
+Use this instead of create_gist for:
+- Build output and CI logs
+- Large command output
+- Anything that needs a quick shareable link without creating a GitHub gist
+
+The log is accessible at ci.aztec-labs.com/<key>.
+Returns the log URL.`,
+    {
+      content: z.string().describe("Content to write to the log"),
+      key: z.string().regex(/^[a-zA-Z0-9._-]+$/).optional().describe("Custom key (default: auto-generated). Use descriptive keys like 'build-output-pr-123'."),
+      category: z.string().default("claudebox").describe("Log category prefix (default: 'claudebox')"),
+    },
+    async ({ content: logContent, key, category }) => {
+      const ci3 = findCi3();
+      if (!ci3) {
+        return { content: [{ type: "text", text: "ci3/ not found. Run clone_repo first to make log tools available." }], isError: true };
+      }
+
+      const cacheLogBin = join(ci3, "cache_log");
+      const logKey = key || `claudebox-${SESSION_META.log_id || "manual"}-${Date.now().toString(36)}`;
+
+      try {
+        const result = spawnSync(cacheLogBin, [category, logKey], {
+          input: logContent,
+          encoding: "utf-8",
+          timeout: 15_000,
+          stdio: ["pipe", "pipe", "pipe"],
+          env: { ...process.env },
+        });
+
+        if (result.status !== 0) {
+          const err = (result.stderr || "").trim();
+          return { content: [{ type: "text", text: `write_log failed (exit ${result.status}): ${err.slice(0, 500)}` }], isError: true };
+        }
+
+        const url = `http://ci.aztec-labs.com/${logKey}`;
+        logActivity("artifact", `Log: ${url}`);
+        return { content: [{ type: "text", text: `${url}\nKey: ${logKey}` }] };
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `write_log: ${sanitizeError(e.message)}` }], isError: true };
       }
     });
 }

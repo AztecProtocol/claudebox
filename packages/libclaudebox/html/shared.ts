@@ -1,4 +1,4 @@
-export type { RunMeta } from "../types.ts";
+export type { SessionMeta } from "../types.ts";
 
 export function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
@@ -65,8 +65,8 @@ export interface ActivityEntry {
 
 export interface WorkspacePageData {
   hash: string;            // current session log_id
-  session: RunMeta;    // current session
-  sessions: RunMeta[]; // all sessions for this worktree (newest first)
+  session: SessionMeta;    // current session
+  sessions: SessionMeta[]; // all sessions for this worktree (newest first)
   worktreeAlive: boolean;
   activity: ActivityEntry[];  // newest first
   /** Last reply text per session log_id (for collapsed run card summaries) */
@@ -186,7 +186,11 @@ export function renderActivityEntry(a: ActivityEntry, agentLogUrl?: string): str
     const toolArgs = spIdx > 0 ? linkify(raw.slice(spIdx)) : "";
     return `<div class="chat-status" data-msg="${msgHash}"><span class="tool-icon">\u25B8</span><code><span class="tool-name">${toolName}</span><span class="tool-args">${toolArgs}</span></code><span class="ts">${timeStr}</span></div>`;
   } else if (a.type === "tool_result") {
-    return `<div class="chat-status" data-msg="${msgHash}"><span class="tool-icon">\u25C2</span><code><span class="tool-args">${linked}</span></code><span class="ts">${timeStr}</span></div>`;
+    const raw = a.text || "";
+    const isErr = raw.includes("<tool_use_error>") || raw.startsWith("Error:") || raw.startsWith("ERROR:");
+    const cleaned = linkify(raw.replace(/<\/?tool_use_error>/g, "").trim());
+    const errStyle = isErr ? ";color:#E94560;border-left-color:#E94560" : "";
+    return `<div class="chat-result" data-msg="${msgHash}" style="border-left:2px solid #222;margin-left:18px;padding:4px 10px;font-size:12px;color:#666;white-space:pre-wrap;word-break:break-all;max-height:80px;overflow:hidden;font-family:'SF Mono',monospace${errStyle}"><code>${cleaned}</code><span class="ts">${timeStr}</span></div>`;
   } else if (a.type === "status") {
     return `<div class="chat-status" data-msg="${msgHash}"><span class="tool-icon">\u25CB</span><span>${linked}</span><span class="ts">${timeStr}</span></div>`;
   }
