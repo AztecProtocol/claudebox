@@ -257,6 +257,7 @@ export class DockerService {
           `CLAUDEBOX_LINK=${opts.link || ""}`,
           `CLAUDEBOX_HOST=${CLAUDEBOX_HOST}`,
           `CLAUDEBOX_BASE_BRANCH=${baseBranch}`,
+          `CLAUDEBOX_REPO_NAME=${basename(REPO_DIR)}`,
           `CLAUDEBOX_QUIET=${opts.quiet ? "1" : "0"}`,
           `CLAUDEBOX_CI_ALLOW=${opts.ciAllow ? "1" : "0"}`,
           `CLAUDEBOX_PROFILE=${profileDir}`,

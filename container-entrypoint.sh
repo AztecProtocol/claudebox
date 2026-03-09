@@ -61,11 +61,49 @@ if [ ! -f "$PROMPT_FILE" ]; then
 fi
 PROMPT=$(cat "$PROMPT_FILE")
 
+# ── Step 3b: Pre-clone repo from reference if available ──────────
+REPO_NAME="${CLAUDEBOX_REPO_NAME:-}"
+BASE_BRANCH="${CLAUDEBOX_BASE_BRANCH:-next}"
+REPO_DIR="/workspace/${REPO_NAME}"
+
+if [ -n "$REPO_NAME" ] && [ -d "/reference-repo/.git" ] && [ ! -d "${REPO_DIR}/.git" ]; then
+    echo ""
+    echo "━━━ Pre-cloning $REPO_NAME (sparse) from reference ━━━"
+    git config --global --add safe.directory /reference-repo/.git
+    git config --global --add safe.directory "$REPO_DIR"
+    # Sparse clone: only checkout .claude/ dirs (skills, settings, CLAUDE.md)
+    # Claude will populate the full tree via clone_repo when it needs to work
+    git clone --shared --no-checkout /reference-repo/.git "$REPO_DIR" 2>&1 || true
+    if [ -d "${REPO_DIR}/.git" ]; then
+        cd "$REPO_DIR"
+        # Autodetect .claude-related paths from the reference repo
+        CLAUDE_PATHS=$(git ls-tree -r -d --name-only HEAD 2>/dev/null | grep -E '(^\.claude$|/\.claude$)' || true)
+        if [ -n "$CLAUDE_PATHS" ]; then
+            git sparse-checkout set --cone $CLAUDE_PATHS 2>/dev/null || true
+        else
+            git sparse-checkout set --cone .claude 2>/dev/null || true
+        fi
+        # Try to checkout the base branch
+        git checkout --detach "origin/${BASE_BRANCH}" 2>/dev/null \
+            || git checkout --detach origin/main 2>/dev/null \
+            || git checkout --detach HEAD 2>/dev/null \
+            || true
+        echo "Pre-cloned (sparse) at $(git rev-parse --short HEAD 2>/dev/null || echo '???')"
+    fi
+elif [ -n "$REPO_NAME" ] && [ -d "${REPO_DIR}/.git" ]; then
+    echo "Repo already exists at $REPO_DIR"
+    cd "$REPO_DIR"
+fi
+
+# Set working directory: prefer repo dir if it exists, else /workspace
+WORK_DIR="$REPO_DIR"
+[ ! -d "$WORK_DIR" ] && WORK_DIR="/workspace"
+
 echo ""
 echo "━━━ Launching Claude ━━━"
 echo ""
 
-cd /workspace
+cd "$WORK_DIR"
 
 # ── Step 4: Run Claude (or CLAUDE_BINARY override) ────────────────
 CLAUDE_BIN="${CLAUDE_BINARY:-claude}"

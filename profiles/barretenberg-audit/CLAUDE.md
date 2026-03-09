@@ -49,16 +49,19 @@ The skills load PRINCIPLES.md (known bug classes) and CRITERIA.md (code quality 
 | `get_context` | Session metadata |
 | `session_status` | Update Slack + GitHub status in-place. Call frequently. |
 | `github_api` | GitHub REST API proxy — **read-only** (GET only) |
+| `slack_api` | Slack API proxy |
 | `create_issue` | **Create GitHub issues for findings** — specify quality_dimension + severity |
 | `close_issue` | Close a GitHub issue — posts a tracking comment with session log before closing |
 | `add_labels` | Add labels to an existing issue or PR |
 | `create_audit_label` | Create a new audit scope label + commit its prompt file to the repo |
 | `add_log_link` | Post a cross-reference comment linking an issue to this session's log |
-| `self_assess` | **REQUIRED** — rate your session + each quality dimension |
 | `create_pr` | Push changes and create a draft PR (for fixes) |
 | `update_pr` | Push to / modify existing PRs |
 | `create_external_pr` | Push changes and create a draft PR on **upstream** `AztecProtocol/barretenberg` (requires `create-external-pr` scope) |
-| `create_gist` | Share verbose output |
+| `read_log` | Read a CI log by key/hash. Use instead of curling ci.aztec-labs.com or CI_PASSWORD. |
+| `write_log` | Write content to a CI log — lightweight alternative to create_gist for build output. |
+| `create_gist` | Create a gist (one per session, then use update_gist) |
+| `update_gist` | Add/update files in an existing gist |
 | `list_gists` | List all audit gists — review prior session summaries |
 | `read_gist` | Read full gist content by ID or URL |
 | `update_meta_issue` | Create/update a meta-issue tracking session or module audit progress |
@@ -89,11 +92,11 @@ create_issue(
 6. `record_stat` — record each file reviewed with `audit_file_review` schema
 7. `create_issue` — file each finding with severity, impact, and reproduction details
 8. `add_log_link` — cross-reference related issues to this session
-9. `create_gist` — **create a summary gist** with detailed findings, coverage table, open questions
+9. `create_gist` — create a summary gist (use `update_gist` if you need to add more files)
 10. `record_stat` — record `audit_summary` with the gist URL
 11. `update_meta_issue` — create session meta-issue linking all artifacts
 12. **Mandatory review** — see below
-14. **`respond_to_user`** — final summary (REQUIRED, 1-2 sentences + gist link)
+13. **`respond_to_user`** — final summary (REQUIRED, 1-2 sentences + gist link)
 
 ### Final response — `respond_to_user` (REQUIRED)
 
@@ -126,8 +129,6 @@ Every file review and issue is tagged with a **quality dimension**:
 - Pick ONE dimension per file review entry. If you reviewed both code and crypto aspects of a file, record TWO separate `record_stat` calls.
 - **`crypto-2nd-pass`** — ONLY use this if `audit_history` shows the file was already reviewed under `crypto` by a **different** session. This provides independent verification. Do NOT use it for your own re-reviews within the same session.
 - When creating issues, specify `quality_dimension` and `severity` — these are tracked for completion metrics.
-- Your `self_assess` at the end should rate each dimension you covered.
-
 ### Severity Calibration
 
 With AI-assisted development in 2026, development velocity is dramatically higher and maintenance burdens are far lower — calibrate "maintenance cost" severity accordingly. Focus severity on soundness, security, and correctness impact rather than code cleanliness.
@@ -146,9 +147,9 @@ record_stat(schema="audit_file_review", data={
 })
 ```
 
-### Session summary gist — `create_gist` + `record_stat`
+### Session summary gist
 
-**Before finishing, create a summary gist.** This is the primary record of your work — the Slack response should be short, the gist should be thorough. The gist MUST contain these four sections:
+Create a summary gist before finishing. Use `update_gist` to add files if needed. The gist MUST contain these four sections:
 
 1. **Executive Summary** (2-4 lines) — What you reviewed, key findings, overall risk assessment.
 2. **Skill Improvements** — What changes to Claude skills/prompts would help future audit sessions? Missing context, unhelpful instructions, tools that should exist, knowledge gaps.
@@ -220,7 +221,7 @@ Before calling `respond_to_user`, you MUST:
    - `thorough` = deep line-by-line review, no critical issues
    - `surface` = quick scan, identified areas for deeper review
    - `incomplete` = could not finish due to complexity or missing context
-8. **`respond_to_user`** — final 1-2 sentence summary + link to gist
+7. **`respond_to_user`** — final 1-2 sentence summary + link to gist
 
 This review is NOT optional. Skipping it means the audit trail is incomplete.
 
@@ -236,7 +237,7 @@ This review is NOT optional. Skipping it means the audit trail is incomplete.
 
 ## Rules
 - Update status frequently via `session_status`
-- End with `self_assess` then `respond_to_user`
+- End with `respond_to_user`
 - **Never use `gh` CLI or `git push`** — use dedicated MCP tools. `github_api` is read-only.
 - **Git identity**: You are `AztecBot <tech@aztec-labs.com>`. Do NOT add `Co-Authored-By` trailers.
 - File **one issue per finding** with clear severity ratings

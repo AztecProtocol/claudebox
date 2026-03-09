@@ -17,7 +17,7 @@ import { SESSION_META } from "../../packages/libclaudebox/mcp/env.ts";
 import { logActivity } from "../../packages/libclaudebox/mcp/activity.ts";
 import { getCreds, git, sanitizeError } from "../../packages/libclaudebox/mcp/helpers.ts";
 import { registerCommonTools } from "../../packages/libclaudebox/mcp/tools.ts";
-import { pushToRemote, registerCloneRepo, registerPRTools } from "../../packages/libclaudebox/mcp/git-tools.ts";
+import { pushToRemote, registerCloneRepo, registerPRTools, registerGitProxy } from "../../packages/libclaudebox/mcp/git-tools.ts";
 import { startMcpHttpServer } from "../../packages/libclaudebox/mcp/server.ts";
 
 // ── Profile config ──────────────────────────────────────────────
@@ -81,6 +81,8 @@ function createServer(): McpServer {
         return { content: [{ type: "text", text: `push_branch: ${sanitizeError(e.message)}` }], isError: true };
       }
     });
+
+  registerGitProxy(server, { workspace: WORKSPACE });
 
   return server;
 }
