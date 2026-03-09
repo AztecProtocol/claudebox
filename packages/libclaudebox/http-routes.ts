@@ -221,6 +221,31 @@ async function buildDashboardData(store: WorktreeStore, profileFilter?: string):
       origin = "github";
     }
 
+    // Extract artifacts and latest reply from activity
+    let lastReply = "";
+    const artifactMap = new Map<string, { type: string; text: string; url: string }>();
+    if (worktreeId) {
+      const activity = store.readActivity(worktreeId); // newest first
+      for (const a of activity) {
+        if (a.type === "response" && !lastReply) {
+          lastReply = a.text.length > 300 ? a.text.slice(0, 300) + "..." : a.text;
+        }
+        if (a.type === "artifact") {
+          const urlMatch = a.text.match(/(https?:\/\/[^\s)>\]]+)/);
+          if (urlMatch) {
+            const url = urlMatch[1].replace(/[.,;:!?]+$/, '');
+            if (!artifactMap.has(url)) {
+              const prMatch = url.match(/\/pull\/(\d+)/);
+              const issueMatch = url.match(/\/issues\/(\d+)/);
+              const type = url.includes("gist.github") ? "gist" : prMatch ? "pr" : issueMatch ? "issue" : "link";
+              const label = prMatch ? `#${prMatch[1]}` : issueMatch ? `#${issueMatch[1]}` : type === "gist" ? "gist" : "link";
+              artifactMap.set(url, { type, text: label, url });
+            }
+          }
+        }
+      }
+    }
+
     workspaces.push({
       worktreeId: worktreeId || latest._log_id || "?",
       name: meta.name || null,
@@ -240,6 +265,8 @@ async function buildDashboardData(store: WorktreeStore, profileFilter?: string):
       slackChannel: slackChannel || undefined,
       slackThreadTs: slackThread || undefined,
       link: link || undefined,
+      lastReply: lastReply || undefined,
+      artifacts: artifactMap.size > 0 ? [...artifactMap.values()] : undefined,
     });
   }
 

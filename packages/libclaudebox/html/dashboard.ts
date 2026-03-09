@@ -142,6 +142,18 @@ a{color:#7aa2f7;text-decoration:none}a:hover{text-decoration:underline}
 .badge-tag{color:#bb9af7;border-color:#1a1a2a;background:#0d0a0d;cursor:pointer}
 .badge-tag:hover{border-color:#bb9af7}
 
+/* Card artifacts */
+.card-artifacts{display:flex;gap:4px;margin-top:6px;flex-wrap:wrap}
+.card-artifact{font-size:10px;padding:2px 8px;border-radius:10px;text-decoration:none;transition:all 0.15s}
+.card-artifact:hover{opacity:0.85;text-decoration:none}
+.card-artifact.a-pr{color:#9ece6a;border:1px solid #1a2a1a;background:#0a0d0a}
+.card-artifact.a-issue{color:#f7768e;border:1px solid #2a1a1a;background:#0d0a0a}
+.card-artifact.a-gist{color:#bb9af7;border:1px solid #1a1a2a;background:#0d0a0d}
+.card-artifact.a-link{color:#7dcfff;border:1px solid #1a2a2a;background:#0a0d0d}
+
+/* Card reply */
+.card-reply{font-size:11px;color:#555;margin-top:6px;padding:6px 8px;background:#050505;border-left:2px solid #1a1a1a;border-radius:0 2px 2px 0;word-break:break-word;max-height:60px;overflow:hidden;line-height:1.4}
+
 /* Kebab menu */
 .kebab{color:#333;cursor:pointer;padding:2px 6px;font-size:16px;line-height:1;border-radius:2px;flex-shrink:0}
 .kebab:hover{color:#888;background:#111}
@@ -347,6 +359,17 @@ function WorkspaceCard({ w, onRefresh, nested }) {
         \${!nested && w.origin === "github" ? html\`<span class="badge badge-profile">github</span>\` : null}
         \${w.profile ? html\`<span class="badge badge-profile">\${w.profile}</span>\` : null}
       </div>
+      \${w.artifacts && w.artifacts.length > 0 ? html\`
+        <div class="card-artifacts">
+          \${w.artifacts.map(a => html\`
+            <a key=\${a.url} href=\${a.url} target="_blank" class=\${"card-artifact a-" + a.type}
+              onClick=\${(e) => e.stopPropagation()}>\${a.text}</a>
+          \`)}
+        </div>
+      \` : null}
+      \${w.lastReply ? html\`
+        <div class="card-reply">\${w.lastReply}</div>
+      \` : null}
       \${menuOpen ? html\`
         <div class="menu">
           <button class="menu-item" onClick=\${handleRename}>Rename</button>
