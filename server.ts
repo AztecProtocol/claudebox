@@ -17,13 +17,16 @@ if (process.argv.includes("--http-only")) process.env.CLAUDEBOX_HTTP_ONLY = "1";
 const HTTP_ONLY = process.env.CLAUDEBOX_HTTP_ONLY === "1";
 
 import {
-  SLACK_BOT_TOKEN, SLACK_APP_TOKEN, HTTP_PORT, DOCKER_IMAGE, MAX_CONCURRENT,
+  SLACK_APP_TOKEN, HTTP_PORT, DOCKER_IMAGE, MAX_CONCURRENT,
   CLAUDEBOX_DIR, setChannelMaps,
 } from "./packages/libclaudebox/config.ts";
+
+// SLACK_BOT_TOKEN via libcreds-host — needed for Slack Bolt App initialization.
+import { getSlackBotToken } from "./packages/libcreds-host/index.ts";
+const SLACK_BOT_TOKEN = getSlackBotToken();
 import { SessionStore } from "./packages/libclaudebox/session-store.ts";
 import { DockerService } from "./packages/libclaudebox/docker.ts";
 import { createHttpServer } from "./packages/libclaudebox/http-routes.ts";
-import { QuestionStore } from "./packages/libclaudebox/question-store.ts";
 import { DmRegistry } from "./packages/libclaudebox/dm-registry.ts";
 import { setPluginsDir, buildChannelProfileMap, buildChannelBranchMap, loadAllPlugins } from "./packages/libclaudebox/plugin-loader.ts";
 import { PluginRuntime } from "./packages/libclaudebox/plugin.ts";
@@ -90,32 +93,6 @@ async function main() {
 
   // ── DM registry ──
   const dmRegistry = new DmRegistry(join(CLAUDEBOX_DIR, "dm-registry.json"));
-
-  // ── Question expiry timer ──
-  const questionStore = new QuestionStore();
-  setInterval(() => {
-    try {
-      const resolved = questionStore.expireOverdue();
-      for (const worktreeId of resolved) {
-        console.log(`[QUESTIONS] All questions resolved for ${worktreeId} — auto-resuming`);
-        const session = store.findByWorktreeId(worktreeId);
-        if (session && session.status !== "running" && store.isWorktreeAlive(worktreeId)) {
-          const prompt = questionStore.buildResumePrompt(worktreeId);
-          docker.runContainerSession({
-            prompt,
-            userName: session.user || "auto-resume",
-            worktreeId,
-            targetRef: session.base_branch ? `origin/${session.base_branch}` : undefined,
-            profile: session.profile || undefined,
-          }, store).catch(e => {
-            console.error(`[QUESTIONS] Auto-resume failed for ${worktreeId}: ${e.message}`);
-          });
-        }
-      }
-    } catch (e: any) {
-      console.error(`[QUESTIONS] Expiry check error: ${e.message}`);
-    }
-  }, 60_000);
 
   // ── Worktree GC — keep workspace dirs under 100GB, clean oldest first ──
   let gcRunning = false;

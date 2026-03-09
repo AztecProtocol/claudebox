@@ -68,7 +68,15 @@ describe("e2e session lifecycle (test profile)", () => {
     rmSync(TEST_DIR, { recursive: true, force: true });
   });
 
-  it("runs full session with mock-claude exercising MCP tools", async () => {
+  it("runs full session with mock-claude exercising MCP tools", async (t) => {
+    // Skip if Docker image not available
+    const image = process.env.CLAUDEBOX_DOCKER_IMAGE || "aztecprotocol/devbox:3.0";
+    const imgCheck = spawnSync("docker", ["image", "inspect", image], { timeout: 10_000 });
+    if (imgCheck.status !== 0) {
+      t.skip(`Docker image ${image} not available`);
+      return;
+    }
+
     const { SessionStore } = await import("../../packages/libclaudebox/session-store.ts");
     const { DockerService } = await import("../../packages/libclaudebox/docker.ts");
     const { setPluginsDir, loadPlugin } = await import("../../packages/libclaudebox/plugin-loader.ts");

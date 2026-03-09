@@ -2,9 +2,9 @@ import { join, dirname } from "path";
 import { homedir } from "os";
 
 // ── Environment ─────────────────────────────────────────────────
-export const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN!;
+// Token env vars (SLACK_BOT_TOKEN, GH_TOKEN, LINEAR_API_KEY) are now
+// centralized in libcreds / libcreds-host. Do NOT read them here.
 export const SLACK_APP_TOKEN = process.env.SLACK_APP_TOKEN!;
-export const GH_TOKEN = process.env.GH_TOKEN || "";
 export const API_SECRET = process.env.CLAUDEBOX_API_SECRET || "";
 export const HTTP_PORT = parseInt(process.env.CLAUDEBOX_PORT || "3000", 10);
 export const MAX_CONCURRENT = 10;

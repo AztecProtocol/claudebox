@@ -9,12 +9,16 @@ import type { SessionStore } from "./session-store.ts";
 import { SessionStreamer } from "./session-streamer.ts";
 import {
   REPO_DIR, DOCKER_IMAGE, CLAUDEBOX_CODE_DIR, CLAUDE_BINARY,
-  BASTION_SSH_KEY, GH_TOKEN, SLACK_BOT_TOKEN, HTTP_PORT,
+  BASTION_SSH_KEY, HTTP_PORT,
   CLAUDEBOX_HOST, CLAUDEBOX_DIR, CLAUDEBOX_STATS_DIR, API_SECRET,
   buildLogUrl,
   incrActiveSessions, decrActiveSessions,
 } from "./config.ts";
-import { loadPlugin } from "./plugin-loader.ts";
+
+// Token env vars — sourced from libcreds-host (the only package that reads token env vars).
+import { getContainerTokens } from "../libcreds-host/index.ts";
+import { getDockerConfig, getPromptSuffix, getSummaryPrompt, getTagCategories } from "./plugin-loader.ts";
+import type { DockerConfig } from "./plugin.ts";
 
 // Container user — determined by the Docker image
 const CONTAINER_USER = process.env.CLAUDEBOX_CONTAINER_USER || "claude";
@@ -141,8 +145,7 @@ export class DockerService {
     }
     const sidecarEntrypoint = `/opt/claudebox/profiles/${profileDir}/mcp-sidecar.ts`;
     const claudeMdPath = `/opt/claudebox/profiles/${profileDir}/container-claude.md`;
-    const plugin = await loadPlugin(profileDir);
-    const dockerConfig = plugin.docker ?? {};
+    const dockerConfig = await getDockerConfig(profileDir);
     const containerImage = dockerConfig.image || DOCKER_IMAGE;
     const mountRef = dockerConfig.mountReferenceRepo !== false; // default true
 
@@ -163,11 +166,8 @@ export class DockerService {
     fullPrompt += `\nTarget ref: ${opts.targetRef || "origin/next"}`;
     if (opts.runUrl) fullPrompt += `\nRun URL: ${opts.runUrl}`;
     if (opts.link) fullPrompt += `\nLink: ${opts.link}`;
-    if (plugin.buildPromptContext) {
-      const ctx = await plugin.buildPromptContext(store);
-      if (ctx) fullPrompt += `\n\n${ctx}`;
-    }
-    if (plugin.promptSuffix) fullPrompt += `\n\n${plugin.promptSuffix}`;
+    const promptSuffix = await getPromptSuffix(profileDir);
+    if (promptSuffix) fullPrompt += `\n\n${promptSuffix}`;
     writeFileSync(join(workspaceDir, "prompt.txt"), fullPrompt);
 
     // Write session metadata
@@ -240,9 +240,9 @@ export class DockerService {
           `GIT_COMMITTER_NAME=${GIT_IDENTITY.name}`,
           `GIT_COMMITTER_EMAIL=${GIT_IDENTITY.email}`,
           `MCP_PORT=9801`,
-          `GH_TOKEN=${GH_TOKEN}`,
-          `SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}`,
-          `LINEAR_API_KEY=${process.env.LINEAR_API_KEY || ""}`,
+          `GH_TOKEN=${getContainerTokens().ghToken}`,
+          `SLACK_BOT_TOKEN=${getContainerTokens().slackBotToken}`,
+          `LINEAR_API_KEY=${getContainerTokens().linearApiKey}`,
           // Server client env — sidecar uses these to talk to host server
           `CLAUDEBOX_SERVER_URL=${serverUrl}`,
           `CLAUDEBOX_SERVER_TOKEN=${API_SECRET}`,
@@ -308,7 +308,7 @@ export class DockerService {
         "-e", `CLAUDEBOX_MODEL=${opts.model || ""}`,
       ];
       // Pass tag categories to sidecar
-      const tagCats = plugin.tagCategories || [];
+      const tagCats = await getTagCategories(profileDir);
       if (tagCats.length) claudeArgs.push("-e", `CLAUDEBOX_TAG_CATEGORIES=${tagCats.join(",")}`);
       // Profile-specific extra env vars and bind mounts
       if (dockerConfig.extraEnv) {

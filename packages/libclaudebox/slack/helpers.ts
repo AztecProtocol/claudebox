@@ -1,10 +1,10 @@
 import type { SessionMeta } from "../types.ts";
-import { SLACK_BOT_TOKEN } from "../config.ts";
 import type { SessionStore } from "../session-store.ts";
 import type { DockerService } from "../docker.ts";
 import { truncate, extractHashFromUrl, sessionUrl } from "../util.ts";
 import { toTargetRef } from "../base-branch.ts";
 import { getSummaryPrompt } from "../plugin-loader.ts";
+import { getHostCreds } from "../../libcreds-host/index.ts";
 
 /**
  * Convert Markdown-style links and bare URLs to Slack mrkdwn format.
@@ -107,16 +107,11 @@ export function buildSlackStatusFromActivity(
 
 /** Add or swap a Slack reaction on a message. */
 async function setReaction(channel: string, ts: string, emoji: string, removeEmoji?: string): Promise<void> {
-  if (!SLACK_BOT_TOKEN) return;
-  const headers = { Authorization: `Bearer ${SLACK_BOT_TOKEN}`, "Content-Type": "application/json" };
+  const creds = getHostCreds({ slackChannel: channel, slackMessageTs: ts });
   if (removeEmoji) {
-    await fetch("https://slack.com/api/reactions.remove", {
-      method: "POST", headers, body: JSON.stringify({ channel, timestamp: ts, name: removeEmoji }),
-    }).catch(() => {});
+    await creds.slack.removeReaction(removeEmoji, { channel, timestamp: ts }).catch(() => {});
   }
-  await fetch("https://slack.com/api/reactions.add", {
-    method: "POST", headers, body: JSON.stringify({ channel, timestamp: ts, name: emoji }),
-  }).catch(() => {});
+  await creds.slack.addReaction(emoji, { channel, timestamp: ts }).catch(() => {});
 }
 
 export async function updateSlackStatus(
@@ -145,11 +140,8 @@ export async function updateSlackStatus(
 
   const text = buildSlackStatusFromActivity(activity, prompt, status, logUrl, worktreeId, logId);
 
-  await fetch("https://slack.com/api/chat.update", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${SLACK_BOT_TOKEN}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ channel, ts: messageTs, text }),
-  });
+  const creds = getHostCreds({ slackChannel: channel, slackMessageTs: messageTs });
+  await creds.slack.updateMessage(text, { channel, ts: messageTs });
 
   // Swap reaction: running → done
   const isSuccess = status.startsWith("completed");
@@ -291,7 +283,7 @@ export async function startNewSession(
     }).then((exitCode) => {
       const latestSession = capturedWorktreeId ? store.findByWorktreeId(capturedWorktreeId) : null;
       const capturedLogId = latestSession?._log_id || "";
-      if (SLACK_BOT_TOKEN && messageTs && capturedLogUrl) {
+      if (messageTs && capturedLogUrl) {
         const statusSuffix = exitCode === 0 ? "completed" : `error (exit ${exitCode})`;
         updateSlackStatus(channel, messageTs, statusSuffix, capturedLogUrl, capturedWorktreeId, store, prompt, capturedLogId)
           .catch((e) => console.warn(`[WARN] Slack status update failed: ${e}`));
@@ -361,7 +353,7 @@ export async function startReplySession(
     }).then((exitCode) => {
       const latestSession = capturedWorktreeId ? store.findByWorktreeId(capturedWorktreeId) : null;
       const capturedLogId = latestSession?._log_id || "";
-      if (SLACK_BOT_TOKEN && messageTs && capturedLogUrl) {
+      if (messageTs && capturedLogUrl) {
         const statusSuffix = exitCode === 0 ? "completed" : `error (exit ${exitCode})`;
         updateSlackStatus(channel, messageTs, statusSuffix, capturedLogUrl, capturedWorktreeId, store, message, capturedLogId)
           .catch((e) => console.warn(`[WARN] Slack status update failed: ${e}`));
