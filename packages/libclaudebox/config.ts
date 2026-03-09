@@ -28,10 +28,13 @@ export const SESSION_PAGE_USER = process.env.CLAUDEBOX_SESSION_USER || "admin";
 export const SESSION_PAGE_PASS = process.env.CLAUDEBOX_SESSION_PASS || "";
 
 // ── Log URL builder ─────────────────────────────────────────────
-// Override with CLAUDEBOX_LOG_BASE_URL to change from default.
-export const LOG_BASE_URL = process.env.CLAUDEBOX_LOG_BASE_URL || `http://${CLAUDEBOX_HOST}`;
+// Points to the session page on CLAUDEBOX_HOST (e.g. claudebox.work/s/<worktreeId>).
+// The logId format is <worktreeId>-<seq>, so we extract the worktreeId prefix.
+export const LOG_BASE_URL = `https://${CLAUDEBOX_HOST}`;
 export function buildLogUrl(logId: string): string {
-  return `${LOG_BASE_URL}/${logId}`;
+  // Extract worktreeId from logId (e.g. "d9441073aae158ae-3" → "d9441073aae158ae")
+  const worktreeId = logId.replace(/-\d+$/, "");
+  return `${LOG_BASE_URL}/s/${worktreeId}`;
 }
 
 // ── Channel → branch and channel → profile maps ────────────────

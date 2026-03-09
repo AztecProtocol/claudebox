@@ -8,9 +8,9 @@ import {
 } from "../../packages/libclaudebox/config.ts";
 
 describe("config", () => {
-  it("reads CLAUDEBOX_LOG_BASE_URL from env", () => {
-    // Falls back to http://<CLAUDEBOX_HOST> when env not set
-    assert.ok(LOG_BASE_URL.startsWith("http"));
+  it("builds LOG_BASE_URL from CLAUDEBOX_HOST", () => {
+    assert.ok(LOG_BASE_URL.startsWith("https://"));
+    assert.ok(LOG_BASE_URL.includes(CLAUDEBOX_HOST));
   });
 
   it("reads CLAUDEBOX_HOST from env", () => {
@@ -28,8 +28,9 @@ describe("config", () => {
 });
 
 describe("buildLogUrl", () => {
-  it("constructs URL from base and logId", () => {
-    assert.equal(buildLogUrl("abc123-1"), `${LOG_BASE_URL}/abc123-1`);
+  it("constructs session page URL from logId", () => {
+    // buildLogUrl extracts worktreeId from logId and builds session page URL
+    assert.equal(buildLogUrl("abc123def456789a-1"), `https://${CLAUDEBOX_HOST}/s/abc123def456789a`);
   });
 });
 

@@ -6,7 +6,7 @@ import {
   validateResumeSession, sessionUrl,
   hashFromLogUrl, prKeyFromUrl, worktreeIdFromLogUrl,
 } from "../../packages/libclaudebox/util.ts";
-import { LOG_BASE_URL, CLAUDEBOX_HOST } from "../../packages/libclaudebox/config.ts";
+import { CLAUDEBOX_HOST } from "../../packages/libclaudebox/config.ts";
 import type { SessionMeta, ParseResult } from "../../packages/libclaudebox/types.ts";
 
 describe("truncate", () => {
@@ -33,25 +33,17 @@ describe("truncate", () => {
 });
 
 describe("extractHashFromUrl", () => {
-  it("extracts hash from log URL", () => {
+  it("extracts worktreeId from session page URL", () => {
     assert.equal(
-      extractHashFromUrl(`${LOG_BASE_URL}/abc123def456-3`),
-      "abc123def456-3",
+      extractHashFromUrl(`https://${CLAUDEBOX_HOST}/s/abc123def4567890`),
+      "abc123def4567890",
     );
   });
 
-  it("extracts hash from angle-bracketed URL", () => {
+  it("extracts worktreeId from angle-bracketed session URL", () => {
     assert.equal(
-      extractHashFromUrl(`<${LOG_BASE_URL}/abc123def456-3>`),
-      "abc123def456-3",
-    );
-  });
-
-  it("extracts legacy 32-hex hash", () => {
-    const hash = "a".repeat(32);
-    assert.equal(
-      extractHashFromUrl(`${LOG_BASE_URL}/${hash}`),
-      hash,
+      extractHashFromUrl(`<https://${CLAUDEBOX_HOST}/s/abc123def4567890>`),
+      "abc123def4567890",
     );
   });
 
@@ -59,14 +51,6 @@ describe("extractHashFromUrl", () => {
     assert.equal(extractHashFromUrl("http://other-site.com/abc123"), null);
     assert.equal(extractHashFromUrl("just some text"), null);
     assert.equal(extractHashFromUrl(""), null);
-  });
-
-  it("handles https variant", () => {
-    const httpsBase = LOG_BASE_URL.replace(/^http:/, "https:");
-    assert.equal(
-      extractHashFromUrl(`${httpsBase}/abc123def456-3`),
-      "abc123def456-3",
-    );
   });
 });
 
@@ -79,11 +63,11 @@ describe("parseMessage", () => {
     assert.deepEqual(result, { type: "prompt", prompt: "please fix the bug" });
   });
 
-  it("extracts hash from log URL with remaining prompt", () => {
-    const result = parseMessage(`${LOG_BASE_URL}/abc123-1 fix this`, noSession);
+  it("extracts worktreeId from session page URL with remaining prompt", () => {
+    const result = parseMessage(`https://${CLAUDEBOX_HOST}/s/d9441073aae158ae fix this`, noSession);
     assert.equal(result.type, "reply-hash");
     if (result.type === "reply-hash") {
-      assert.equal(result.hash, "abc123-1");
+      assert.equal(result.hash, "d9441073aae158ae");
       assert.equal(result.prompt, "fix this");
     }
   });
@@ -200,16 +184,23 @@ describe("sessionUrl", () => {
 });
 
 describe("worktreeIdFromLogUrl", () => {
-  it("extracts worktree ID from new format", () => {
+  it("extracts worktree ID from session page URL", () => {
     assert.equal(
-      worktreeIdFromLogUrl(`${LOG_BASE_URL}/d9441073aae158ae-3`),
+      worktreeIdFromLogUrl(`https://${CLAUDEBOX_HOST}/s/d9441073aae158ae`),
+      "d9441073aae158ae",
+    );
+  });
+
+  it("extracts worktree ID from logId format", () => {
+    assert.equal(
+      worktreeIdFromLogUrl(`https://example.com/d9441073aae158ae-3`),
       "d9441073aae158ae",
     );
   });
 
   it("returns empty string for legacy format", () => {
     assert.equal(
-      worktreeIdFromLogUrl(`${LOG_BASE_URL}/` + "a".repeat(32)),
+      worktreeIdFromLogUrl("https://example.com/" + "a".repeat(32)),
       "",
     );
   });
@@ -217,10 +208,10 @@ describe("worktreeIdFromLogUrl", () => {
 
 
 describe("hashFromLogUrl", () => {
-  it("extracts full log ID", () => {
+  it("extracts worktreeId from session page URL", () => {
     assert.equal(
-      hashFromLogUrl(`${LOG_BASE_URL}/d9441073aae158ae-3`),
-      "d9441073aae158ae-3",
+      hashFromLogUrl(`https://${CLAUDEBOX_HOST}/s/d9441073aae158ae`),
+      "d9441073aae158ae",
     );
   });
 

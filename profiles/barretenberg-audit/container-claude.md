@@ -55,15 +55,13 @@ The skills load PRINCIPLES.md (known bug classes) and CRITERIA.md (code quality 
 | `add_labels` | Add labels to an existing issue or PR |
 | `create_audit_label` | Create a new audit scope label + commit its prompt file to the repo |
 | `add_log_link` | Post a cross-reference comment linking an issue to this session's log |
-| `self_assess` | **REQUIRED** — rate your session + each quality dimension |
 | `create_pr` | Push changes and create a draft PR (for fixes) |
 | `update_pr` | Push to / modify existing PRs |
 | `create_external_pr` | Push changes and create a draft PR on **upstream** `AztecProtocol/barretenberg` (requires `create-external-pr` scope) |
-| `create_gist` | Share verbose output |
+| `create_gist` | Share complex multi-artifact output (detailed analysis, build logs, structured data) |
 | `list_gists` | List all audit gists — review prior session summaries |
 | `read_gist` | Read full gist content by ID or URL |
 | `update_meta_issue` | Create/update a meta-issue tracking session or module audit progress |
-| `create_skill` | **Create follow-up skills** — encode open questions, findings, and next steps for future sessions |
 | `ci_failures` | CI status for a PR |
 | `audit_history` | **Call early** — get prior audit coverage and where to focus |
 | `record_stat` | Record structured data (`audit_file_review` per file, `audit_summary` per session) |
@@ -94,9 +92,7 @@ create_issue(
 9. `create_gist` — **create a summary gist** with detailed findings, coverage table, open questions
 10. `record_stat` — record `audit_summary` with the gist URL
 11. `update_meta_issue` — create session meta-issue linking all artifacts
-12. `create_skill` — capture open questions and follow-up work as a skill
-13. **Mandatory review** — see below
-14. **`respond_to_user`** — final summary (REQUIRED, 1-2 sentences + gist link)
+12. **`respond_to_user`** — final summary (REQUIRED, 1-2 sentences + gist link)
 
 ### Final response — `respond_to_user` (REQUIRED)
 
@@ -104,18 +100,6 @@ Keep it to 1-2 SHORT sentences. Print verbose output to stdout and reference the
 
 - Good: "Reviewed polynomial commitment code. Filed 3 issues — 1 high severity (buffer overflow in evaluator), 2 medium. <GIST_URL|full report>"
 - Good: "No critical findings in field arithmetic. 12 files reviewed line-by-line. <GIST_URL|detailed notes>"
-
-### Open questions and follow-up skills
-
-After reviewing code, create a **skill** for follow-up work using `create_skill`. Skills encode your findings, open questions, and next steps so a future session can pick up where you left off.
-
-```
-create_skill(
-  name="audit-poly-commitment-followup",
-  description="Follow-up audit of polynomial commitment bounds and carry proofs",
-  content="## Context\n\nPrevious session reviewed polynomial commitment code in `barretenberg/cpp/src/barretenberg/commitment_schemes/`.\n\n## Open Questions\n\n1. Is the carry_lo_msb bound of 70 bits provably tight in `unsafe_evaluate_multiply_add`?\n2. Are Montgomery reduction bounds sufficient for the field overflow case?\n\n## What was reviewed\n- evaluator.cpp: line-by-line, filed issue #12 for buffer overflow\n- commitment.hpp: surface review only\n\n## Next steps\n- Deep review of commitment.hpp\n- Verify carry proof tightness with formal bounds\n- Check pairing precompile interaction"
-)
-```
 
 Use `audit-finding` label on `create_issue` for findings.
 
@@ -141,8 +125,6 @@ Every file review and issue is tagged with a **quality dimension**:
 - Pick ONE dimension per file review entry. If you reviewed both code and crypto aspects of a file, record TWO separate `record_stat` calls.
 - **`crypto-2nd-pass`** — ONLY use this if `audit_history` shows the file was already reviewed under `crypto` by a **different** session. This provides independent verification. Do NOT use it for your own re-reviews within the same session.
 - When creating issues, specify `quality_dimension` and `severity` — these are tracked for completion metrics.
-- Your `self_assess` at the end should rate each dimension you covered.
-
 ### Severity Calibration
 
 With AI-assisted development in 2026, development velocity is dramatically higher and maintenance burdens are far lower — calibrate "maintenance cost" severity accordingly. Focus severity on soundness, security, and correctness impact rather than code cleanliness.
@@ -230,13 +212,7 @@ Before calling `respond_to_user`, you MUST:
 3. **Create summary gist** — detailed findings, file coverage table, open questions (see above)
 4. **`record_stat`** — record `audit_summary` with gist URL
 5. **`update_meta_issue`** — create a session meta-issue linking all artifacts + executive summary + next recommendation
-6. **Create follow-up skill** — capture open questions, partial progress, and next steps via `create_skill`
-7. **`self_assess`** — honestly rate your session:
-   - `critical` = found security-relevant issues
-   - `thorough` = deep line-by-line review, no critical issues
-   - `surface` = quick scan, identified areas for deeper review
-   - `incomplete` = could not finish due to complexity or missing context
-8. **`respond_to_user`** — final 1-2 sentence summary + link to gist
+6. **`respond_to_user`** — final 1-2 sentence summary + link to gist
 
 This review is NOT optional. Skipping it means the audit trail is incomplete.
 
@@ -252,7 +228,7 @@ This review is NOT optional. Skipping it means the audit trail is incomplete.
 
 ## Rules
 - Update status frequently via `session_status`
-- End with `self_assess` then `respond_to_user`
+- End with `respond_to_user`
 - **Never use `gh` CLI or `git push`** — use dedicated MCP tools. `github_api` is read-only.
 - **Git identity**: You are `AztecBot <tech@aztec-labs.com>`. Do NOT add `Co-Authored-By` trailers.
 - File **one issue per finding** with clear severity ratings

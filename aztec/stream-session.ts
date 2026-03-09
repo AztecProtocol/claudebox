@@ -65,22 +65,21 @@ function trunc(s: string, n = 200): string {
   return s.length <= n ? s : s.slice(0, n) + "...";
 }
 
-function spillToLog(content: string, label: string): string | null {
+function spillToLog(content: string, label: string): boolean {
   /**
-   * Write long content to its own cache_log and return the URL.
-   * Returns null if cache_log is unavailable.
+   * Write long content to its own cache_log for archival.
+   * Returns true on success.
    */
   const spillId = randomBytes(16).toString("hex");
-  const url = `http://ci.aztec-labs.com/${spillId}`;
   try {
     spawnSync(cacheLogBin, [`claudebox-${label}`, spillId], {
       input: content,
       timeout: 10_000,
       stdio: ["pipe", "ignore", "ignore"],
     });
-    return url;
+    return true;
   } catch {
-    return null;
+    return false;
   }
 }
 
@@ -96,13 +95,10 @@ function captureOutput(fn: () => void): string {
 function smartTrunc(s: string, label: string, inlineLimit = 200): string {
   /**
    * If content is short, return it inline.
-   * If long, spill to a sub-log and return a short preview + link.
+   * If long, spill to cache_log for archival and return a truncated preview.
    */
   if (s.length <= SPILL_THRESHOLD) return s;
-  const url = spillToLog(s, label);
-  if (url) {
-    return trunc(s, inlineLimit) + `\n    ${C}full output: ${url}${X}`;
-  }
+  spillToLog(s, label); // archive full content
   return trunc(s, inlineLimit);
 }
 

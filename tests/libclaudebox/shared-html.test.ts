@@ -165,9 +165,9 @@ describe("renderActivityEntry types", () => {
     assert.ok(html.includes("git status"));
   });
 
-  it("renders tool_result with left triangle icon", () => {
+  it("renders tool_result with border style", () => {
     const html = renderActivityEntry({ ts, type: "tool_result", text: "Found 3 files" });
-    assert.ok(html.includes("\u25C2")); // ◂
+    assert.ok(html.includes("chat-result"));
     assert.ok(html.includes("Found 3 files"));
   });
 

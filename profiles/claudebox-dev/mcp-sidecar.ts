@@ -16,7 +16,7 @@ import {
   getCreds, SESSION_META,
   sanitizeError,
   git, logActivity, pushToRemote,
-  registerCommonTools, registerCloneRepo, registerPRTools,
+  registerCommonTools, registerCloneRepo, registerPRTools, registerGitProxy,
   startMcpHttpServer,
 } from "../../packages/libclaudebox/mcp/base.ts";
 
@@ -27,7 +27,7 @@ const DEV_BRANCH = "main";
 
 SESSION_META.repo = REPO;
 
-const TOOL_LIST = "clone_repo, respond_to_user, get_context, session_status, github_api, slack_api, create_pr, update_pr, push_branch, create_gist, create_skill, ci_failures, linear_get_issue, linear_create_issue, record_stat";
+const TOOL_LIST = "clone_repo, respond_to_user, get_context, session_status, github_api, slack_api, create_pr, update_pr, push_branch, create_gist, ci_failures, linear_get_issue, linear_create_issue, record_stat, git_fetch, git_pull, submodule_update";
 
 // ── MCP Server factory ──────────────────────────────────────────
 
@@ -83,6 +83,8 @@ function createServer(): McpServer {
         return { content: [{ type: "text", text: `push_branch: ${sanitizeError(e.message)}` }], isError: true };
       }
     });
+
+  registerGitProxy(server, { workspace: WORKSPACE });
 
   return server;
 }

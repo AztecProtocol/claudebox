@@ -7,7 +7,11 @@ export function truncate(s: string, n = 80): string {
 }
 
 export function extractHashFromUrl(text: string): string | null {
-  // Match log URLs: <LOG_BASE_URL>/<worktreeId>-<seq> or legacy <LOG_BASE_URL>/<32hex>
+  // Match session page URLs: <host>/s/<worktreeId>
+  const hostEscaped = CLAUDEBOX_HOST.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pageM = text.match(new RegExp(`^<?https?://${hostEscaped}/s/([a-f0-9]{16})>?`));
+  if (pageM) return pageM[1];
+  // Match legacy log URLs: <LOG_BASE_URL>/<logId>
   const escaped = LOG_BASE_URL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/^https?/, "https?");
   const m = text.match(new RegExp(`^<?${escaped}/([a-f0-9][\\w-]+)>?`));
   return m ? m[1] : null;
@@ -92,12 +96,15 @@ export function sessionUrl(worktreeId: string): string {
   return `https://${CLAUDEBOX_HOST}/s/${worktreeId}`;
 }
 
-/** Extract worktree ID from a log URL. Handles both new (worktreeId-seq) and legacy (32hex) formats. */
+/** Extract worktree ID from a log URL. Handles session page URLs, legacy logId URLs, and raw logId strings. */
 export function worktreeIdFromLogUrl(logUrl: string): string {
-  // New format: ci.aztec-labs.com/<worktreeId>-<seq>
+  // Session page format: /s/<worktreeId>
+  const m0 = logUrl.match(/\/s\/([a-f0-9]{16})(?:\?|$|#)/);
+  if (m0) return m0[1];
+  // LogId format: <worktreeId>-<seq>
   const m1 = logUrl.match(/\/([a-f0-9]{16})-\d+$/);
   if (m1) return m1[1];
-  // Legacy: ci.aztec-labs.com/<32hex> — no worktree ID embedded
+  // Legacy: <32hex> — no worktree ID embedded
   return "";
 }
 

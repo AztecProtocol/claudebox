@@ -34,6 +34,7 @@ interface ActivityEvent {
   ts: string;
   type: string;
   text: string;
+  log_id?: string;
 }
 
 // ── Helpers ─────────────────────────────────────────────────────
@@ -97,7 +98,7 @@ export class SessionStreamer {
 
   private writeActivity(type: string, text: string): void {
     try {
-      const event: ActivityEvent = { ts: new Date().toISOString(), type, text };
+      const event: ActivityEvent = { ts: new Date().toISOString(), type, text, log_id: this.opts.parentLogId };
       appendFileSync(this.opts.activityLog, JSON.stringify(event) + "\n");
     } catch {}
   }
@@ -106,24 +107,22 @@ export class SessionStreamer {
     this.opts.onOutput?.(text + "\n");
   }
 
-  private spillToLog(content: string, label: string): string | null {
-    if (!existsSync(this.cacheLogBin)) return null;
+  private spillToLog(content: string, label: string): boolean {
+    if (!existsSync(this.cacheLogBin)) return false;
     const spillId = randomBytes(16).toString("hex");
-    const url = `http://ci.aztec-labs.com/${spillId}`;
     try {
       spawnSync(this.cacheLogBin, [`claudebox-${label}`, spillId], {
         input: content,
         timeout: 10_000,
         stdio: ["pipe", "ignore", "ignore"],
       });
-      return url;
-    } catch { return null; }
+      return true;
+    } catch { return false; }
   }
 
   private smartTrunc(s: string, label: string, inlineLimit = 200): string {
     if (s.length <= SPILL_THRESHOLD) return s;
-    const url = this.spillToLog(s, label);
-    if (url) return trunc(s, inlineLimit) + ` → ${url}`;
+    this.spillToLog(s, label); // archive full content
     return trunc(s, inlineLimit);
   }
 
@@ -176,7 +175,7 @@ export class SessionStreamer {
             this.emit(`  ${label}: ${disp}`);
             // Write tool results to activity for MCP tools (get_context etc.)
             if (!isSubagent && res.trim()) {
-              this.writeActivity("tool_result", trunc(res.replace(/\n/g, " "), 300));
+              this.writeActivity("tool_result", trunc(res, 600));
             }
           } else if (item.type === "text" && item.text?.trim()) {
             this.emit(`USER: ${this.smartTrunc(item.text, "user-msg")}`);
@@ -389,25 +388,16 @@ export class SessionStreamer {
     }
   }
 
-  private startSubagentLog(tailer: JsonlTailer, label: string): void {
+  private startSubagentLog(tailer: JsonlTailer, _label: string): void {
     if (!existsSync(this.denoiseScript)) return;
     try {
       const proc = spawn(this.denoiseScript, ["cat"], {
         stdio: ["pipe", "pipe", "inherit"],
-        env: { ...process.env, DENOISE: "1", DENOISE_DISPLAY_NAME: label, root: this.opts.repoDir },
+        env: { ...process.env, DENOISE: "1", DENOISE_DISPLAY_NAME: _label, root: this.opts.repoDir },
       });
-      let urlExtracted = false;
       proc.stdout?.on("data", (chunk: Buffer) => {
-        const text = chunk.toString();
-        if (!urlExtracted) {
-          const urlMatch = text.match(/(https?:\/\/ci\.aztec-labs\.com\/[a-f0-9-]+)/);
-          if (urlMatch) {
-            urlExtracted = true;
-            this.writeActivity("agent_log", `${label} ${urlMatch[1]}`);
-          }
-        }
-        // Forward to main cache log
-        this.opts.onOutput?.(text);
+        // Forward subagent output to main cache log
+        this.opts.onOutput?.(chunk.toString());
       });
       tailer.subLogProc = proc;
     } catch {}

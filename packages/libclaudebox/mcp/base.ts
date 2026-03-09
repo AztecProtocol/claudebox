@@ -392,7 +392,7 @@ export function stopTranscriptPoller(): void {
 }
 
 // ── Shared clone helper ─────────────────────────────────────────
-export function cloneRepoCheckoutAndInit(targetDir: string, ref: string, fallbackRef = "origin/next", opts?: { skipSubmodules?: boolean }): { text: string; isError?: boolean } {
+export function cloneRepoCheckoutAndInit(targetDir: string, ref: string, fallbackRef = "origin/next", opts?: { initSubmodules?: boolean }): { text: string; isError?: boolean } {
   let checkedOutRef = ref;
   try {
     execFileSync("git", ["-C", targetDir, "checkout", "--detach", ref], {
@@ -424,15 +424,17 @@ export function cloneRepoCheckoutAndInit(targetDir: string, ref: string, fallbac
   const refNote = checkedOutRef !== ref ? ` (WARNING: ${ref} not found, fell back to ${checkedOutRef})` : "";
 
   let submoduleMsg = "";
-  if (!opts?.skipSubmodules) {
+  if (opts?.initSubmodules) {
     try {
       execFileSync("git", ["-C", targetDir, "submodule", "update", "--init", "--recursive"], {
         timeout: 300_000, stdio: "pipe",
       });
       submoduleMsg = " Submodules initialized.";
     } catch (e: any) {
-      submoduleMsg = ` ERROR: submodule init failed: ${e.message}. Builds may fail — try running: git submodule update --init --recursive`;
+      submoduleMsg = ` Warning: submodule init failed: ${e.message}`;
     }
+  } else {
+    submoduleMsg = " Submodules not initialized — use submodule_update tool if needed.";
   }
 
   return { text: `${head}${refNote}.${submoduleMsg}` };
@@ -768,7 +770,7 @@ Channel and thread are locked to this session — you can only read/write your o
 
   // ── create_gist ──────────────────────────────────────────────────
   server.tool("create_gist",
-    "Create a GitHub gist. Useful for sharing verbose output, logs, or large data that doesn't belong in a Slack message or PR description.",
+    "Create a GitHub gist for complex, multi-artifact output (e.g. detailed analysis with multiple files, large build logs, structured data). Do NOT use for simple results that fit in a Slack message or session_status update.",
     {
       description: z.string().describe("Short description of the gist"),
       files: z.record(z.string()).describe("Map of filename → content, e.g. {\"output.log\": \"...\", \"analysis.md\": \"...\"}"),
@@ -1070,8 +1072,8 @@ export interface CloneToolConfig {
   refHint?: string;
   /** Override tool description */
   description?: string;
-  /** Skip git submodule init (e.g. for repos where submodules aren't needed) */
-  skipSubmodules?: boolean;
+  /** Initialize git submodules after clone (default: false) */
+  initSubmodules?: boolean;
 }
 
 export interface PRToolConfig {
@@ -1163,7 +1165,7 @@ export function registerCloneRepo(server: McpServer, config: CloneToolConfig): v
             execFileSync("git", ["-C", targetDir, "fetch", "origin"], { timeout: 120_000, stdio: "pipe" });
           } catch { /* fetch failure is non-fatal */ }
 
-          const result = cloneRepoCheckoutAndInit(targetDir, ref, config.fallbackRef, { skipSubmodules: config.skipSubmodules });
+          const result = cloneRepoCheckoutAndInit(targetDir, ref, config.fallbackRef, { initSubmodules: config.initSubmodules });
           if (result.isError) return { content: [{ type: "text", text: result.text }], isError: true };
           return { content: [{ type: "text", text: `Repo already cloned. Checked out ${ref} (${result.text}) Work in ${targetDir}.` }] };
         } catch (e: any) {
@@ -1194,12 +1196,88 @@ export function registerCloneRepo(server: McpServer, config: CloneToolConfig): v
           } finally { try { unlinkSync(askpass); } catch {} }
         }
 
-        const result = cloneRepoCheckoutAndInit(targetDir, ref, config.fallbackRef, { skipSubmodules: config.skipSubmodules });
+        const result = cloneRepoCheckoutAndInit(targetDir, ref, config.fallbackRef, { initSubmodules: config.initSubmodules });
         if (result.isError) return { content: [{ type: "text", text: `Clone succeeded but: ${result.text}` }], isError: true };
         logActivity("clone", `Cloned ${config.repo} at ${ref} (${result.text})`);
         return { content: [{ type: "text", text: `Cloned ${config.repo} to ${targetDir} at ${ref} (${result.text}) Work in ${targetDir}.` }] };
       } catch (e: any) {
         return { content: [{ type: "text", text: `Clone failed: ${sanitizeError(e.message)}` }], isError: true };
+      }
+    });
+}
+
+// ── registerGitProxy (git_fetch + git_pull — authenticated via sidecar) ──
+
+export function registerGitProxy(server: McpServer, config: { workspace: string }): void {
+  // Helper: run git with GH_TOKEN auth via GIT_ASKPASS
+  function gitWithAuth(args: string[], timeoutMs = 120_000): string {
+    const askpass = join("/tmp", `.git-askpass-${process.pid}-${Date.now()}`);
+    writeFileSync(askpass, `#!/bin/sh\necho "$GIT_PASSWORD"\n`, { mode: 0o700 });
+    try {
+      return execFileSync("git", args, {
+        timeout: timeoutMs, encoding: "utf-8", stdio: "pipe",
+        env: { ...process.env, GIT_ASKPASS: askpass, GIT_PASSWORD: process.env.GH_TOKEN || "" },
+      });
+    } finally { try { unlinkSync(askpass); } catch {} }
+  }
+
+  server.tool("git_fetch", "Fetch from origin (authenticated). Use this instead of bare `git fetch` which may lack auth for private repos.",
+    { ref: z.string().optional().describe("Optional refspec to fetch (e.g. 'next', 'pull/123/head:pr-123')") },
+    async ({ ref }) => {
+      const workspace = config.workspace;
+      if (!existsSync(join(workspace, ".git"))) {
+        return { content: [{ type: "text", text: "No repo at " + workspace }], isError: true };
+      }
+      try {
+        const args = ["-C", workspace, "fetch", "origin"];
+        if (ref) args.push(ref);
+        const out = gitWithAuth(args);
+        return { content: [{ type: "text", text: `Fetched${ref ? " " + ref : ""} successfully.\n${out}`.trim() }] };
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `Fetch failed: ${sanitizeError(e.message)}` }], isError: true };
+      }
+    });
+
+  server.tool("submodule_update", "Initialize and update git submodules recursively, optionally to a specific commit.",
+    {
+      path: z.string().optional().describe("Submodule path (e.g. 'noir/noir-repo'). If omitted, updates all submodules."),
+      commit: z.string().optional().describe("Checkout submodule to this commit/ref after update"),
+    },
+    async ({ path, commit }) => {
+      const workspace = config.workspace;
+      if (!existsSync(join(workspace, ".git"))) {
+        return { content: [{ type: "text", text: "No repo at " + workspace }], isError: true };
+      }
+      try {
+        const args = ["-C", workspace, "submodule", "update", "--init", "--recursive"];
+        if (path) args.push("--", path);
+        const out = gitWithAuth(args, 300_000);
+        let result = "Submodule" + (path ? " " + path : "s") + " initialized and updated.\n" + out;
+        if (commit && path) {
+          const subDir = join(workspace, path);
+          execFileSync("git", ["-C", subDir, "checkout", commit], { timeout: 30_000, encoding: "utf-8", stdio: "pipe" });
+          result += "\nChecked out " + path + " to " + commit;
+        }
+        return { content: [{ type: "text", text: result.trim() }] };
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `Submodule update failed: ${sanitizeError(e.message)}` }], isError: true };
+      }
+    });
+
+  server.tool("git_pull", "Pull from origin (authenticated rebase). Use this instead of bare `git pull`.",
+    { ref: z.string().optional().describe("Remote branch to pull (default: current tracking branch)") },
+    async ({ ref }) => {
+      const workspace = config.workspace;
+      if (!existsSync(join(workspace, ".git"))) {
+        return { content: [{ type: "text", text: "No repo at " + workspace }], isError: true };
+      }
+      try {
+        const args = ["-C", workspace, "pull", "--rebase", "origin"];
+        if (ref) args.push(ref);
+        const out = gitWithAuth(args);
+        return { content: [{ type: "text", text: `Pulled${ref ? " " + ref : ""} successfully.\n${out}`.trim() }] };
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `Pull failed: ${sanitizeError(e.message)}` }], isError: true };
       }
     });
 }

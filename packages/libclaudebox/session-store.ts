@@ -143,7 +143,8 @@ export class SessionStore {
       return readFileSync(activityPath, "utf-8")
         .split("\n")
         .filter(line => line.trim())
-        .map(line => JSON.parse(line))
+        .map(line => { try { return JSON.parse(line); } catch { return null; } })
+        .filter(e => e && e.type)
         .reverse(); // newest first
     } catch { return []; }
   }
