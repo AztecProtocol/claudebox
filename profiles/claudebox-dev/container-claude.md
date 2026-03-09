@@ -18,7 +18,6 @@ Key directories:
   - `slack/` — Slack handlers + helpers
 - `profiles/` — profile-specific sidecars and system prompts
 - `tests/` — unit, integration, security tests
-- `Dockerfile` — Claude container image
 - `container-entrypoint.sh` — container bootstrap script
 
 ## Environment
@@ -90,7 +89,6 @@ npx tsx --no-warnings tests/integration/plugin-routes.test.ts
 - **`session_status` edits in place**: Call often, won't create noise
 - Changes to `profiles/*/mcp-sidecar.ts` and `packages/libclaudebox/mcp/` modules take effect for new sessions immediately (bind-mounted)
 - Changes to `server.ts` require `systemctl --user restart claudebox-slack` on the host
-- Changes to `Dockerfile` require `docker build` to update the Claude container image
 
 ## Rules
 - Update status frequently via `session_status`
