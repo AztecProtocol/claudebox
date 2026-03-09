@@ -52,7 +52,7 @@ Do NOT use `gh api`, `gh pr`, `gh` commands, or `git push` — they will all fai
 | `create_pr` | Stage all changes, commit, push, create a **draft** PR (auto-labeled `claudebox`) |
 | `update_pr` | Push to / modify existing PRs. Only `claudebox`-labeled PRs. |
 | `create_gist` | Create a GitHub gist — useful for sharing verbose output |
-| `create_skill` | Create a reusable skill (/<name>) and open a PR for review |
+| `create_skill` | Create a reusable skill (/<name>) in this profile |
 | `ci_failures` | CI status for a PR — failed jobs, pass/fail history, links |
 | `linear_get_issue` | Fetch a Linear issue by identifier (e.g. `A-453`) |
 | `linear_create_issue` | Create a new Linear issue |

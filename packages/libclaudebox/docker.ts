@@ -212,10 +212,12 @@ export class DockerService {
       // Start sidecar
       const uid = `${process.getuid!()}:${process.getgid!()}`;
       // Build sidecar binds — audit profile skips reference repo
+      const profileHostDir = join(CLAUDEBOX_CODE_DIR, "profiles", profileDir);
       const sidecarBinds = [
         `${workspaceDir}:/workspace:rw`,
         `${claudeProjectsDir}:${CONTAINER_HOME}/.claude/projects/-workspace:ro`,
         `${CLAUDEBOX_CODE_DIR}:/opt/claudebox:ro`,
+        `${profileHostDir}:/opt/claudebox-profile:rw`,
         `${BASTION_SSH_KEY}:${CONTAINER_HOME}/.ssh/build_instance_key:ro`,
         `${CLAUDEBOX_STATS_DIR}:/stats:rw`,
         `${CLAUDEBOX_DIR}:${CONTAINER_HOME}/.claudebox:rw`,

@@ -14,12 +14,11 @@ import { z } from "zod";
 import { getSchema, allSchemas, schemasPrompt } from "../stat-schemas.ts";
 import { SESSION_META, QUIET_MODE, CI_ALLOW, STATS_DIR, WORKTREE_ID } from "./env.ts";
 import {
-  logActivity, addProgress, addTrackedPR, updateRootComment,
+  logActivity, addProgress, updateRootComment,
   otherArtifacts, truncateForSlack,
   respondToUserCalled, setRespondToUserCalled,
 } from "./activity.ts";
-import { getCreds, hasGhToken, hasLinearToken, git, sanitizeError } from "./helpers.ts";
-import { pushToRemote } from "./git-tools.ts";
+import { getCreds, hasGhToken, hasLinearToken } from "./helpers.ts";
 
 // ── Workspace name (shared state for branch naming) ─────────────
 export let workspaceName = "";
@@ -288,31 +287,25 @@ For writes, use dedicated tools: create_pr, update_pr, create_gist, create_issue
     });
 
   // ── create_skill ──────────────────────────────────────────────
+  const profileDir = process.env.CLAUDEBOX_PROFILE_DIR || "/opt/claudebox-profile";
   server.tool("create_skill",
-    `Create or update a Claude Code skill and open a draft PR for review.
+    `Create or update a Claude Code skill in this profile.
 
-A skill is a reusable prompt that Claude Code users invoke with /<name>. Skills have YAML frontmatter and a markdown body.
+A skill is a reusable prompt invoked with /<name>. Written to the profile's .claude/skills/ directory (persists across sessions).
 
 Example:
   name: "review-pr"
   description: "Review a PR for correctness, style, and security"
   argument_hint: "<PR number>"
-  body: "# Review PR\\n\\n## Steps\\n1. Fetch the PR diff...\\n2. Check for..."
-
-The body should be detailed, step-by-step instructions that Claude follows when the skill is invoked.
-Creates a draft PR on a skill/<name> branch for human review.`,
+  body: "# Review PR\\n\\n## Steps\\n1. Fetch the PR diff...\\n2. Check for..."`,
     {
       name: z.string().regex(/^[a-z0-9-]+$/).describe("Skill name (lowercase, hyphens only). Used as /<name> command."),
       description: z.string().describe("One-line description shown in skill listings"),
       argument_hint: z.string().optional().describe("Hint for arguments, e.g. '<PR number>' or '<url-or-hash>'"),
       body: z.string().describe("Markdown body with detailed instructions for Claude to follow"),
-      base: z.string().optional().describe("Base branch for the PR (defaults to current branch)"),
     },
-    async ({ name, description, argument_hint, body, base }) => {
-      if (!hasGhToken()) return { content: [{ type: "text", text: "No GitHub access configured" }], isError: true };
-
-      const workspace = (opts as any).workspace || "/workspace";
-      const skillDir = join(workspace, ".claude", "claudebox", "skills", name);
+    async ({ name, description, argument_hint, body }) => {
+      const skillDir = join(profileDir, ".claude", "skills", name);
       const skillFile = join(skillDir, "SKILL.md");
 
       let frontmatter = `---\nname: ${name}\ndescription: ${description}\n`;
@@ -325,35 +318,8 @@ Creates a draft PR on a skill/<name> branch for human review.`,
       try {
         mkdirSync(skillDir, { recursive: true });
         writeFileSync(skillFile, content);
-
-        const branch = `skill/${name}`;
-        const currentBranch = git(workspace, "rev-parse", "--abbrev-ref", "HEAD").trim();
-        const prBase = base || currentBranch || SESSION_META.base_branch || "next";
-
-        git(workspace, "checkout", "-B", branch);
-        git(workspace, "add", skillFile);
-        git(workspace, "commit", "-m", `chore: ${action.toLowerCase()} skill /${name}`);
-        await pushToRemote(workspace, repo, branch, true);
-
-        try { git(workspace, "checkout", currentBranch); } catch {}
-
-        try {
-          const pr = await getCreds().github.createPull(repo, {
-            title: `skill: ${action.toLowerCase()} /${name} — ${description}`,
-            base: prBase,
-            head: branch,
-            body: `## Skill: \`/${name}\`\n\n${description}\n\n${SESSION_META.log_url ? `Session log: ${SESSION_META.log_url}` : ""}`,
-          });
-
-          addTrackedPR(pr.number, `skill /${name}`, pr.html_url, "created");
-          logActivity("artifact", `Skill PR [/${name} #${pr.number}](${pr.html_url})`);
-          await updateRootComment();
-          return { content: [{ type: "text", text: `${action} skill /${name} — PR ${pr.html_url}` }] };
-        } catch (prErr: any) {
-          logActivity("artifact", `${action} skill /${name} on branch ${branch} (PR failed: ${prErr.message})`);
-          await updateRootComment();
-          return { content: [{ type: "text", text: `${action} skill /${name} — pushed to ${branch} but PR creation failed: ${prErr.message}` }] };
-        }
+        logActivity("skill", `${action} /${name}: ${description}`);
+        return { content: [{ type: "text", text: `${action} skill /${name} in profile dir. Available next session.` }] };
       } catch (e: any) {
         return { content: [{ type: "text", text: `create_skill: ${e.message}` }], isError: true };
       }
