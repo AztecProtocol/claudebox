@@ -222,4 +222,8 @@ export interface WorkspaceCard {
   slackThreadTs?: string;
   /** GitHub link (PR or action run URL) */
   link?: string;
+  /** Latest response text (truncated) */
+  lastReply?: string;
+  /** Artifacts (issues, PRs, gists) */
+  artifacts?: Array<{ type: string; text: string; url: string }>;
 }
