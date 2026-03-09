@@ -291,13 +291,9 @@ For writes, use dedicated tools: create_pr, update_pr, create_gist, create_issue
   server.tool("create_skill",
     `Create or update a Claude Code skill in this profile.
 
-A skill is a reusable prompt invoked with /<name>. Written to the profile's .claude/skills/ directory (persists across sessions).
-
-Example:
-  name: "review-pr"
-  description: "Review a PR for correctness, style, and security"
-  argument_hint: "<PR number>"
-  body: "# Review PR\\n\\n## Steps\\n1. Fetch the PR diff...\\n2. Check for..."`,
+A skill is a reusable prompt invoked with /<name>. Written to the profile's .claude/skills/ directory.
+Takes effect immediately for new sessions (profile dir is bind-mounted from the host).
+To track in version control, use the claudebox-dev profile to commit the change.`,
     {
       name: z.string().regex(/^[a-z0-9-]+$/).describe("Skill name (lowercase, hyphens only). Used as /<name> command."),
       description: z.string().describe("One-line description shown in skill listings"),

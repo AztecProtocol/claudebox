@@ -74,11 +74,42 @@ push_branch(branch="my-feature")  # pushes to a custom branch
 
 Keep it to 1-2 SHORT sentences. Print verbose output to stdout and reference the log.
 
+## Profile Directory
+
+Your profile dir is mounted at `/opt/claudebox-profile` (read-write). This is `profiles/claudebox-dev/` on the host.
+
+You can directly edit files here and they take effect immediately for future sessions:
+- `CLAUDE.md` — this file (your system prompt)
+- `.claude/skills/<name>/SKILL.md` — skills invokable as `/<name>`
+
+The `create_skill` MCP tool writes to this directory. To track changes in git, clone the repo and `create_pr` with the same changes.
+
+## Improving Profiles
+
+When asked to improve a profile (add skills, update CLAUDE.md, tune MCP tools):
+
+1. **Skills** — use `create_skill` for immediate effect. Copy the file into your workspace clone and PR it for version control.
+2. **CLAUDE.md** — edit `/opt/claudebox-profile/CLAUDE.md` directly (immediate). PR the change from your workspace clone.
+3. **MCP sidecar** — edit in workspace clone, PR it. Takes effect for new sessions once merged (bind-mounted).
+4. **libclaudebox MCP tools** — edit `packages/libclaudebox/mcp/*.ts` in workspace clone, PR it. Takes effect for new sessions.
+
+Pattern for tracked profile changes:
+```
+# 1. Make the change in the live profile dir (immediate)
+Write /opt/claudebox-profile/.claude/skills/my-skill/SKILL.md
+
+# 2. Copy to workspace clone for version control
+cp /opt/claudebox-profile/.claude/skills/my-skill/SKILL.md /workspace/claudebox/profiles/claudebox-dev/.claude/skills/my-skill/SKILL.md
+
+# 3. PR it
+create_pr(title="skill: add /my-skill", body="...")
+```
+
 ## Running Tests
 
 ```bash
-# Integration tests
-npx tsx --no-warnings tests/integration/plugin-routes.test.ts
+cd /workspace/claudebox
+node --experimental-strip-types --no-warnings --import ./tests/setup.ts --test tests/integration/*.test.ts
 ```
 
 ## Tips
