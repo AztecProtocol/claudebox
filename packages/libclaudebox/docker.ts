@@ -295,6 +295,8 @@ export class DockerService {
         "-v", `${realpathSync(CLAUDE_BINARY)}:/usr/local/bin/claude:ro`,
         "-v", `${join(homedir(), ".claude.json")}:${CONTAINER_HOME}/.claude.json:rw`,
         "-v", `${CLAUDEBOX_CODE_DIR}:/opt/claudebox:ro`,
+        // Profile dir mounted rw so Claude can add skills, edit CLAUDE.md, etc.
+        "-v", `${join(CLAUDEBOX_CODE_DIR, "profiles", profileDir)}:/opt/claudebox-profile:rw`,
         "-e", `CLAUDEBOX_MCP_URL=${mcpUrl}`,
         "-e", `SESSION_UUID=${sessionUuid}`,
         "-e", `AZTEC_MCP_SERVER=http://${sidecarName}:9801/creds`,
@@ -302,6 +304,7 @@ export class DockerService {
         "-e", `CLAUDEBOX_SIDECAR_PORT=9801`,
         "-e", `CLAUDEBOX_CONTAINER_CLAUDE_MD=${claudeMdPath}`,
         "-e", `PARENT_LOG_ID=${logId}`,
+        "-e", `CLAUDEBOX_PROFILE=${profileDir}`,
         "-e", `CLAUDEBOX_MODEL=${opts.model || ""}`,
       ];
       // Pass tag categories to sidecar

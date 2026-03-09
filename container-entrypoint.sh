@@ -17,12 +17,15 @@ MCP_URL="${CLAUDEBOX_MCP_URL:?required}"
 SESSION_UUID="${SESSION_UUID:?required}"
 RESUME_ID="${CLAUDEBOX_RESUME_ID:-}"
 MODEL="${CLAUDEBOX_MODEL:-}"
+PROFILE="${CLAUDEBOX_PROFILE:-default}"
 PROMPT_FILE="/workspace/prompt.txt"
-CLAUDE_MD_TEMPLATE="${CLAUDEBOX_CONTAINER_CLAUDE_MD:-/opt/claudebox/container-claude.md}"
+CLAUDE_MD_TEMPLATE="${CLAUDEBOX_CONTAINER_CLAUDE_MD:-/opt/claudebox/profiles/$PROFILE/container-claude.md}"
+PROFILE_DIR="/opt/claudebox-profile"
 
 echo "━━━ Container Bootstrap ━━━"
 echo "MCP:     $MCP_URL"
 echo "Session: $SESSION_UUID"
+echo "Profile: $PROFILE"
 [ -n "$RESUME_ID" ] && echo "Resume:  $RESUME_ID"
 [ -n "$MODEL" ] && echo "Model:   $MODEL"
 
@@ -39,9 +42,12 @@ cat > /tmp/mcp.json <<EOF
 EOF
 
 # ── Step 2: Install CLAUDE.md ────────────────────────────────────
-# Placed at /workspace/.claude/CLAUDE.md — Claude will start in /workspace
-# and the repo (once cloned) lives at /workspace/aztec-packages
-if [ -f "$CLAUDE_MD_TEMPLATE" ]; then
+# Placed at /workspace/.claude/CLAUDE.md — Claude will start in /workspace.
+# Source from the rw profile mount if available, else fall back to ro /opt/claudebox.
+if [ -f "$PROFILE_DIR/container-claude.md" ]; then
+    mkdir -p /workspace/.claude
+    cp "$PROFILE_DIR/container-claude.md" /workspace/.claude/CLAUDE.md
+elif [ -f "$CLAUDE_MD_TEMPLATE" ]; then
     mkdir -p /workspace/.claude
     cp "$CLAUDE_MD_TEMPLATE" /workspace/.claude/CLAUDE.md
 fi
@@ -63,6 +69,8 @@ cd /workspace
 CLAUDE_BIN="${CLAUDE_BINARY:-claude}"
 COMMON_ARGS=(--print --dangerously-skip-permissions --mcp-config /tmp/mcp.json -p "$PROMPT")
 [ -n "$MODEL" ] && COMMON_ARGS+=(--model "$MODEL")
+# Give Claude read/write access to the profile directory (skills, CLAUDE.md, etc.)
+[ -d "$PROFILE_DIR" ] && COMMON_ARGS+=(--add-dir "$PROFILE_DIR")
 
 set +e
 if [ -n "$RESUME_ID" ]; then
