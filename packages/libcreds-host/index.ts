@@ -35,10 +35,9 @@ export function getHostCreds(opts?: HostCredsOpts): Creds {
 // Only libcreds-host should read these env vars directly.
 
 /** Get raw token values for injecting into container environments. */
-export function getContainerTokens(): { ghToken: string; slackBotToken: string; linearApiKey: string } {
+export function getContainerTokens(): { ghToken: string; linearApiKey: string } {
   return {
     ghToken: process.env.GH_TOKEN || "",
-    slackBotToken: process.env.SLACK_BOT_TOKEN || "",
     linearApiKey: process.env.LINEAR_API_KEY || "",
   };
 }

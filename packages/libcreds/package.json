@@ -7,12 +7,7 @@
     "./github": "./github.ts",
     "./slack": "./slack.ts",
     "./linear": "./linear.ts",
-    "./bot": "./bot.ts",
-    "./policy": "./policy.ts",
-    "./grants": "./grants.ts",
     "./types": "./types.ts",
-    "./operations": "./operations.ts",
-    "./audit": "./audit.ts",
-    "./singleton": "./singleton.ts"
+    "./audit": "./audit.ts"
   }
 }

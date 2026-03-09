@@ -3,14 +3,13 @@
  * ClaudeBox Test Profile Sidecar
  *
  * Registers all base MCP tools with the test repo (ludamad/test-mfh).
- * Tools that need credentials (GitHub, Slack, Linear) log the action
+ * Tools that need credentials (GitHub, Linear) log the action
  * and return fake success when tokens are missing.
  *
  * clone_repo does a real git clone from /reference-repo/.git.
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { SESSION_META } from "../../packages/libclaudebox/mcp/env.ts";
 import { registerCommonTools } from "../../packages/libclaudebox/mcp/tools.ts";
 import { registerCloneRepo, registerPRTools } from "../../packages/libclaudebox/mcp/git-tools.ts";
 import { startMcpHttpServer } from "../../packages/libclaudebox/mcp/server.ts";
@@ -19,7 +18,7 @@ import { startMcpHttpServer } from "../../packages/libclaudebox/mcp/server.ts";
 const REPO = process.env.CLAUDEBOX_TEST_REPO || "ludamad/test-mfh";
 const WORKSPACE = process.env.WORKSPACE || "/workspace/test-mfh";
 
-const TOOL_LIST = "clone_repo, respond_to_user, get_context, session_status, set_workspace_name, github_api, slack_api, create_pr, update_pr, create_gist, create_skill, ci_failures, linear_get_issue, linear_create_issue, record_stat";
+const TOOL_LIST = "clone_repo, respond_to_user, get_context, session_status, set_workspace_name, github_api, create_pr, update_pr, create_gist, create_skill, ci_failures, linear_get_issue, linear_create_issue, record_stat";
 
 // ── MCP Server factory ──────────────────────────────────────────
 

@@ -17,7 +17,7 @@ if (process.argv.includes("--http-only")) process.env.CLAUDEBOX_HTTP_ONLY = "1";
 const HTTP_ONLY = process.env.CLAUDEBOX_HTTP_ONLY === "1";
 
 import {
-  SLACK_APP_TOKEN, HTTP_PORT, DOCKER_IMAGE, MAX_CONCURRENT,
+  SLACK_APP_TOKEN, HTTP_PORT, INTERNAL_PORT, DOCKER_IMAGE, MAX_CONCURRENT,
   CLAUDEBOX_DIR, setChannelMaps,
 } from "./packages/libclaudebox/config.ts";
 
@@ -147,11 +147,15 @@ async function main() {
   const pluginRoutes = pluginRuntime.getRoutes();
   if (pluginRoutes.length) console.log(`  Plugin routes: ${pluginRoutes.length} endpoints`);
 
-  // ── HTTP server ──
-  const httpServer = createHttpServer(store, docker, pluginRuntime, dmRegistry);
+  // ── HTTP servers ──
+  const { public: publicServer, internal: internalServer } = createHttpServer(store, docker, pluginRuntime, dmRegistry);
 
-  httpServer.listen(HTTP_PORT, () => {
-    console.log(`  HTTP listening on :${HTTP_PORT}`);
+  publicServer.listen(HTTP_PORT, () => {
+    console.log(`  HTTP (public) listening on :${HTTP_PORT}`);
+  });
+
+  internalServer.listen(INTERNAL_PORT, "127.0.0.1", () => {
+    console.log(`  HTTP (internal) listening on 127.0.0.1:${INTERNAL_PORT}`);
   });
 }
 

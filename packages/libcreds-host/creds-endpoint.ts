@@ -6,7 +6,7 @@
  * and returns the API response.
  *
  * This replaces the raw Slack/GitHub fetch calls in http-routes.ts
- * with policy-checked, audit-logged operations through libcreds.
+ * with audit-logged operations through libcreds.
  */
 
 import { createHostCreds } from "../libcreds/index.ts";

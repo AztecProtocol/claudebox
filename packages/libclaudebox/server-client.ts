@@ -126,9 +126,6 @@ export function createServerClientFromEnv(extraMeta?: Record<string, string>): S
     CLAUDEBOX_RUN_COMMENT_ID: "run_comment_id",
     CLAUDEBOX_RUN_URL: "run_url",
     CLAUDEBOX_LINK: "link",
-    CLAUDEBOX_SLACK_CHANNEL: "slack_channel",
-    CLAUDEBOX_SLACK_THREAD_TS: "slack_thread_ts",
-    CLAUDEBOX_SLACK_MESSAGE_TS: "slack_message_ts",
     CLAUDEBOX_HOST: "host",
     CLAUDEBOX_BASE_BRANCH: "base_branch",
   };

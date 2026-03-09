@@ -27,7 +27,7 @@ const DEV_BRANCH = "main";
 
 SESSION_META.repo = REPO;
 
-const TOOL_LIST = "clone_repo, respond_to_user, get_context, session_status, github_api, slack_api, create_pr, update_pr, push_branch, create_gist, create_skill, ci_failures, linear_get_issue, linear_create_issue, record_stat";
+const TOOL_LIST = "clone_repo, respond_to_user, get_context, session_status, github_api, create_pr, update_pr, push_branch, create_gist, create_skill, ci_failures, linear_get_issue, linear_create_issue, record_stat";
 
 // ── MCP Server factory ──────────────────────────────────────────
 

@@ -42,7 +42,6 @@ Key directories:
 | `get_context` | Session metadata |
 | `session_status` | Update Slack + GitHub status in-place. Call frequently. |
 | `github_api` | GitHub REST API proxy — **read-only** (GET only) |
-| `slack_api` | Slack API proxy |
 | `create_pr` | Push changes and create a draft PR targeting `main` |
 | `update_pr` | Push to / modify existing PRs |
 | `push_branch` | Push directly to `main` without creating a PR |

@@ -13,7 +13,6 @@ export function getServerClient(): ServerClient {
   if (!_serverClient) {
     const extraMeta: Record<string, string> = {};
     if (SESSION_META.repo) extraMeta.repo = SESSION_META.repo;
-    if (SESSION_META.slack_message_ts) extraMeta.slack_message_ts = SESSION_META.slack_message_ts;
     _serverClient = createServerClientFromEnv(extraMeta);
   }
   return _serverClient;

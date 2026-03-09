@@ -49,7 +49,6 @@ Do NOT use `gh api`, `gh pr`, `gh` commands, or `git push` — they will all fai
 | `get_context` | Session metadata (user, repo, log_url, thread, etc.) |
 | `session_status` | Update Slack + GitHub status message in-place. Call frequently. |
 | `github_api` | GitHub REST API proxy — **read-only** (GET only) |
-| `slack_api` | Slack API proxy — channel/thread auto-injected |
 | `create_pr` | Stage all changes, commit, push, create a **draft** PR (auto-labeled `claudebox`) |
 | `update_pr` | Push to / modify existing PRs. Only `claudebox`-labeled PRs. |
 | `create_gist` | Create a GitHub gist — useful for sharing verbose output |

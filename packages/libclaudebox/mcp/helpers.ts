@@ -15,9 +15,8 @@ export function getCreds(): Creds {
   return _creds;
 }
 
-export function _hasGhToken(): boolean { return getCreds().github.hasToken; }
-export function _hasSlackToken(): boolean { return getCreds().slack.hasToken; }
-export function _hasLinearToken(): boolean { return getCreds().linear.hasToken; }
+export function hasGhToken(): boolean { return getCreds().github.hasToken; }
+export function hasLinearToken(): boolean { return getCreds().linear.hasToken; }
 
 // ── Git helper ──────────────────────────────────────────────────
 export function git(workspace: string, ...args: string[]): string {
@@ -68,8 +67,6 @@ export function isGhAllowed(method: string, path: string, whitelist: Array<{ met
   return whitelist.some(r => r.method === method.toUpperCase() && r.pattern.test(clean));
 }
 
-export const SLACK_WHITELIST = new Set(["chat.postMessage", "chat.update", "reactions.add", "conversations.replies", "users.list"]);
-
 // ── HTTP body reader ────────────────────────────────────────────
 const MAX_BODY_BYTES = 10 * 1024 * 1024;
 export function readBody(req: IncomingMessage): Promise<string> {
@@ -86,11 +83,3 @@ export function readBody(req: IncomingMessage): Promise<string> {
   });
 }
 
-// ── Slack permalink parser ──────────────────────────────────────
-export function parseSlackPermalink(link: string): { channel: string; thread_ts: string } | null {
-  const m = link.match(/slack\.com\/archives\/([A-Z0-9]+)\/p(\d+)/);
-  if (!m) return null;
-  const raw = m[2];
-  const ts = raw.length > 10 ? raw.slice(0, 10) + "." + raw.slice(10) : raw;
-  return { channel: m[1], thread_ts: ts };
-}
