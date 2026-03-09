@@ -5,7 +5,7 @@
  * Repo: AztecProtocol/barretenberg-claude (private fork)
  * Clone strategy: remote authenticated URL (no local reference)
  * Docker proxy: disabled
- * Extra tools: create_issue, close_issue, create_audit_label, add_log_link, self_assess
+ * Extra tools: create_issue, close_issue, create_audit_label, add_log_link
  */
 
 import { mkdirSync, appendFileSync, readFileSync, existsSync } from "fs";
@@ -17,7 +17,7 @@ import { SESSION_META, WORKTREE_ID, statusPageUrl, STATS_DIR, hasScope } from ".
 import { logActivity, updateRootComment, otherArtifacts } from "../../packages/libclaudebox/mcp/activity.ts";
 import { getCreds, sanitizeError } from "../../packages/libclaudebox/mcp/helpers.ts";
 import { registerCommonTools } from "../../packages/libclaudebox/mcp/tools.ts";
-import { pushToRemote, registerCloneRepo, registerPRTools } from "../../packages/libclaudebox/mcp/git-tools.ts";
+import { pushToRemote, registerCloneRepo, registerPRTools, registerGitProxy } from "../../packages/libclaudebox/mcp/git-tools.ts";
 import { startMcpHttpServer } from "../../packages/libclaudebox/mcp/server.ts";
 
 // ── Profile config ──────────────────────────────────────────────
@@ -28,7 +28,7 @@ SESSION_META.repo = REPO;
 
 const UPSTREAM_REPO = "AztecProtocol/barretenberg";
 
-const TOOL_LIST = "clone_repo, respond_to_user, get_context, session_status, github_api, create_pr, update_pr, create_external_pr, create_issue, close_issue, add_labels, create_audit_label, add_log_link, self_assess, audit_history, create_gist, list_gists, read_gist, update_meta_issue, create_skill, ci_failures, linear_get_issue, linear_create_issue, record_stat";
+const TOOL_LIST = "clone_repo, respond_to_user, get_context, session_status, github_api, create_pr, update_pr, create_external_pr, create_issue, close_issue, add_labels, create_audit_label, add_log_link, audit_history, create_gist, list_gists, read_gist, update_meta_issue, ci_failures, linear_get_issue, linear_create_issue, record_stat, git_fetch, git_pull, submodule_update";
 
 // ── Auth check at startup ───────────────────────────────────────
 try {
@@ -53,7 +53,6 @@ function createServer(): McpServer {
     fallbackRef: "origin/master",
     refHint: "'origin/main', 'abc123'",
     description: "Clone the barretenberg-claude repo (private). Uses authenticated URL. Safe to call on resume — fetches new refs. Call FIRST before doing any work.",
-    skipSubmodules: true,
   });
 
   registerPRTools(server, {
@@ -257,54 +256,6 @@ Use this when you discover a new area worth dedicated audit attention.`,
         return { content: [{ type: "text", text: `Linked session to #${issue_number}` }] };
       } catch (e: any) {
         return { content: [{ type: "text", text: `add_log_link: ${sanitizeError(e.message)}` }], isError: true };
-      }
-    });
-
-  // ── self_assess — session self-assessment ────────────────────────
-  server.tool("self_assess",
-    `Rate your own audit session. Call this BEFORE respond_to_user.
-Be honest about your assessment:
-- critical = found security-relevant issues
-- thorough = deep line-by-line review, no critical issues found
-- surface = quick scan, identified areas for deeper review
-- incomplete = could not finish due to complexity or missing context
-
-Also rate each quality dimension you covered:
-- code = implementation correctness (UB, memory safety, API design)
-- crypto = cryptographic correctness (math, protocol security, side-channels)
-- test = test adequacy (coverage, edge cases, assertions)`,
-    {
-      rating: z.enum(["critical", "thorough", "surface", "incomplete"]).describe("Self-assessment rating"),
-      modules_reviewed: z.array(z.string()).describe("Source paths reviewed, e.g. ['barretenberg/cpp/src/barretenberg/ecc/curves']"),
-      findings_count: z.number().describe("Number of issues filed this session"),
-      questions_count: z.number().describe("Number of question issues posted this session"),
-      confidence: z.number().min(0).max(1).describe("Confidence in the review (0 = guessing, 1 = certain)"),
-      summary: z.string().describe("2-3 sentence summary of what was covered and key findings"),
-      code_rating: z.enum(["thorough", "surface", "none"]).default("none").describe("Code quality review depth"),
-      crypto_rating: z.enum(["thorough", "surface", "none"]).default("none").describe("Crypto quality review depth"),
-      test_rating: z.enum(["thorough", "surface", "none"]).default("none").describe("Test quality review depth"),
-    },
-    async ({ rating, modules_reviewed, findings_count, questions_count, confidence, summary, code_rating, crypto_rating, test_rating }) => {
-      try {
-        const entry = {
-          _ts: new Date().toISOString(),
-          _log_id: SESSION_META.log_id,
-          _worktree_id: WORKTREE_ID,
-          _user: SESSION_META.user,
-          rating, modules_reviewed, findings_count, questions_count, confidence, summary,
-          code_rating, crypto_rating, test_rating,
-        };
-
-        mkdirSync(STATS_DIR, { recursive: true });
-        appendFileSync(join(STATS_DIR, "audit_assessment.jsonl"), JSON.stringify(entry) + "\n");
-
-        const dims = [code_rating !== "none" ? `code:${code_rating}` : "", crypto_rating !== "none" ? `crypto:${crypto_rating}` : "", test_rating !== "none" ? `test:${test_rating}` : ""].filter(Boolean).join(", ");
-        logActivity("status", `Assessment: ${rating.toUpperCase()} (${Math.round(confidence * 100)}% confidence) [${dims}] — ${summary}`);
-        await updateRootComment();
-
-        return { content: [{ type: "text", text: `Assessment recorded: ${rating} (${modules_reviewed.length} modules, ${findings_count} findings, ${questions_count} questions) [${dims}]` }] };
-      } catch (e: any) {
-        return { content: [{ type: "text", text: `self_assess: ${sanitizeError(e.message)}` }], isError: true };
       }
     });
 
@@ -558,6 +509,8 @@ Use this for fixes that should go directly to the main barretenberg repo.`,
         return { content: [{ type: "text", text: `create_external_pr: ${sanitizeError(e.message)}` }], isError: true };
       }
     });
+
+  registerGitProxy(server, { workspace: WORKSPACE });
 
   return server;
 }

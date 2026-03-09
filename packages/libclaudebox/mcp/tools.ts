@@ -262,7 +262,7 @@ For writes, use dedicated tools: create_pr, update_pr, create_gist, create_issue
 
   // ── create_gist ──────────────────────────────────────────────────
   server.tool("create_gist",
-    "Create a GitHub gist. Useful for sharing verbose output, logs, or large data that doesn't belong in a Slack message or PR description.",
+    "Create a GitHub gist for complex, multi-artifact output (e.g. detailed analysis with multiple files, large build logs, structured data). Do NOT use for simple results that fit in a Slack message or session_status update.",
     {
       description: z.string().describe("Short description of the gist"),
       files: z.record(z.string()).describe("Map of filename → content, e.g. {\"output.log\": \"...\", \"analysis.md\": \"...\"}"),

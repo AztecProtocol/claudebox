@@ -1,4 +1,4 @@
-import type { RunMeta } from "../types.ts";
+import type { SessionMeta } from "../types.ts";
 import { esc, safeHref, timeAgo, statusColor, linkify, renderActivityEntry, BASE_STYLES, type ActivityEntry, type WorkspacePageData } from "./shared.ts";
 import { appShell } from "./app-shell.ts";
 
@@ -10,7 +10,7 @@ code,.mono{font-family:'SF Mono',Monaco,'Cascadia Code',monospace;font-size:0.85
 a{color:inherit;text-decoration:none}a:hover{text-decoration:underline}
 .link{color:#7ab8ff;text-decoration:underline;text-decoration-color:rgba(122,184,255,0.3)}
 .link:hover{text-decoration-color:#7ab8ff}
-.dim{color:#666}
+.dim{color:#9CA3AF}
 ::-webkit-scrollbar{width:5px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:#333;border-radius:3px}
 
 /* Header */
@@ -39,7 +39,7 @@ a{color:inherit;text-decoration:none}a:hover{text-decoration:underline}
 .sidebar-section{padding:12px 14px;border-bottom:1px solid #1a1a1a}
 .sidebar-label{font-size:10px;text-transform:uppercase;letter-spacing:0.8px;color:#555;margin-bottom:8px;font-weight:600}
 .stat-row{font-size:13px;padding:3px 0;display:flex;gap:8px}
-.stat-row .dim{min-width:55px;font-size:12px}
+.stat-row .dim{min-width:55px;font-size:12px;color:#9CA3AF}
 .artifact-row{font-size:12px;padding:4px 0;border-bottom:1px solid #111;word-break:break-all;line-height:1.5}
 
 /* Session history */
@@ -63,20 +63,36 @@ a{color:inherit;text-decoration:none}a:hover{text-decoration:underline}
 .chat-area{flex:1;overflow-y:auto;padding:12px 20px;display:flex;flex-direction:column;gap:6px;min-height:0}
 .chat-empty{flex:1;display:flex;align-items:center;justify-content:center;color:#333;font-size:14px}
 
-/* Flat activity rows (detail view) */
-.act-row{display:flex;align-items:center;gap:6px;font-size:12px;color:#666;padding:3px 0;font-family:'SF Mono',monospace}
-.act-ts{color:#444;font-size:10px;margin-left:auto;flex-shrink:0}
-.act-icon{font-size:10px;flex-shrink:0;width:14px;text-align:center}
+/* Activity rows */
+.act-row{display:flex;align-items:center;gap:8px;font-size:12px;color:#9CA3AF;padding:6px 8px;font-family:'SF Mono',monospace;border-radius:6px;margin:1px 0}
+.act-row:hover{background:rgba(255,255,255,0.03)}
+.act-ts{color:#6B7280;font-size:10px;margin-left:auto;flex-shrink:0}
+.act-icon{flex-shrink:0;width:16px;height:16px;display:flex;align-items:center;justify-content:center;opacity:0.7}
+.act-icon svg{width:14px;height:14px}
 .act-row.act-artifact{color:#FAD979}
 .act-row.act-agent{color:#a78bfa}
+.act-agent-card{background:#13111e;border:1px solid rgba(167,139,250,0.15);border-radius:6px;margin:4px 0;overflow:hidden}
+.act-agent-header{display:flex;align-items:center;gap:8px;padding:6px 10px;cursor:pointer;font-size:12px;font-family:'SF Mono',monospace;color:#a78bfa}
+.act-agent-header:hover{background:rgba(167,139,250,0.05)}
+.act-agent-chevron{font-size:10px;color:#666;transition:transform 0.15s;flex-shrink:0}
+.act-agent-card.expanded .act-agent-chevron{transform:rotate(90deg)}
+.act-agent-body{display:none;border-top:1px solid rgba(167,139,250,0.1);padding:4px 8px}
+.act-agent-card.expanded .act-agent-body{display:block}
 .agent-dot-inline{width:6px;height:6px;border-radius:50%;background:#a78bfa;display:inline-block;animation:pulse 2s infinite}
 .tool-name{color:#FAD979;font-weight:500}
-.tool-args{color:#888}
+.tool-args{color:#9CA3AF}
 .tool-bash{color:#61D668}
-.tool-desc{color:#666;font-style:italic}
-.act-result{background:rgba(255,255,255,0.02);border-left:2px solid #222;margin:2px 0 2px 18px;padding:4px 10px;font-size:12px;color:#666;font-family:'SF Mono',monospace;line-height:1.5;white-space:pre-wrap;word-break:break-all;max-height:80px;overflow:hidden}
+.tool-desc{color:#7B8794;font-style:italic}
+/* Tool execution group — left border links tool call with its result */
+.act-tool-group{border-left:2px solid rgba(250,217,121,0.2);margin-left:6px;padding-left:6px;margin-bottom:2px}
+.act-tool-group.act-tool-group-error{border-left-color:rgba(233,69,96,0.4)}
+.act-tool-group.act-tool-group-bash{border-left-color:rgba(97,214,104,0.25)}
+.act-result{background:#1E1E24;border:1px solid #333;border-radius:6px;margin:2px 0 4px 0;padding:6px 10px;font-size:11px;color:#9CA3AF;font-family:'SF Mono',monospace;line-height:1.5;white-space:pre-wrap;word-break:break-all;max-height:60px;overflow:hidden;cursor:pointer;transition:max-height 0.15s}
+.act-result.expanded{max-height:none}
+.act-result.act-result-error{border-color:rgba(233,69,96,0.4);color:#E94560;background:rgba(233,69,96,0.06)}
+.act-row.act-status{color:#5FA7F1}
 .artifact-chips{display:flex;gap:6px;flex-wrap:wrap;padding:4px 20px 8px}
-.artifact-chip{font-size:12px;padding:2px 8px;border-radius:4px;background:rgba(250,217,121,0.06);border:1px solid rgba(250,217,121,0.15)}
+.artifact-chip{font-size:12px;padding:2px 8px;border-radius:4px;background:rgba(250,217,121,0.06);border:1px solid rgba(250,217,121,0.15);line-height:1.6}
 .artifact-chip-update{background:rgba(95,167,241,0.08);border-color:rgba(95,167,241,0.2)}
 .artifact-chip-update .artifact-link{color:#7ab8ff}
 .artifact-link{color:#FAD979;text-decoration:underline;text-decoration-color:rgba(250,217,121,0.3)}
@@ -97,10 +113,9 @@ a{color:inherit;text-decoration:none}a:hover{text-decoration:underline}
 .act-slack-link:hover{color:#7ab8ff;text-decoration:underline}
 
 /* Run cards (list view) */
-.run-card{border:1px solid #1a1a1a;border-radius:8px;margin:8px 0;cursor:pointer;transition:border-color 0.2s,box-shadow 0.2s}
+.run-card{border:1px solid #1a1a1a;border-radius:8px;margin:8px 0;cursor:pointer;transition:border-color 0.2s,box-shadow 0.2s,background 0.15s}
 .run-card:hover{border-color:#333;box-shadow:0 0 12px rgba(255,255,255,0.02)}
-.run-card-selected{border-color:#5FA7F1;cursor:pointer;background:rgba(95,167,241,0.06) !important}
-.run-card-selected .run-header::after{content:'click to open \\2192';color:#5FA7F1;font-size:22px;margin-left:auto;font-weight:600}
+.run-card:active{background:rgba(95,167,241,0.08) !important;border-color:#5FA7F1;transition:none}
 .run-header{padding:12px 20px;display:flex;align-items:center;gap:10px;font-size:13px;color:#888;user-select:none}
 
 /* Run detail view */
@@ -116,6 +131,7 @@ a{color:inherit;text-decoration:none}a:hover{text-decoration:underline}
 .run-label{font-weight:600;color:#ccc;white-space:nowrap}
 .run-status{color:#666;font-size:12px}
 .run-exit{color:#E94560;font-size:12px}
+.run-slack-link{color:#555;font-size:11px;text-decoration:none;padding:2px 4px;border-radius:3px}.run-slack-link:hover{color:#5FA7F1;background:rgba(95,167,241,0.1)}
 .run-time{color:#444;margin-left:auto;font-size:11px;flex-shrink:0}
 .run-summary{padding:8px 20px 16px;font-size:14px;line-height:1.6;cursor:pointer}
 .run-summary-prompt{color:#ccc;word-break:break-word;white-space:pre-wrap;display:flex;gap:10px}
@@ -130,8 +146,8 @@ a{color:inherit;text-decoration:none}a:hover{text-decoration:underline}
 .md-content h1{font-size:1.15em}.md-content h2{font-size:1.08em}.md-content h3{font-size:1em}
 .md-content strong{color:#ddd;font-weight:600}
 .md-content em{font-style:italic;color:#bbb}
-.md-content code{background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.08);padding:1px 5px;border-radius:3px;font-family:'SF Mono',Monaco,'Cascadia Code',monospace;font-size:0.88em;color:#e0c46c}
-.md-content pre{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:10px 14px;margin:8px 0;overflow-x:auto;line-height:1.5}
+.md-content code{background:#1E1E24;border:1px solid #333;padding:1px 5px;border-radius:4px;font-family:'SF Mono',Monaco,'Cascadia Code',monospace;font-size:0.88em;color:#e0c46c}
+.md-content pre{background:#1E1E24;border:1px solid #333;border-radius:6px;padding:10px 14px;margin:8px 0;overflow-x:auto;line-height:1.5}
 .md-content pre code{background:none;border:none;padding:0;color:#ccc;font-size:0.88em}
 .md-content ul,.md-content ol{padding-left:20px;margin:4px 0}
 .md-content li{margin:2px 0}
@@ -209,6 +225,7 @@ export function workspacePageHTML(data: WorkspacePageData): string {
     slackDomain,
     sessions: data.sessions.map(s => ({
       log_id: s._log_id, status: s.status, started: s.started, user: s.user,
+      exit_code: s.exit_code ?? null,
       prompt: stripSlackContext(s.prompt || ""),
       slack_channel: s.slack_channel || "",
       slack_message_ts: s.slack_message_ts || "",
@@ -410,7 +427,36 @@ function useSSE(id, onMessage){
   },[id]);
 }
 
-// ── Activity row component (flat, no indentation) ───────────────
+// ── SVG icons (inline, 14x14) ────────────────────────────────────
+
+var ICONS={
+  terminal:'<svg viewBox="0 0 24 24" fill="none" stroke="#61D668" stroke-width="2" stroke-linecap="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>',
+  search:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
+  file:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>',
+  edit:'<svg viewBox="0 0 24 24" fill="none" stroke="#5FA7F1" stroke-width="2" stroke-linecap="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>',
+  git:'<svg viewBox="0 0 24 24" fill="none" stroke="#E0A96C" stroke-width="2" stroke-linecap="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><line x1="6" y1="9" x2="6" y2="21"/></svg>',
+  tool:'<svg viewBox="0 0 24 24" fill="none" stroke="#FAD979" stroke-width="2" stroke-linecap="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>',
+  status:'<svg viewBox="0 0 24 24" fill="none" stroke="#5FA7F1" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>',
+  agent:'<svg viewBox="0 0 24 24" fill="none" stroke="#a78bfa" stroke-width="2" stroke-linecap="round"><path d="M12 2a4 4 0 0 1 4 4v2a4 4 0 0 1-8 0V6a4 4 0 0 1 4-4z"/><path d="M16 14H8a4 4 0 0 0-4 4v2h16v-2a4 4 0 0 0-4-4z"/></svg>',
+  pr:'<svg viewBox="0 0 24 24" fill="none" stroke="#FAD979" stroke-width="2" stroke-linecap="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><line x1="6" y1="9" x2="6" y2="21"/></svg>',
+  clone:'<svg viewBox="0 0 24 24" fill="none" stroke="#61D668" stroke-width="2" stroke-linecap="round"><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/><path d="M3 12a9 9 0 0 0 9 9"/><path d="M3 12a9 9 0 0 1 9-9"/></svg>',
+};
+
+function toolIcon(raw){
+  if(!raw)return ICONS.tool;
+  var name=raw.split(" ")[0];
+  if(raw.indexOf("$ ")>=0)return ICONS.terminal;
+  if(name==="Grep"||name==="ToolSearch")return ICONS.search;
+  if(name==="Read"||name==="Glob"||name==="Write")return ICONS.file;
+  if(name==="Edit")return ICONS.edit;
+  if(name==="clone_repo")return ICONS.clone;
+  if(name==="create_pr"||name==="update_pr")return ICONS.pr;
+  if(name==="git_fetch"||name==="git_pull")return ICONS.git;
+  if(name==="session_status")return ICONS.status;
+  return ICONS.tool;
+}
+
+// ── Activity row component ───────────────────────────────────────
 
 function ActivityRow({entry, agentLogUrl}){
   const t=entry.ts?timeAgo(entry.ts):"";
@@ -427,35 +473,47 @@ function ActivityRow({entry, agentLogUrl}){
   }
   if(entry.type==="artifact"){
     const compact=compactArtifact(text);
-    return html\`<div class="act-row act-artifact"><span class="act-icon">\u25C6</span><span dangerouslySetInnerHTML=\${{__html:compact}}></span><span class="act-ts">\${t}</span></div>\`;
+    return html\`<div class="act-row act-artifact"><span class="act-icon" dangerouslySetInnerHTML=\${{__html:ICONS.pr}}></span><span dangerouslySetInnerHTML=\${{__html:compact}}></span><span class="act-ts">\${t}</span></div>\`;
   }
   if(entry.type==="agent_start"){
-    const agentInner=agentLogUrl
-      ?'<a href="'+esc(agentLogUrl)+'" target="_blank" class="link">Agent: '+linkify(text)+'</a>'
-      :'Agent: '+linkify(text);
-    return html\`<div class="act-row act-agent"><span class="act-icon agent-dot-inline"></span><span dangerouslySetInnerHTML=\${{__html:agentInner}}></span><span class="act-ts">\${t}</span></div>\`;
+    return null; // Rendered by AgentSection wrapper
   }
   if(entry.type==="tool_use"){
     const raw=entry.text||"";
+    const icon=toolIcon(raw);
     const bashMatch=raw.match(/^(?:(.+?):\s*)?\$\s+(.+)$/);
     if(bashMatch){
       const desc=bashMatch[1]||"";
       const cmd=bashMatch[2];
-      return html\`<div class="act-row act-tool"><span class="act-icon">\u25B8</span><code>\${desc && html\`<span class="tool-desc">\${desc} </span>\`}<span class="tool-bash">$</span> <span class="tool-args">\${cmd}</span></code><span class="act-ts">\${t}</span></div>\`;
+      return html\`<div class="act-row act-tool"><span class="act-icon" dangerouslySetInnerHTML=\${{__html:icon}}></span><code>\${desc && html\`<span class="tool-desc">\${desc} </span>\`}<span class="tool-bash">$</span> <span class="tool-args">\${cmd}</span></code><span class="act-ts">\${t}</span></div>\`;
     }
     const spIdx=raw.indexOf(" ");
     const toolName=spIdx>0?raw.slice(0,spIdx):raw;
     const toolArgs=spIdx>0?raw.slice(spIdx):"";
     const argsHtml=linkify(toolArgs);
-    return html\`<div class="act-row act-tool"><span class="act-icon">\u25B8</span><code><span class="tool-name">\${toolName}</span><span class="tool-args" dangerouslySetInnerHTML=\${{__html:argsHtml}}></span></code><span class="act-ts">\${t}</span></div>\`;
+    return html\`<div class="act-row act-tool"><span class="act-icon" dangerouslySetInnerHTML=\${{__html:icon}}></span><code><span class="tool-name">\${toolName}</span><span class="tool-args" dangerouslySetInnerHTML=\${{__html:argsHtml}}></span></code><span class="act-ts">\${t}</span></div>\`;
   }
   if(entry.type==="tool_result"){
-    return html\`<div class="act-result"><div class="act-result-content" dangerouslySetInnerHTML=\${{__html:linked}}></div></div>\`;
+    var raw=entry.text||"";
+    var errTag="tool_use_error";
+    var isErr=raw.indexOf(errTag)>=0||raw.indexOf("Error:")===0||raw.indexOf("ERROR:")===0;
+    var cleaned=raw;
+    if(isErr){cleaned=cleaned.split("<"+errTag+">").join("").split("<"+"/"+errTag+">").join("").trim();}
+    var resultHtml=linkify(cleaned);
+    var errCls=isErr?" act-result-error":"";
+    function toggleExpand(e){e.currentTarget.classList.toggle("expanded");}
+    return html\`<div class=\${"act-result"+errCls} onClick=\${toggleExpand}><div class="act-result-content" dangerouslySetInnerHTML=\${{__html:resultHtml}}></div></div>\`;
   }
   if(entry.type==="status"){
-    return html\`<div class="act-row act-status"><span class="act-icon">\u25CB</span><span dangerouslySetInnerHTML=\${{__html:linked}}></span><span class="act-ts">\${t}</span></div>\`;
+    return html\`<div class="act-row act-status"><span class="act-icon" dangerouslySetInnerHTML=\${{__html:ICONS.status}}></span><span dangerouslySetInnerHTML=\${{__html:linked}}></span><span class="act-ts">\${t}</span></div>\`;
   }
-  return html\`<div class="act-row"><span class="act-icon">\u00B7</span><span dangerouslySetInnerHTML=\${{__html:linked}}></span><span class="act-ts">\${t}</span></div>\`;
+  if(entry.type==="clone"){
+    return html\`<div class="act-row"><span class="act-icon" dangerouslySetInnerHTML=\${{__html:ICONS.clone}}></span><span style="color:#61D668" dangerouslySetInnerHTML=\${{__html:linked}}></span><span class="act-ts">\${t}</span></div>\`;
+  }
+  if(entry.type==="name"){
+    return null;
+  }
+  return html\`<div class="act-row"><span class="act-icon" dangerouslySetInnerHTML=\${{__html:ICONS.tool}}></span><span dangerouslySetInnerHTML=\${{__html:linked}}></span><span class="act-ts">\${t}</span></div>\`;
 }
 
 // ── PromptCard component (flat, with Slack link) ────────────────
@@ -485,6 +543,93 @@ function ArtifactChips({artifacts, priorPrNums}){
   })}</div>\`;
 }
 
+// ── AgentSection — collapsible agent card ─────────────────────
+function AgentSection({text, agentLogUrl, time, children}){
+  const [expanded,setExpanded]=useState(false);
+  const linked=linkify(slackToMd(text));
+  const agentInner=agentLogUrl
+    ?'<a href="'+esc(agentLogUrl)+'" target="_blank" class="link" onclick="event.stopPropagation()">'+linked+'</a>'
+    :linked;
+  return html\`<div class=\${"act-agent-card"+(expanded?" expanded":"")}>
+    <div class="act-agent-header" onClick=\${()=>setExpanded(!expanded)}>
+      <span class="act-agent-chevron">\u25B6</span>
+      <span class="act-icon" dangerouslySetInnerHTML=\${{__html:ICONS.agent}}></span>
+      <span dangerouslySetInnerHTML=\${{__html:agentInner}}></span>
+      <span class="act-ts">\${time}</span>
+    </div>
+    \${children&&children.length?html\`<div class="act-agent-body">\${children}</div>\`:null}
+  </div>\`;
+}
+
+// ── Group tool_use + tool_result into bordered containers ─────
+function renderActivityItems(activity){
+  var out=[];
+  for(var i=0;i<activity.length;i++){
+    var item=activity[i];
+    var entry=item.entry;
+    var key=item.id||("a"+i);
+    // Agent sections — collect subsequent tool calls until next non-tool entry
+    if(entry.type==="agent_start"){
+      var agentChildren=[];
+      var j=i+1;
+      while(j<activity.length){
+        var nxt=activity[j];
+        var nt=nxt.entry.type;
+        // Stop grouping at non-tool entries (but include tool_use/tool_result)
+        if(nt!=="tool_use"&&nt!=="tool_result")break;
+        agentChildren.push(nxt);
+        j++;
+      }
+      // Render grouped children
+      var grouped=renderToolGroups(agentChildren);
+      out.push(html\`<\${AgentSection} key=\${key} text=\${entry.text||""} agentLogUrl=\${item.agentLogUrl} time=\${entry.ts?timeAgo(entry.ts):""}>\${grouped}</\${AgentSection}>\`);
+      i=j-1; // skip grouped items
+      continue;
+    }
+    if(entry.type==="tool_use"){
+      // Check if next item is a tool_result — if so, group them
+      var next=(i+1<activity.length)?activity[i+1]:null;
+      if(next&&next.entry.type==="tool_result"){
+        var raw=entry.text||"";
+        var resRaw=next.entry.text||"";
+        var isBash=raw.indexOf("$ ")>=0;
+        var isErr=resRaw.indexOf("tool_use_error")>=0||resRaw.indexOf("Error:")===0||resRaw.indexOf("ERROR:")===0;
+        var groupCls="act-tool-group"+(isErr?" act-tool-group-error":"")+(isBash?" act-tool-group-bash":"");
+        out.push(html\`<div class=\${groupCls} key=\${key}><\${ActivityRow} entry=\${entry} agentLogUrl=\${item.agentLogUrl} /><\${ActivityRow} entry=\${next.entry} agentLogUrl=\${next.agentLogUrl} /></div>\`);
+        i++; // skip next
+        continue;
+      }
+    }
+    out.push(html\`<\${ActivityRow} key=\${key} entry=\${entry} agentLogUrl=\${item.agentLogUrl} />\`);
+  }
+  return out;
+}
+
+// Helper to group tool_use+tool_result pairs within a container
+function renderToolGroups(items){
+  var out=[];
+  for(var i=0;i<items.length;i++){
+    var item=items[i];
+    var entry=item.entry;
+    var key=item.id||("tg"+i);
+    if(entry.type==="tool_use"){
+      var next=(i+1<items.length)?items[i+1]:null;
+      if(next&&next.entry.type==="tool_result"){
+        var raw=entry.text||"";
+        var resRaw=next.entry.text||"";
+        var isBash=raw.indexOf("$ ")>=0;
+        var isErr=resRaw.indexOf("tool_use_error")>=0||resRaw.indexOf("Error:")===0||resRaw.indexOf("ERROR:")===0;
+        var groupCls="act-tool-group"+(isErr?" act-tool-group-error":"")+(isBash?" act-tool-group-bash":"");
+        out.push(html\`<div class=\${groupCls} key=\${key}><\${ActivityRow} entry=\${entry} /><\${ActivityRow} entry=\${next.entry} /></div>\`);
+        i++;
+        continue;
+      }
+    }
+    out.push(html\`<\${ActivityRow} key=\${key} entry=\${entry} />\`);
+  }
+  return out;
+}
+
 // ── Run cards (new architecture: session-driven, not timeline-driven) ──
 
 const RUN_COLORS=[
@@ -498,12 +643,13 @@ function RunCard({run, lastReply, selected, onSelect, onOpen, runArtifacts, prio
   const st=run.status||"unknown";
   const replyText=lastReply?slackToMd(lastReply):"";
 
-  return html\`<div class=\${"run-card"+(selected?" run-card-selected":"")} id=\${"run-"+run.logId} style=\${"background:"+runBg(run.index)} onClick=\${()=>selected?onOpen(run.index):onSelect(run.index)} onDblClick=\${()=>onOpen(run.index)}>
+  return html\`<div class=\${"run-card"+(selected?" run-card-selected":"")} id=\${"run-"+run.logId} style=\${"background:"+runBg(run.index)} onClick=\${()=>onOpen(run.index)}>
     <div class="run-header">
       <span class=\${"run-dot "+st}></span>
       <span class="run-label">run \${run.index+1}\${run.total>1?"/"+run.total:""}</span>
       <span class="run-status">\${st}</span>
       \${run.exitCode!=null&&run.exitCode!==0?html\`<span class="run-exit">exit \${run.exitCode}</span>\`:null}
+      \${run.slackLink?html\`<a href=\${run.slackLink} target="_blank" class="run-slack-link" onClick=\${(e)=>e.stopPropagation()} title="View in Slack">\u2197</a>\`:null}
       \${run.started?html\`<span class="run-time">\${timeAgo(run.started)}</span>\`:null}
     </div>
     <div class="run-summary">
@@ -544,12 +690,13 @@ function RunDetail({run, activity, onBack, runArtifacts, priorPrNums}){
       <span class="run-label">run \${run.index+1}/\${run.total}</span>
       <span class="run-status">\${st}</span>
       \${run.exitCode!=null&&run.exitCode!==0?html\`<span class="run-exit">exit \${run.exitCode}</span>\`:null}
+      \${run.slackLink?html\`<a href=\${run.slackLink} target="_blank" class="run-slack-link" title="View in Slack">\u2197 Slack</a>\`:null}
       \${run.started?html\`<span class="run-time">\${timeAgo(run.started)}</span>\`:null}
     </div>
     \${runArtifacts&&runArtifacts.length?html\`<\${ArtifactChips} artifacts=\${runArtifacts} priorPrNums=\${priorPrNums} />\`:null}
     <div class="run-detail-body" ref=\${bodyRef}>
       \${run.prompt?html\`<\${PromptCard} text=\${run.prompt} time=\${run.started?timeAgo(run.started):""} user=\${run.user} slackLink=\${run.slackLink} />\`:null}
-      \${activity.map((item,i)=>html\`<\${ActivityRow} key=\${item.id||("a"+i)} entry=\${item.entry} agentLogUrl=\${item.agentLogUrl} />\`)}
+      \${renderActivityItems(activity)}
       \${run.status==="running"?html\`<\${TypingIndicator} />\`:null}
     </div>
   </div>\`;
@@ -576,7 +723,7 @@ function ReplyBar({isRunning, onSend, onQueue, onCancel}){
   const inputRef=useRef(null);
 
   const handleKeyDown=useCallback((e)=>{
-    if(e.key==="Enter"&&(e.ctrlKey||e.metaKey)){
+    if(e.key==="Enter"&&!e.shiftKey){
       e.preventDefault();
       const text=(inputRef.current&&inputRef.current.value.trim())||"";
       if(isRunning){if(text)onQueue(text);}
@@ -605,7 +752,7 @@ function ReplyBar({isRunning, onSend, onQueue, onCancel}){
   },[onQueue]);
 
   return html\`<div class="reply-bar">
-    <textarea ref=\${inputRef} placeholder=\${isRunning?"Queue a message\u2026 (Ctrl+Enter)":"Send a follow-up\u2026 (Ctrl+Enter)"} onKeyDown=\${handleKeyDown} onInput=\${handleInput}></textarea>
+    <textarea ref=\${inputRef} placeholder=\${isRunning?"Queue a message\u2026":"Send a follow-up\u2026"} onKeyDown=\${handleKeyDown} onInput=\${handleInput}></textarea>
     <div class="reply-actions">
       \${isRunning
         ?html\`<button class="btn btn-queue" onClick=\${handleQueue}>Queue</button><button class="btn btn-red" onClick=\${onCancel}>Cancel</button>\`
@@ -726,15 +873,21 @@ function WorkspacePage(){
 
   function slackPermalink(s){
     if(!s.slack_channel)return null;
-    var ts=s.slack_thread_ts||s.slack_message_ts;
+    // Use message_ts (specific run message) if available, fall back to thread_ts
+    var ts=s.slack_message_ts||s.slack_thread_ts;
     if(!ts)return null;
     var pTs=ts.replace(".","");
     var domain=D.slackDomain||"app";
-    return "https://"+domain+".slack.com/archives/"+s.slack_channel+"/p"+pTs;
+    var url="https://"+domain+".slack.com/archives/"+s.slack_channel+"/p"+pTs;
+    // If linking to a specific message in a thread, add thread_ts param
+    if(s.slack_message_ts&&s.slack_thread_ts&&s.slack_message_ts!==s.slack_thread_ts){
+      url+="?thread_ts="+s.slack_thread_ts+"&cid="+s.slack_channel;
+    }
+    return url;
   }
 
-  // Build runs from D.sessions (oldest first)
-  const runs=useMemo(()=>{
+  // Build runs from D.sessions (oldest first) — mutable so resume can add new runs
+  const [runs,setRuns]=useState(()=>{
     const sessionsOldest=[...D.sessions].reverse();
     const total=sessionsOldest.length;
     return sessionsOldest.map((s,i)=>({
@@ -743,7 +896,7 @@ function WorkspacePage(){
       prompt:s.prompt||"", user:s.user||D.user,
       slackLink:slackPermalink(s),
     }));
-  },[]);
+  });
 
   // Deeplink: ?run=<logId> opens detail view, otherwise list view (null)
   const [selectedRun,setSelectedRun]=useState(()=>{
@@ -780,6 +933,10 @@ function WorkspacePage(){
 
   // Assign activity to a run by timestamp
   function assignRunLogId(entry){
+    if(entry.log_id){
+      var known=D.sessions.find(function(s){return s.log_id===entry.log_id;});
+      if(known)return entry.log_id;
+    }
     const sessionsOldest=[...D.sessions].reverse();
     if(!entry.ts||!sessionsOldest.length)return sessionsOldest.length?sessionsOldest[sessionsOldest.length-1].log_id:null;
     for(let i=sessionsOldest.length-1;i>=0;i--){
@@ -790,6 +947,7 @@ function WorkspacePage(){
 
   // Process entry -> {logId, item} or null
   function processEntry(e, forceLogId){
+    if(!e.type)return null;
     if(e.type==="agent_log"){
       const m=e.text.match(/(https?:\\/\\/[^\\s]+)/);
       if(m){
@@ -850,14 +1008,35 @@ function WorkspacePage(){
     }
   }
 
+  // Add a new run from a resume response and navigate to it
+  function addRunFromResume(text, d){
+    var newLogId=d.log_url?d.log_url.split("/").pop():"";
+    if(!newLogId)return;
+    var newSession={log_id:newLogId,status:"running",started:new Date().toISOString(),user:D.user,prompt:text,slack_channel:"",slack_message_ts:"",slack_thread_ts:""};
+    D.sessions.unshift(newSession);
+    var newIdx;
+    setRuns(prev=>{
+      var total=prev.length+1;
+      newIdx=prev.length;
+      var updated=prev.map(r=>({...r,total:total}));
+      updated.push({logId:newLogId,index:newIdx,total:total,status:"running",exitCode:null,started:newSession.started,prompt:text,user:D.user,slackLink:null});
+      return updated;
+    });
+    setTimeout(()=>setSelectedRun(newIdx),0);
+  }
+
   const sendNextQueued=useCallback(()=>{
     const q=pendingQueueRef.current;
     if(!q.length)return;
     const msg=q[0];
     setMessageQueue(prev=>prev.slice(1));
+    setStatus("running");
     authFetch("/s/"+id+"/resume",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({prompt:msg})})
       .then(r=>r.json())
-      .then(d=>{if(!d.ok)console.warn("Queue send failed:",d.message);})
+      .then(d=>{
+        if(!d.ok){console.warn("Queue send failed:",d.message);return;}
+        addRunFromResume(msg,d);
+      })
       .catch(e=>console.warn("Queue send error:",e));
   },[id]);
 
@@ -900,7 +1079,10 @@ function WorkspacePage(){
     setStatus("running");
     authFetch("/s/"+id+"/resume",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({prompt:text})})
       .then(r=>r.json())
-      .then(d=>{if(!d.ok)alert(d.message||"Could not resume.");})
+      .then(d=>{
+        if(!d.ok){alert(d.message||"Could not resume.");return;}
+        addRunFromResume(text,d);
+      })
       .catch(e=>alert("Error: "+e.message));
   },[id]);
 
