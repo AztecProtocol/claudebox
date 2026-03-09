@@ -7,6 +7,8 @@
  * Only used from mcp/base.ts. Direct API calls go through libcreds instead.
  */
 
+import { existsSync, readFileSync, appendFileSync } from "fs";
+
 export interface ServerClientOpts {
   /** Profile name (e.g. "default", "barretenberg-audit") */
   profile: string;
@@ -29,6 +31,7 @@ export class ServerClient {
   readonly serverUrl: string | undefined;
   private readonly token: string;
   readonly hasServer: boolean;
+  readonly activityLog: string;
   private sessionMeta: Record<string, string>;
 
   constructor(opts: ServerClientOpts) {
@@ -36,7 +39,51 @@ export class ServerClient {
     this.serverUrl = opts.serverUrl?.replace(/\/$/, "");
     this.token = opts.serverToken || "";
     this.hasServer = !!(this.serverUrl && this.token);
+    this.activityLog = "/workspace/activity.jsonl";
     this.sessionMeta = opts.sessionMeta || {};
+  }
+
+  // ── Activity log (always local) ──────────────────────────────
+
+  private _seenArtifactUrls = new Set<string>();
+  private _activityInitialized = false;
+
+  private initActivityDedup(): void {
+    if (this._activityInitialized) return;
+    this._activityInitialized = true;
+    try {
+      if (existsSync(this.activityLog)) {
+        for (const line of readFileSync(this.activityLog, "utf-8").split("\n")) {
+          if (!line.trim()) continue;
+          try {
+            const entry = JSON.parse(line);
+            if (entry.type === "artifact") {
+              const m = entry.text?.match(/(https?:\/\/[^\s)>\]]+)/);
+              if (m) this._seenArtifactUrls.add(m[1].replace(/[.,;:!?]+$/, ""));
+            }
+          } catch {}
+        }
+      }
+    } catch {}
+  }
+
+  logActivity(type: string, text: string): void {
+    this.initActivityDedup();
+    if (type === "artifact") {
+      const urlMatch = text.match(/(https?:\/\/[^\s)>\]]+)/);
+      if (urlMatch) {
+        const cleanUrl = urlMatch[1].replace(/[.,;:!?]+$/, "");
+        const isUpdate = /updated/i.test(text);
+        if (this._seenArtifactUrls.has(cleanUrl) && !isUpdate) return;
+        this._seenArtifactUrls.add(cleanUrl);
+      }
+    }
+    try {
+      const entry: Record<string, string> = { ts: new Date().toISOString(), type, text };
+      const logId = this.sessionMeta?.log_id;
+      if (logId) entry.log_id = logId;
+      appendFileSync(this.activityLog, JSON.stringify(entry) + "\n");
+    } catch {}
   }
 
   // ── Server HTTP helpers ──────────────────────────────────────

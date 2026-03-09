@@ -2,7 +2,10 @@
   "name": "claudebox",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "server.ts",
+  "bin": {
+    "claudebox": "./bin/claudebox"
+  },
   "scripts": {
     "test": "node --experimental-strip-types --no-warnings --import ./tests/setup.ts --test 'tests/libclaudebox/**/*.test.ts' 'tests/integration/**/*.test.ts'",
     "test:security": "CLAUDEBOX_SECURITY_TESTS=1 node --experimental-strip-types --no-warnings --import ./tests/setup.ts --test tests/security/**/*.test.ts",
@@ -20,6 +23,7 @@
     "@types/ws": "^8.18.1",
     "dockerode": "^4.0.9",
     "jose": "^6.2.0",
+    "ngrok": "^5.0.0-beta.2",
     "ws": "^8.19.0",
     "zod": "^3.23.0"
   },

@@ -237,62 +237,7 @@ describe("Plugin Routes", () => {
     });
   });
 
-  // ── 5. Channel/branch maps ──
-
-  describe("channel and branch maps", () => {
-    it("builds channel→profile map from plugins with channels", async () => {
-      const mapRuntime = new PluginRuntime(mockDocker, mockStore);
-
-      const pluginA: Plugin = {
-        name: "profile-alpha",
-        channels: ["C001", "C002"],
-        setup() {},
-      };
-      const pluginB: Plugin = {
-        name: "profile-beta",
-        channels: ["C003"],
-        setup() {},
-      };
-
-      await mapRuntime.loadPlugin(pluginA);
-      await mapRuntime.loadPlugin(pluginB);
-
-      const channelMap = mapRuntime.buildChannelProfileMap();
-      assert.equal(channelMap.get("C001"), "profile-alpha");
-      assert.equal(channelMap.get("C002"), "profile-alpha");
-      assert.equal(channelMap.get("C003"), "profile-beta");
-      assert.equal(channelMap.size, 3);
-    });
-
-    it("builds channel→branch map from plugins with branchOverrides", async () => {
-      const mapRuntime = new PluginRuntime(mockDocker, mockStore);
-
-      const plugin: Plugin = {
-        name: "branching",
-        branchOverrides: { "C010": "develop", "C011": "staging" },
-        setup() {},
-      };
-
-      await mapRuntime.loadPlugin(plugin);
-
-      const branchMap = mapRuntime.buildChannelBranchMap();
-      assert.equal(branchMap.get("C010"), "develop");
-      assert.equal(branchMap.get("C011"), "staging");
-      assert.equal(branchMap.size, 2);
-    });
-
-    it("returns empty maps when plugins have no channels/branches", async () => {
-      const mapRuntime = new PluginRuntime(mockDocker, mockStore);
-
-      const bare: Plugin = { name: "bare", setup() {} };
-      await mapRuntime.loadPlugin(bare);
-
-      assert.equal(mapRuntime.buildChannelProfileMap().size, 0);
-      assert.equal(mapRuntime.buildChannelBranchMap().size, 0);
-    });
-  });
-
-  // ── 6. requiredCredentials field ──
+  // ── 5. requiredCredentials field ──
 
   describe("requiredCredentials", () => {
     it("preserves requiredCredentials after loading", async () => {

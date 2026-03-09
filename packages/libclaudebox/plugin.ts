@@ -111,6 +111,9 @@ export interface Plugin {
   /** Prompt appended to every session prompt (e.g. gist instructions, response style) */
   promptSuffix?: string;
 
+  /** Build extra context to inject into the prompt (e.g. recent session history). */
+  buildPromptContext?: (store: SessionStore) => Promise<string> | string;
+
   /** Prompt queued as a follow-up after session completes (e.g. "write a summary") */
   summaryPrompt?: string;
 
@@ -147,7 +150,7 @@ export class PluginRuntime {
       store: this.store,
     };
 
-    await plugin.setup(ctx);
+    if (plugin.setup) await plugin.setup(ctx);
     this.plugins.push(plugin);
     console.log(`[PLUGIN] Loaded: ${plugin.name} (${this.routes.length} routes)`);
   }
@@ -180,27 +183,4 @@ export class PluginRuntime {
     return this.plugins;
   }
 
-  /** Build channel→profile map from all loaded plugins. */
-  buildChannelProfileMap(): Map<string, string> {
-    const map = new Map<string, string>();
-    for (const p of this.plugins) {
-      for (const ch of p.channels || []) map.set(ch, p.name);
-    }
-    return map;
-  }
-
-  /** Build channel→branch map from all loaded plugins. */
-  buildChannelBranchMap(): Map<string, string> {
-    const map = new Map<string, string>();
-    for (const p of this.plugins) {
-      for (const [ch, br] of Object.entries(p.branchOverrides || {})) map.set(ch, br);
-    }
-    return map;
-  }
-
-  /** Get Docker config for a plugin by name. */
-  getDockerConfig(name: string): DockerConfig {
-    const plugin = this.plugins.find(p => p.name === name);
-    return plugin?.docker ?? {};
-  }
 }

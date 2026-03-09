@@ -69,6 +69,8 @@ export interface WorkspacePageData {
   sessions: SessionMeta[]; // all sessions for this worktree (newest first)
   worktreeAlive: boolean;
   activity: ActivityEntry[];  // newest first
+  /** Last reply text per session log_id (for collapsed run card summaries) */
+  lastReplies?: Record<string, string>;
 }
 
 export function linkify(text: string): string {
@@ -139,6 +141,14 @@ function compactArtifact(text: string): string {
   const labelMatch = text.match(/audit label:\s*(\S+)/);
   if (labelMatch) return `<span class="artifact-link">Label ${esc(labelMatch[1])}</span>`;
 
+  // "Created <name> #N — url" or "Created #N — url"
+  const createdMatch = text.match(/^Created\s+(?:(.+?)\s+)?#(\d+).*?(https?:\/\/\S+)/);
+  if (createdMatch) return `<a href="${esc(createdMatch[3])}" target="_blank" class="link artifact-link">${createdMatch[1] ? esc(createdMatch[1]) + " " : ""}#${createdMatch[2]}</a>`;
+
+  // Generic: any text with #N and a URL
+  const genericMatch = text.match(/#(\d+).*?(https?:\/\/\S+)/);
+  if (genericMatch) return `<a href="${esc(genericMatch[2])}" target="_blank" class="link artifact-link">#${genericMatch[1]}</a>`;
+
   // Fallback: linkify the whole text
   return linkify(text);
 }
@@ -198,4 +208,14 @@ export interface WorkspaceCard {
   channelName: string;
   runCount: number;
   profile?: string;
+  /** Origin type: "slack", "github", "http" */
+  origin: string;
+  /** Slack thread key "channel:ts" for grouping */
+  threadKey?: string;
+  /** Raw Slack channel ID (for API calls) */
+  slackChannel?: string;
+  /** Raw Slack thread timestamp (for API calls) */
+  slackThreadTs?: string;
+  /** GitHub link (PR or action run URL) */
+  link?: string;
 }
