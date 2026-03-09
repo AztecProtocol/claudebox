@@ -743,8 +743,8 @@ function WorkspacePage(){
     return url;
   }
 
-  // Build runs from D.sessions (oldest first)
-  const runs=useMemo(()=>{
+  // Build runs from D.sessions (oldest first) — mutable so resume can add new runs
+  const [runs,setRuns]=useState(()=>{
     const sessionsOldest=[...D.sessions].reverse();
     const total=sessionsOldest.length;
     return sessionsOldest.map((s,i)=>({
@@ -753,7 +753,7 @@ function WorkspacePage(){
       prompt:s.prompt||"", user:s.user||D.user,
       slackLink:slackPermalink(s),
     }));
-  },[]);
+  });
 
   // Deeplink: ?run=<logId> opens detail view, otherwise list view (null)
   const [selectedRun,setSelectedRun]=useState(()=>{
@@ -860,14 +860,35 @@ function WorkspacePage(){
     }
   }
 
+  // Add a new run from a resume response and navigate to it
+  function addRunFromResume(text, d){
+    var newLogId=d.log_url?d.log_url.split("/").pop():"";
+    if(!newLogId)return;
+    var newSession={log_id:newLogId,status:"running",started:new Date().toISOString(),user:D.user,prompt:text,slack_channel:"",slack_message_ts:"",slack_thread_ts:""};
+    D.sessions.unshift(newSession);
+    var newIdx;
+    setRuns(prev=>{
+      var total=prev.length+1;
+      newIdx=prev.length;
+      var updated=prev.map(r=>({...r,total:total}));
+      updated.push({logId:newLogId,index:newIdx,total:total,status:"running",exitCode:null,started:newSession.started,prompt:text,user:D.user,slackLink:null});
+      return updated;
+    });
+    setTimeout(()=>setSelectedRun(newIdx),0);
+  }
+
   const sendNextQueued=useCallback(()=>{
     const q=pendingQueueRef.current;
     if(!q.length)return;
     const msg=q[0];
     setMessageQueue(prev=>prev.slice(1));
+    setStatus("running");
     authFetch("/s/"+id+"/resume",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({prompt:msg})})
       .then(r=>r.json())
-      .then(d=>{if(!d.ok)console.warn("Queue send failed:",d.message);})
+      .then(d=>{
+        if(!d.ok){console.warn("Queue send failed:",d.message);return;}
+        addRunFromResume(msg,d);
+      })
       .catch(e=>console.warn("Queue send error:",e));
   },[id]);
 
@@ -910,7 +931,10 @@ function WorkspacePage(){
     setStatus("running");
     authFetch("/s/"+id+"/resume",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({prompt:text})})
       .then(r=>r.json())
-      .then(d=>{if(!d.ok)alert(d.message||"Could not resume.");})
+      .then(d=>{
+        if(!d.ok){alert(d.message||"Could not resume.");return;}
+        addRunFromResume(text,d);
+      })
       .catch(e=>alert("Error: "+e.message));
   },[id]);
 
