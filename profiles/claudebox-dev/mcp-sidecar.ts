@@ -11,14 +11,14 @@
  *   - create_pr defaults base to main
  */
 
-import {
-  z, McpServer,
-  getCreds, SESSION_META,
-  sanitizeError,
-  git, logActivity, pushToRemote,
-  registerCommonTools, registerCloneRepo, registerPRTools,
-  startMcpHttpServer,
-} from "../../packages/libclaudebox/mcp/base.ts";
+import { z } from "zod";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { SESSION_META } from "../../packages/libclaudebox/mcp/env.ts";
+import { logActivity } from "../../packages/libclaudebox/mcp/activity.ts";
+import { getCreds, git, sanitizeError } from "../../packages/libclaudebox/mcp/helpers.ts";
+import { registerCommonTools } from "../../packages/libclaudebox/mcp/tools.ts";
+import { pushToRemote, registerCloneRepo, registerPRTools } from "../../packages/libclaudebox/mcp/git-tools.ts";
+import { startMcpHttpServer } from "../../packages/libclaudebox/mcp/server.ts";
 
 // ── Profile config ──────────────────────────────────────────────
 const REPO = "AztecProtocol/claudebox";

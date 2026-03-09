@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { isGhAllowed, buildCommonGhWhitelist } from "../../packages/libclaudebox/mcp/base.ts";
+import { isGhAllowed, buildCommonGhWhitelist } from "../../packages/libclaudebox/mcp/helpers.ts";
 
 const R = "repos/TestOrg/test-repo";
 const whitelist = buildCommonGhWhitelist(R);

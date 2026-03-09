@@ -9,12 +9,11 @@
  * clone_repo does a real git clone from /reference-repo/.git.
  */
 
-import {
-  McpServer,
-  SESSION_META,
-  registerCommonTools, registerCloneRepo, registerPRTools,
-  startMcpHttpServer,
-} from "../../packages/libclaudebox/mcp/base.ts";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { SESSION_META } from "../../packages/libclaudebox/mcp/env.ts";
+import { registerCommonTools } from "../../packages/libclaudebox/mcp/tools.ts";
+import { registerCloneRepo, registerPRTools } from "../../packages/libclaudebox/mcp/git-tools.ts";
+import { startMcpHttpServer } from "../../packages/libclaudebox/mcp/server.ts";
 
 // ── Profile config ──────────────────────────────────────────────
 const REPO = process.env.CLAUDEBOX_TEST_REPO || "ludamad/test-mfh";

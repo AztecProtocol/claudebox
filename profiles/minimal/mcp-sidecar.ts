@@ -12,11 +12,9 @@
  *   - get_context — retrieve session context
  */
 
-import {
-  McpServer,
-  registerCommonTools,
-  startMcpHttpServer,
-} from "../../packages/libclaudebox/mcp/base.ts";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { registerCommonTools } from "../../packages/libclaudebox/mcp/tools.ts";
+import { startMcpHttpServer } from "../../packages/libclaudebox/mcp/server.ts";
 
 function createServer(): McpServer {
   const server = new McpServer({ name: "claudebox-minimal", version: "1.0.0" });

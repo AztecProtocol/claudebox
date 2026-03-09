@@ -20,7 +20,7 @@ server.ts                # Entry point: wires everything together
   - `docker.ts` — Container lifecycle (parameterized by DockerConfig)
   - `session-store.ts` — JSON file session persistence + worktree GC
   - `http-routes.ts` — HTTP API + SSE + WebSocket + plugin route mounting
-  - `mcp/base.ts` — Composable MCP tool registrars for sidecars
+  - `mcp/` — Composable MCP tool registrars (env, activity, helpers, tools, git-tools, server)
   - `html/templates.ts` — Dashboard HTML (workspace, main, personal)
   - `slack/` — Slack event routing and message composition
   - `config.ts` — Environment variable config
@@ -36,7 +36,7 @@ server.ts                # Entry point: wires everything together
 
 Plugins run in **two contexts**:
 - **Host**: `plugin.ts` declares Docker config, channels, routes, schemas, credentials
-- **Container**: `mcp-sidecar.ts` composes MCP tools from `libclaudebox/mcp/base.ts`
+- **Container**: `mcp-sidecar.ts` composes MCP tools from `libclaudebox/mcp/` modules
 
 Profiles are auto-discovered by scanning `profiles/*/` for `plugin.ts` or `mcp-sidecar.ts`.
 
