@@ -1433,7 +1433,7 @@ const routes: Route[] = [
       const baseUrl = worktreeId ? `https://${host}/s/${worktreeId}` : "";
 
       // Build Slack text from sections
-      const buildSlackTextFromSections = () => {
+      const buildSlackTextFromSections = (elapsedStr?: string) => {
         const parts: string[] = [];
         if (sections?.response) {
           parts.push(sections.response.length > 600 ? sections.response.slice(0, 600) + "…" : sections.response);
@@ -1444,15 +1444,29 @@ const routes: Route[] = [
         const prLinks = (trackedPRs || []).map((pr: any) => `<${pr.url}|PR #${pr.num}>`);
         if (prLinks.length) footer.push(prLinks.join(" "));
         if (baseUrl) footer.push(`<${baseUrl}|status>`);
+        if (elapsedStr) footer.push(elapsedStr);
         if (footer.length) parts.push(footer.join("  \u2502  "));
         return parts.join("\n");
       };
+
+      // Elapsed time since session started
+      const elapsed = (() => {
+        const started = session?.started;
+        if (!started) return "";
+        const ms = Date.now() - new Date(started).getTime();
+        if (ms < 0) return "";
+        const mins = Math.floor(ms / 60000);
+        if (mins < 1) return "<1m";
+        if (mins < 60) return `${mins}m`;
+        return `${Math.floor(mins / 60)}h${mins % 60}m`;
+      })();
 
       // Build GitHub body from sections
       const currentSeq = session?.log_id?.match(/-(\d+)$/)?.[1] || "";
       const buildGhBodyFromSections = () => {
         const lines: string[] = [];
-        lines.push(`\u23F3 **Run #${currentSeq || "?"}** — ${sections?.status || status || "running"}`);
+        const elapsedSuffix = elapsed ? ` (${elapsed})` : "";
+        lines.push(`\u23F3 **Run #${currentSeq || "?"}** — ${sections?.status || status || "running"}${elapsedSuffix}`);
         if (baseUrl) lines.push(`[Live status](${baseUrl})`);
         if (sections?.response) { lines.push(""); lines.push(sections.response); }
         const prLines = (trackedPRs || []).map((pr: any) => {
@@ -1468,7 +1482,7 @@ const routes: Route[] = [
       if (session?.slack_channel && session?.slack_message_ts) {
         try {
           const slackCreds = getHostCreds({ slackChannel: session.slack_channel, slackMessageTs: session.slack_message_ts });
-          const d = await slackCreds.slack.updateMessage(buildSlackTextFromSections(), { channel: session.slack_channel, ts: session.slack_message_ts });
+          const d = await slackCreds.slack.updateMessage(buildSlackTextFromSections(elapsed), { channel: session.slack_channel, ts: session.slack_message_ts });
           results.push(d?.ok ? "Slack updated" : `Slack: ${d?.error || "unknown"}`);
         } catch (e: any) { results.push(`Slack: ${e.message}`); }
       }

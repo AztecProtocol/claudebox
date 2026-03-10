@@ -42,6 +42,18 @@ export async function updateGithubOnCompletion(
   const statusEmoji = exitCode === 0 ? "\u2705" : "\u26A0\uFE0F";
   const statusText = exitCode === 0 ? "completed" : `error (exit ${exitCode})`;
 
+  // Elapsed time
+  const started = session.started;
+  const elapsed = (() => {
+    if (!started) return "";
+    const ms = Date.now() - new Date(started).getTime();
+    if (ms < 0) return "";
+    const mins = Math.floor(ms / 60000);
+    if (mins < 1) return "<1m";
+    if (mins < 60) return `${mins}m`;
+    return `${Math.floor(mins / 60)}h${mins % 60}m`;
+  })();
+
   const currentSeq = logId.match(/-(\d+)$/)?.[1] || "1";
   const baseUrl = sessionUrl(worktreeId);
 
@@ -53,7 +65,8 @@ export async function updateGithubOnCompletion(
 
   // Build the run comment body
   const lines: string[] = [];
-  lines.push(`${statusEmoji} **Run #${currentSeq}** — ${statusText}`);
+  const elapsedSuffix = elapsed ? ` (${elapsed})` : "";
+  lines.push(`${statusEmoji} **Run #${currentSeq}** — ${statusText}${elapsedSuffix}`);
   lines.push(`[Live status](${baseUrl})`);
 
   // Response

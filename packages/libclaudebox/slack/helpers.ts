@@ -95,10 +95,20 @@ export function buildSlackStatusFromActivity(
   const artifacts = activity.filter(a => a.type === "artifact" && (!currentLogId || !a.log_id || a.log_id === currentLogId));
   const linkParts = extractArtifactLinks(artifacts);
 
-  // Footer: artifacts + status link + status
+  // Footer: artifacts + status link + elapsed + status
   const footer: string[] = [];
   if (linkParts.length) footer.push(linkParts.join(" \u2022 "));
   if (worktreeId) footer.push(`<${sessionUrl(worktreeId)}|status>`);
+  // Compute elapsed from first activity timestamp
+  const firstTs = activity.length > 0 ? activity[0].ts : "";
+  if (firstTs) {
+    const ms = Date.now() - new Date(firstTs).getTime();
+    if (ms > 0) {
+      const mins = Math.floor(ms / 60000);
+      const elapsed = mins < 1 ? "<1m" : mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h${mins % 60}m`;
+      footer.push(elapsed);
+    }
+  }
   footer.push(`_${status}_`);
   parts.push(footer.join("  \u2502  "));
 
