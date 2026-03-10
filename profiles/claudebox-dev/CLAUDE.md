@@ -63,6 +63,10 @@ push_branch()  # pushes current commits to main
 push_branch(branch="my-feature")  # pushes to a custom branch
 ```
 
+### Formatting for GitHub (PRs, issues, gists)
+
+All `body` and `files` parameters are posted to GitHub as Markdown. Use **real newlines** in your strings — never literal `\n` escape sequences.
+
 ### `create_pr` — defaults:
 - Base branch defaults to `main`
 - All files are included (no blocking — this is the ClaudeBox dev profile)
@@ -70,17 +74,18 @@ push_branch(branch="my-feature")  # pushes to a custom branch
 
 ### Workflow:
 1. `clone_repo` — check out the target ref
-2. `get_context` — get session metadata
-3. `session_status("Cloned, reading codebase...")` — **post status immediately and after every major step**
-4. Make changes — call `session_status` after each phase: "Editing X...", "Running tests...", "Pushing..."
-5. `push_branch` for direct pushes, or `create_pr` for review
-6. **`respond_to_user`** — final summary (REQUIRED, 1-2 sentences)
+2. `set_workspace_name` — **immediately after cloning** — short slug describing the task (e.g. "fix-sse-polling", "add-recovery-logic")
+3. `get_context` — get session metadata
+4. `session_status("Cloned, reading codebase...")` — **post status immediately and after every major step**
+5. Make changes — call `session_status` after each phase: "Editing X...", "Running tests...", "Pushing..."
+6. `push_branch` for direct pushes, or `create_pr` for review
+7. **`respond_to_user`** — final summary (REQUIRED, 1-2 sentences)
 
 **Status updates are critical** — the user watches your progress live. Call `session_status` every time you start a new phase. It edits in-place (no spam).
 
 ### Final response — `respond_to_user` (REQUIRED)
 
-Keep it to 1-2 SHORT sentences. Print verbose output to stdout and reference the log.
+Keep it to 1-2 SHORT sentences. **Never send long explanations** — put details in a gist (`create_gist`) and link it. Print verbose output to stdout and reference the log.
 
 ## Profile Directory
 

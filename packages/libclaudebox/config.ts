@@ -33,9 +33,10 @@ export const SESSION_PAGE_PASS = process.env.CLAUDEBOX_SESSION_PASS || "";
 // The logId format is <worktreeId>-<seq>, so we extract the worktreeId prefix.
 export const LOG_BASE_URL = `https://${CLAUDEBOX_HOST}`;
 export function buildLogUrl(logId: string): string {
-  // Extract worktreeId from logId (e.g. "d9441073aae158ae-3" → "d9441073aae158ae")
+  // Extract worktreeId and seq from logId (e.g. "d9441073aae158ae-3" → worktree "d9441073aae158ae", run "3")
   const worktreeId = logId.replace(/-\d+$/, "");
-  return `${LOG_BASE_URL}/s/${worktreeId}`;
+  const seq = logId.match(/-(\d+)$/)?.[1] || "";
+  return `${LOG_BASE_URL}/s/${worktreeId}${seq ? `?run=${seq}` : ""}`;
 }
 
 export const DEFAULT_BASE_BRANCH = process.env.CLAUDEBOX_DEFAULT_BRANCH || "main";

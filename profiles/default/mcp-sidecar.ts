@@ -8,7 +8,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerCommonTools } from "../../packages/libclaudebox/mcp/tools.ts";
-import { registerCloneRepo, registerPRTools, registerGitProxy, registerLogTools } from "../../packages/libclaudebox/mcp/git-tools.ts";
+import { registerCloneRepo, registerPRTools, registerGitProxy, registerLogTools, registerIssueTools } from "../../packages/libclaudebox/mcp/git-tools.ts";
 import { startMcpHttpServer } from "../../packages/libclaudebox/mcp/server.ts";
 
 // ── Profile config ──────────────────────────────────────────────
@@ -43,6 +43,11 @@ function createServer(): McpServer {
 
   registerGitProxy(server, { workspace: WORKSPACE });
   registerLogTools(server, { workspace: WORKSPACE });
+
+  registerIssueTools(server, [
+    { name: "aztec_packages_create_issue", repo: REPO, description: "Create a GitHub issue in AztecProtocol/aztec-packages." },
+    { name: "barretenberg_create_issue", repo: "AztecProtocol/barretenberg", description: "Create a GitHub issue in AztecProtocol/barretenberg." },
+  ]);
 
   return server;
 }

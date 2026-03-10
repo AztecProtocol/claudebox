@@ -90,6 +90,11 @@ export class SessionStreamer {
   private stopped = false;
   private cacheLogBin: string;
   private denoiseScript: string;
+  // Track tool_use IDs already written to activity.jsonl to prevent duplicates
+  // from cumulative progress events + final assistant events
+  private seenToolUseIds = new Set<string>();
+  // Directory for the current main session's subagents (set in start())
+  private mainSessionDir = "";
 
   constructor(opts: StreamerOpts) {
     this.opts = opts;
@@ -142,6 +147,10 @@ export class SessionStreamer {
       if (msg.type === "assistant" && Array.isArray(msg.message?.content)) {
         for (const item of msg.message.content) {
           if (item.type === "tool_use") {
+            // Deduplicate — progress events are cumulative, so the same tool_use
+            // appears in multiple progress events and again in the final assistant event
+            if (item.id && this.seenToolUseIds.has(item.id)) continue;
+            if (item.id) this.seenToolUseIds.add(item.id);
             const name = item.name ?? "?";
             const inp = item.input ?? {};
             const desc = inp.description ?? inp.command ?? inp.file_path ?? inp.pattern ?? "";
@@ -203,13 +212,21 @@ export class SessionStreamer {
         }
 
         if (it === "text" && item.text?.trim()) {
-          if (!isSubagent) {
-            this.writeActivity("context", item.text.trim());
+          const trimmed = item.text.trim();
+          // Filter out boilerplate non-responses from Claude
+          const isBoilerplate = /^No response requested\.?$/i.test(trimmed);
+          if (!isSubagent && !isBoilerplate) {
+            this.writeActivity("context", trimmed);
           }
-          this.emit(`CLAUDE: ${item.text}`);
+          if (!isBoilerplate) this.emit(`CLAUDE: ${item.text}`);
         }
 
         if (it === "tool_use") {
+          // Deduplicate — same tool_use appears in progress events (cumulative)
+          // and then again in the final assistant event
+          if (item.id && this.seenToolUseIds.has(item.id)) continue;
+          if (item.id) this.seenToolUseIds.add(item.id);
+
           const name = item.name ?? "?";
           const inp = item.input ?? {};
 
@@ -254,7 +271,7 @@ export class SessionStreamer {
       w("tool_use", `Grep ${trunc(inp.pattern || "", 60)} ${path}`);
     } else if (["Read", "Glob"].includes(name)) {
       const target = inp.file_path || inp.pattern || inp.path || "";
-      w("tool_use", `${name} ${trunc(target, 80)}`);
+      w("tool_use", `${name} ${trunc(target, 200)}`);
     } else if (["Edit", "Write"].includes(name)) {
       w("tool_use", `${name} ${inp.file_path || ""}`);
     } else if (name === "ToolSearch") {
@@ -262,7 +279,7 @@ export class SessionStreamer {
     } else if (name.startsWith("mcp__claudebox__")) {
       const short = name.replace("mcp__claudebox__", "");
       const args = Object.entries(inp).filter(([_, v]) => v !== undefined && v !== "").map(([k, v]) => {
-        const s = String(v);
+        const s = typeof v === "object" ? JSON.stringify(v) : String(v);
         return `${k}=${s.length > 60 ? s.slice(0, 60) + "…" : s}`;
       }).join(" ");
       w("tool_use", `${short}${args ? " " + args : ""}`);
@@ -324,6 +341,11 @@ export class SessionStreamer {
 
     this.emit(`━━━ Claude Session Output ━━━`);
 
+    // Track the main session's UUID directory for scoped subagent discovery
+    // e.g. /projects/c0356fe6-e688-4a6f-a0b7-b558a7b03e0b.jsonl → UUID = c0356fe6-...
+    const mainSessionId = basename(jsonlPath, ".jsonl");
+    this.mainSessionDir = join(projectDir, mainSessionId);
+
     const mainTailer = new JsonlTailer(jsonlPath, "", (d) => this.processEntry(d, false));
     this.tailers.set(jsonlPath, mainTailer);
     mainTailer.drain();
@@ -369,10 +391,12 @@ export class SessionStreamer {
   }
 
   private discoverNewFiles(): void {
-    const { projectDir } = this.opts;
-    if (!existsSync(projectDir)) return;
+    // Only discover subagent JSONL files within the current session's directory.
+    // Without this, old session JSONL files would be re-processed on every run,
+    // duplicating all activity entries from previous runs.
+    if (!this.mainSessionDir || !existsSync(this.mainSessionDir)) return;
 
-    for (const f of findAllJsonl(projectDir)) {
+    for (const f of findAllJsonl(this.mainSessionDir)) {
       if (this.tailers.has(f)) continue;
       const isSubagent = f.includes("/subagents/");
       const label = isSubagent

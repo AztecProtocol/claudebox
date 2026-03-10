@@ -95,6 +95,46 @@ export async function pushToRemote(workspace: string, repo: string, branch: stri
   await getCreds().github.pushToRemote(workspace, repo, branch, forcePush);
 }
 
+// ── Issue tool config + registration ─────────────────────────────
+
+export interface IssueToolConfig {
+  /** Tool name, e.g. "aztec_packages_create_issue" */
+  name: string;
+  /** GitHub repo, e.g. "AztecProtocol/aztec-packages" */
+  repo: string;
+  /** Tool description */
+  description?: string;
+  /** Default labels to add */
+  defaultLabels?: string[];
+}
+
+export function registerIssueTools(server: McpServer, configs: IssueToolConfig[]): void {
+  for (const config of configs) {
+    const desc = config.description || `Create a GitHub issue in ${config.repo}.`;
+    server.tool(config.name, desc,
+      {
+        title: z.string().describe("Issue title"),
+        body: z.string().describe("Issue body (Markdown). Use real newlines, not literal \\n."),
+        labels: z.array(z.string()).optional().describe("Labels to add"),
+      },
+      async ({ title, body: rawBody, labels }) => {
+        if (!getCreds().github.hasToken) return { content: [{ type: "text", text: "No GitHub access configured" }], isError: true };
+        // Unescape literal \n sequences the model sometimes sends
+        const body = rawBody ? rawBody.replace(/\\n/g, "\n") : rawBody;
+        try {
+          const allLabels = [...(config.defaultLabels || []), ...(labels || [])];
+          const issue = await getCreds().github.createIssue(config.repo, {
+            title, body, labels: allLabels.length ? allLabels : undefined,
+          });
+          logActivity("artifact", `Issue #${issue.number}: ${title} — ${issue.html_url}`);
+          return { content: [{ type: "text", text: `${issue.html_url}\n#${issue.number}` }] };
+        } catch (e: any) {
+          return { content: [{ type: "text", text: `${config.name}: ${sanitizeError(e.message)}` }], isError: true };
+        }
+      });
+  }
+}
+
 // ── Config interfaces ───────────────────────────────────────────
 
 export interface CloneToolConfig {
@@ -275,9 +315,9 @@ export function registerLogTools(server: McpServer, config: { workspace: string 
   }
 
   server.tool("read_log",
-    `Read a CI log by key/hash. Use instead of curling ci.aztec-labs.com or using CI_PASSWORD.`,
+    `Read a CI log by key/hash. Use instead of using CI_PASSWORD or curling the log server directly.`,
     {
-      key: z.string().regex(/^[a-zA-Z0-9._-]+$/).describe("Log key/hash from a ci.aztec-labs.com URL"),
+      key: z.string().regex(/^[a-zA-Z0-9._-]+$/).describe("Log key/hash from a CI log URL"),
       tail: z.number().optional().describe("Only return the last N lines"),
       head: z.number().optional().describe("Only return the first N lines"),
     },
@@ -320,14 +360,13 @@ export function registerLogTools(server: McpServer, config: { workspace: string 
     });
 
   server.tool("write_log",
-    `Write content to a CI log (ci.aztec-labs.com). Creates a persistent, shareable log link.
+    `Write content to a CI log. Creates a persistent, shareable log link.
 
 Use this instead of create_gist for:
 - Build output and CI logs
 - Large command output
 - Anything that needs a quick shareable link without creating a GitHub gist
 
-The log is accessible at ci.aztec-labs.com/<key>.
 Returns the log URL.`,
     {
       content: z.string().describe("Content to write to the log"),
@@ -357,7 +396,8 @@ Returns the log URL.`,
           return { content: [{ type: "text", text: `write_log failed (exit ${result.status}): ${err.slice(0, 500)}` }], isError: true };
         }
 
-        const url = `http://ci.aztec-labs.com/${logKey}`;
+        const logBase = process.env.CI_LOG_BASE_URL || "https://ci.aztec-labs.com";
+        const url = `${logBase}/${logKey}`;
         logActivity("artifact", `Log: ${url}`);
         return { content: [{ type: "text", text: `${url}\nKey: ${logKey}` }] };
       } catch (e: any) {
@@ -372,7 +412,7 @@ export function registerPRTools(server: McpServer, config: PRToolConfig): void {
   // ── create_pr ──
   const createSchema: Record<string, any> = {
     title: z.string().describe("PR title"),
-    body: z.string().describe("PR description"),
+    body: z.string().describe("PR description (Markdown). Use real newlines, not literal \\n."),
     base: z.string().default(config.defaultBase).describe(`Base branch (default: ${config.defaultBase})`),
     closes: z.array(z.number()).optional().describe("Issue numbers to close"),
     force_push: z.boolean().optional().describe("Force-push to the branch"),
@@ -384,7 +424,9 @@ export function registerPRTools(server: McpServer, config: PRToolConfig): void {
     config.createDescription || "Push workspace commits and create a draft PR.",
     createSchema,
     async (params: any) => {
-      const { title, body, closes, force_push, include_claude_files, include_noir_submodule } = params;
+      const { title, closes, force_push, include_claude_files, include_noir_submodule } = params;
+      // Unescape literal \n sequences the model sometimes sends (double-escaped in JSON)
+      const body: string = (params.body || "").replace(/\\n/g, "\n");
       let base: string = params.base;
       if (/^v\d+/.test(base)) base = `backport-to-${base}-staging`;
       if (!getCreds().github.hasToken) return { content: [{ type: "text", text: "No GitHub access configured" }], isError: true };
@@ -449,7 +491,7 @@ export function registerPRTools(server: McpServer, config: PRToolConfig): void {
     pr_number: z.number().describe("PR number"),
     push: z.boolean().optional().describe("Push current workspace commits to the PR's branch"),
     title: z.string().optional().describe("New title"),
-    body: z.string().optional().describe("New body"),
+    body: z.string().optional().describe("New body (Markdown). Use real newlines, not literal \\n."),
     base: z.string().optional().describe("New base branch"),
     state: z.enum(["open", "closed"]).optional().describe("PR state"),
     force_push: z.boolean().optional(),
@@ -461,7 +503,9 @@ export function registerPRTools(server: McpServer, config: PRToolConfig): void {
     config.updateDescription || "Push workspace commits and/or update an existing PR.",
     updateSchema,
     async (params: any) => {
-      const { pr_number, push, title, body, state, force_push, include_claude_files, include_noir_submodule } = params;
+      const { pr_number, push, title, state, force_push, include_claude_files, include_noir_submodule } = params;
+      // Unescape literal \n sequences the model sometimes sends
+      const body: string | undefined = params.body ? (params.body as string).replace(/\\n/g, "\n") : undefined;
       let base: string | undefined = params.base;
       if (base && /^v\d+/.test(base)) base = `backport-to-${base}-staging`;
       if (!getCreds().github.hasToken) return { content: [{ type: "text", text: "No GitHub access configured" }], isError: true };

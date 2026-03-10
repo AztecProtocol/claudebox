@@ -86,7 +86,13 @@ async function main() {
       console.error(`[RECONCILE] Error: ${e.message}`);
     } finally { reconciling = false; }
   };
-  runReconcile();
+  // Run reconcile first, then recover — reconcile cleans up dead containers,
+  // recover re-attaches to containers that are still running.
+  runReconcile().then(() => {
+    docker.recoverRunningSessions(store).catch(e => {
+      console.error(`[RECOVER] Error: ${e.message}`);
+    });
+  });
   setInterval(runReconcile, 60_000);
 
   // ── DM registry ──

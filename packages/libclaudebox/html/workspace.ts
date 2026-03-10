@@ -79,6 +79,13 @@ a{color:inherit;text-decoration:none}a:hover{text-decoration:underline}
 .act-agent-body{display:none;border-top:1px solid rgba(167,139,250,0.1);padding:4px 8px}
 .act-agent-card.expanded .act-agent-body{display:block}
 .agent-dot-inline{width:6px;height:6px;border-radius:50%;background:#a78bfa;display:inline-block;animation:pulse 2s infinite}
+.act-team-card{background:#0f1018;border:1px solid rgba(167,139,250,0.2);border-radius:6px;margin:4px 0;overflow:hidden}
+.act-team-header{display:flex;align-items:center;gap:8px;padding:6px 10px;cursor:pointer;font-size:12px;font-family:'SF Mono',monospace;color:#a78bfa}
+.act-team-header:hover{background:rgba(167,139,250,0.05)}
+.act-team-card.expanded .act-agent-chevron{transform:rotate(90deg)}
+.act-team-body{display:none;border-top:1px solid rgba(167,139,250,0.1);padding:4px 4px}
+.act-team-card.expanded .act-team-body{display:block}
+.act-team-body .act-agent-card{margin:2px 0;border-color:rgba(167,139,250,0.1)}
 .tool-name{color:#FAD979;font-weight:500}
 .tool-args{color:#9CA3AF}
 .tool-bash{color:#61D668}
@@ -87,8 +94,8 @@ a{color:inherit;text-decoration:none}a:hover{text-decoration:underline}
 .act-tool-group{border-left:2px solid rgba(250,217,121,0.2);margin-left:6px;padding-left:6px;margin-bottom:2px}
 .act-tool-group.act-tool-group-error{border-left-color:rgba(233,69,96,0.4)}
 .act-tool-group.act-tool-group-bash{border-left-color:rgba(97,214,104,0.25)}
-.act-result{background:#1E1E24;border:1px solid #333;border-radius:6px;margin:2px 0 4px 0;padding:6px 10px;font-size:11px;color:#9CA3AF;font-family:'SF Mono',monospace;line-height:1.5;white-space:pre-wrap;word-break:break-all;max-height:60px;overflow:hidden;cursor:pointer;transition:max-height 0.15s}
-.act-result.expanded{max-height:none}
+.act-result{background:#1E1E24;border:1px solid #282830;border-radius:4px;margin:1px 0 3px 0;padding:2px 10px;font-size:11px;color:#666;font-family:'SF Mono',monospace;line-height:1.5;white-space:pre-wrap;word-break:break-all;max-height:18px;overflow:hidden;cursor:pointer;transition:max-height 0.15s}
+.act-result.expanded{max-height:none;color:#9CA3AF}
 .act-result.act-result-error{border-color:rgba(233,69,96,0.4);color:#E94560;background:rgba(233,69,96,0.06)}
 .act-row.act-status{color:#5FA7F1}
 .artifact-chips{display:flex;gap:6px;flex-wrap:wrap;padding:4px 20px 8px}
@@ -131,6 +138,7 @@ a{color:inherit;text-decoration:none}a:hover{text-decoration:underline}
 .run-label{font-weight:600;color:#ccc;white-space:nowrap}
 .run-status{color:#666;font-size:12px}
 .run-exit{color:#E94560;font-size:12px}
+.run-context-link{color:#7ab8ff;font-size:11px;text-decoration:none;padding:1px 6px;border-radius:3px;border:1px solid rgba(122,184,255,0.2);background:rgba(122,184,255,0.05)}.run-context-link:hover{background:rgba(122,184,255,0.15);text-decoration:none}
 .run-slack-link{color:#555;font-size:11px;text-decoration:none;padding:2px 4px;border-radius:3px}.run-slack-link:hover{color:#5FA7F1;background:rgba(95,167,241,0.1)}
 .run-time{color:#444;margin-left:auto;font-size:11px;flex-shrink:0}
 .run-summary{padding:8px 20px 16px;font-size:14px;line-height:1.6;cursor:pointer}
@@ -227,6 +235,7 @@ export function workspacePageHTML(data: WorkspacePageData): string {
       log_id: s._log_id, status: s.status, started: s.started, user: s.user,
       exit_code: s.exit_code ?? null,
       prompt: stripSlackContext(s.prompt || ""),
+      link: s.link || "",
       slack_channel: s.slack_channel || "",
       slack_message_ts: s.slack_message_ts || "",
       slack_thread_ts: s.slack_thread_ts || "",
@@ -289,7 +298,7 @@ function compactArtifact(text){
   if(prMd)return '<a href="'+esc(prMd[2])+'" target="_blank" class="link artifact-link">'+(isUpdated?'\\u2191 ':'')+'PR #'+prMd[1]+'</a>';
   // Issue: "Issue #N: title — url" or "Closed issue #N: ..."
   var issueM=text.match(/^(?:Closed )?[Ii]ssue #(\\d+).*?(https?:\\/\\/\\S+)/);
-  if(issueM){var pre=text.indexOf("Closed")===0?"Closed ":"";return '<a href="'+esc(issueM[2])+'" target="_blank" class="link artifact-link">'+pre+'#'+issueM[1]+'</a>';}
+  if(issueM){var pre=text.indexOf("Closed")===0?"Closed ":"";return '<a href="'+esc(issueM[2])+'" target="_blank" class="link artifact-link">'+pre+'Issue #'+issueM[1]+'</a>';}
   // Cross-ref
   var xref=text.match(/^Cross-ref #(\\d+)/);
   if(xref){var u=text.match(/(https?:\\/\\/\\S+)/);if(u)return '<a href="'+esc(u[1])+'" target="_blank" class="link artifact-link">Cross-ref #'+xref[1]+'</a>';return '<span class="artifact-link">Cross-ref #'+xref[1]+'</span>';}
@@ -394,9 +403,10 @@ function timeAgo(iso){
   return Math.floor(ms/86400000)+"d ago";
 }
 
-function msgId(text){
+function msgId(text,ts){
   var h=0;
-  for(var i=0;i<Math.min(text.length,50);i++){h=((h<<5)-h)+text.charCodeAt(i);h|=0;}
+  var s=text+(ts||"");
+  for(var i=0;i<s.length;i++){h=((h<<5)-h)+s.charCodeAt(i);h|=0;}
   return "m"+Math.abs(h).toString(36);
 }
 
@@ -516,6 +526,18 @@ function ActivityRow({entry, agentLogUrl}){
   return html\`<div class="act-row"><span class="act-icon" dangerouslySetInnerHTML=\${{__html:ICONS.tool}}></span><span dangerouslySetInnerHTML=\${{__html:linked}}></span><span class="act-ts">\${t}</span></div>\`;
 }
 
+// ── Link context label (PR #N, Issue #N, CI run, etc.) ──────────
+function linkLabel(url){
+  if(!url)return null;
+  var pr=url.match(/\\/pull\\/(\\d+)/);
+  if(pr)return{text:"PR #"+pr[1],url:url};
+  var issue=url.match(/\\/issues\\/(\\d+)/);
+  if(issue)return{text:"Issue #"+issue[1],url:url};
+  var run=url.match(/\\/actions\\/runs\\/(\\d+)/);
+  if(run)return{text:"CI run",url:url};
+  return{text:"link",url:url};
+}
+
 // ── PromptCard component (flat, with Slack link) ────────────────
 
 function PromptCard({text, time, user, slackLink}){
@@ -582,6 +604,27 @@ function AgentSection({text, agentId, time, children}){
   </div>\`;
 }
 
+// ── AgentTeam — multiple parallel agents grouped ────────────────
+function AgentTeam({agents, teamId, time}){
+  const [expanded,setExpanded]=useState(false);
+  const ref=useRef(null);
+  return html\`<div class=\${"act-team-card"+(expanded?" expanded":"")} ref=\${ref}>
+    <div class="act-team-header" onClick=\${()=>setExpanded(p=>!p)}>
+      <span class="act-agent-chevron">\u25B6</span>
+      <span class="act-icon" dangerouslySetInnerHTML=\${{__html:ICONS.agent}}></span>
+      <span>Agent team</span>
+      <span class="dim">(\${agents.length} agents)</span>
+      <span class="act-ts">\${time}</span>
+    </div>
+    <div class="act-team-body">
+      \${agents.map(a=>html\`<div class="act-team-agent" style="display:flex;align-items:center;gap:6px;padding:3px 10px;font-size:12px;font-family:'SF Mono',monospace;color:#a78bfa">
+        <span class="agent-dot-inline" style="animation:none;width:5px;height:5px"></span>
+        <span>\${a.text}</span>
+      </div>\`)}
+    </div>
+  </div>\`;
+}
+
 // ── Group tool_use + tool_result into bordered containers ─────
 function renderActivityItems(activity){
   var out=[];
@@ -589,22 +632,38 @@ function renderActivityItems(activity){
     var item=activity[i];
     var entry=item.entry;
     var key=item.id||("a"+i);
-    // Agent sections — collect subsequent tool/subagent entries
+    // Agent team — detect consecutive agent_start entries (parallel agents)
     if(entry.type==="agent_start"){
-      var agentChildren=[];
+      // Look ahead for more consecutive agent_starts
+      var agents=[{text:entry.text||"",key:key,ts:entry.ts}];
       var j=i+1;
+      while(j<activity.length&&activity[j].entry.type==="agent_start"){
+        agents.push({text:activity[j].entry.text||"",key:activity[j].id||("a"+j),ts:activity[j].entry.ts});
+        j++;
+      }
+      // Collect children (tool_use/tool_result) that follow the agent(s)
       while(j<activity.length){
         var nxt=activity[j];
         var nt=nxt.entry.type;
-        // Collect tool_use/tool_result (including subagent-tagged ones)
         if(nt==="tool_use"||nt==="tool_result"||(nxt.entry.subagent&&(nt==="context"||nt==="status"))){
-          agentChildren.push(nxt);
           j++;
         }else break;
       }
-      var grouped=renderToolGroups(agentChildren);
-      var agentId=key.replace(/[^a-z0-9-]/gi,"");
-      out.push(html\`<\${AgentSection} key=\${key} text=\${entry.text||""} agentId=\${agentId} time=\${entry.ts?timeAgo(entry.ts):""}>\${grouped}</\${AgentSection}>\`);
+      if(agents.length>1){
+        // Render as a team card
+        out.push(html\`<\${AgentTeam} key=\${key} agents=\${agents} teamId=\${key} time=\${entry.ts?timeAgo(entry.ts):""} />\`);
+      }else{
+        // Single agent — collect children for AgentSection
+        var agentChildren=[];
+        var k=i+1;
+        while(k<j){
+          agentChildren.push(activity[k]);
+          k++;
+        }
+        var grouped=renderToolGroups(agentChildren);
+        var agentId=key.replace(/[^a-z0-9-]/gi,"");
+        out.push(html\`<\${AgentSection} key=\${key} text=\${entry.text||""} agentId=\${agentId} time=\${entry.ts?timeAgo(entry.ts):""}>\${grouped}</\${AgentSection}>\`);
+      }
       i=j-1;
       continue;
     }
@@ -664,11 +723,13 @@ function runBg(i){return RUN_COLORS[i%RUN_COLORS.length];}
 function RunCard({run, lastReply, selected, onSelect, onOpen, runArtifacts, priorPrNums}){
   const st=run.status||"unknown";
   const replyText=lastReply?slackToMd(lastReply):"";
+  const ctx=linkLabel(run.link);
 
   return html\`<div class=\${"run-card"+(selected?" run-card-selected":"")} id=\${"run-"+run.logId} style=\${"background:"+runBg(run.index)} onClick=\${()=>onOpen(run.index)}>
     <div class="run-header">
       <span class=\${"run-dot "+st}></span>
       <span class="run-label">run \${run.index+1}\${run.total>1?"/"+run.total:""}</span>
+      \${ctx?html\`<a href=\${ctx.url} target="_blank" class="run-context-link" onClick=\${(e)=>e.stopPropagation()}>\${ctx.text}</a>\`:null}
       <span class="run-status">\${st}</span>
       \${run.exitCode!=null&&run.exitCode!==0?html\`<span class="run-exit">exit \${run.exitCode}</span>\`:null}
       \${run.slackLink?html\`<a href=\${run.slackLink} target="_blank" class="run-slack-link" onClick=\${(e)=>e.stopPropagation()} title="View in Slack">\u2197</a>\`:null}
@@ -689,6 +750,7 @@ function RunCard({run, lastReply, selected, onSelect, onOpen, runArtifacts, prio
 
 function RunDetail({run, activity, onBack, runArtifacts, priorPrNums}){
   const st=run.status||"unknown";
+  const ctx=linkLabel(run.link);
   const bodyRef=useRef(null);
   const prevActivityLen=useRef(0);
 
@@ -717,6 +779,7 @@ function RunDetail({run, activity, onBack, runArtifacts, priorPrNums}){
       <button class="btn run-back-btn" onClick=\${onBack}>\u2190 All runs</button>
       <span class=\${"run-dot "+st}></span>
       <span class="run-label">run \${run.index+1}/\${run.total}</span>
+      \${ctx?html\`<a href=\${ctx.url} target="_blank" class="run-context-link">\${ctx.text}</a>\`:null}
       <span class="run-status">\${st}</span>
       \${run.exitCode!=null&&run.exitCode!==0?html\`<span class="run-exit">exit \${run.exitCode}</span>\`:null}
       \${run.slackLink?html\`<a href=\${run.slackLink} target="_blank" class="run-slack-link" title="View in Slack">\u2197 Slack</a>\`:null}
@@ -832,7 +895,8 @@ function Sidebar({open, status, exitCode, user, baseBranch, sessions, artifacts,
 // ── ChatArea — runs driven by D.sessions ────────────────────────
 
 function ChatArea({runs, selectedRun, activityByRun, lastReplyByRun, artifactsByRun, onSelectRun, onBack}){
-  const [selectedCard,setSelectedCard]=useState(null);
+  const listRef=useRef(null);
+  const [selectedCard,setSelectedCard]=useState(()=>runs.length>1?runs.length-1:null);
   if(!runs.length)return html\`<div class="chat-area"><div class="chat-empty">No runs yet</div></div>\`;
 
   // Compute cumulative PR numbers seen before each run (for detecting updates)
@@ -846,6 +910,12 @@ function ChatArea({runs, selectedRun, activityByRun, lastReplyByRun, artifactsBy
     }
     return result;
   },[runs,artifactsByRun]);
+
+  // Scroll list view to bottom on mount (highlight last run)
+  useEffect(()=>{
+    if(selectedRun!=null||!listRef.current)return;
+    setTimeout(()=>{if(listRef.current)listRef.current.scrollTop=listRef.current.scrollHeight;},50);
+  },[]);
 
   // Detail view: full activity for selected run
   if(selectedRun!=null&&runs[selectedRun]){
@@ -862,7 +932,7 @@ function ChatArea({runs, selectedRun, activityByRun, lastReplyByRun, artifactsBy
   }
 
   // List view: all run cards with prompt + reply summaries
-  return html\`<div class="chat-area chat-area-list">
+  return html\`<div ref=\${listRef} class="chat-area chat-area-list">
     \${runs.map((run,i)=>html\`<\${RunCard}
       key=\${run.logId||i}
       run=\${run}
@@ -921,16 +991,21 @@ function WorkspacePage(){
       logId:s.log_id, index:i, total:total,
       status:s.status, exitCode:s.exit_code, started:s.started,
       prompt:s.prompt||"", user:s.user||D.user,
+      link:s.link||"",
       slackLink:slackPermalink(s),
     }));
   });
 
-  // Deeplink: ?run=<logId> opens detail view, otherwise list view (null)
+  // Extract run sequence number from logId (e.g. "abc123-3" → "3")
+  function runSeq(logId){var m=logId&&logId.match(/-(\d+)$/);return m?m[1]:logId;}
+
+  // Deeplink: ?run=<seq> opens detail view
   const [selectedRun,setSelectedRun]=useState(()=>{
     const p=new URLSearchParams(window.location.search);
     const runParam=p.get("run")||"";
     if(runParam){
-      const idx=runs.findIndex(r=>r.logId===runParam);
+      // Match by seq number or full logId for backwards compat
+      const idx=runs.findIndex(r=>runSeq(r.logId)===runParam||r.logId===runParam);
       if(idx>=0)return idx;
     }
     // Single run: auto-open detail view; multiple runs: list view
@@ -943,7 +1018,7 @@ function WorkspacePage(){
   useEffect(()=>{
     const url=new URL(window.location);
     if(selectedRun!=null&&runs[selectedRun]){
-      url.searchParams.set("run",runs[selectedRun].logId);
+      url.searchParams.set("run",runSeq(runs[selectedRun].logId));
     }else{
       url.searchParams.delete("run");
     }
@@ -1006,7 +1081,7 @@ function WorkspacePage(){
       }
       return null;
     }
-    const mid=msgId(e.text);
+    const mid=msgId(e.text,e.ts);
     if(seenRef.current.has(mid))return null;
     seenRef.current.add(mid);
     const agentLogUrl=e.type==="agent_start"?agentLogUrlsRef.current.shift():undefined;
@@ -1087,9 +1162,10 @@ function WorkspacePage(){
 
   const handleSSE=useCallback((d)=>{
     if(d.type==="activity"&&d.entry){
-      const sessionsOldest=[...D.sessions].reverse();
-      const currentLogId=sessionsOldest.length?sessionsOldest[sessionsOldest.length-1].log_id:null;
-      const result=processEntry(d.entry, currentLogId);
+      // Use entry's own log_id if it matches a known session; otherwise fall back to newest
+      const ownLogId=d.entry.log_id&&D.sessions.find(s=>s.log_id===d.entry.log_id)?d.entry.log_id:null;
+      const fallbackLogId=(()=>{const o=[...D.sessions].reverse();return o.length?o[o.length-1].log_id:null;})();
+      const result=processEntry(d.entry, ownLogId||fallbackLogId);
       if(result)addActivityItems([result]);
       if(d.entry.type==="artifact")setArtifacts(prev=>[...prev,d.entry]);
     }else if(d.type==="status"){

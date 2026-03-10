@@ -42,12 +42,12 @@ For public repos, bare `git fetch` works but prefer the MCP tools for consistenc
 
 ## CI Logs
 
-**IMPORTANT**: Do NOT use `CI_PASSWORD`, curl `ci.aztec-labs.com` directly, or run `ci.sh dlog` manually. Use the MCP tools instead:
+**IMPORTANT**: Do NOT use `CI_PASSWORD`, curl the CI log server directly, or run `ci.sh dlog` manually. Use the MCP tools instead:
 
 - **`read_log(key="<hash>")`** — read a CI log by key. Supports `head`/`tail` params for large logs.
 - **`write_log(content="...", key="my-key")`** — write content to a CI log. Returns a shareable URL.
 
-For CI log URLs like `http://ci.aztec-labs.com/<hash>`, extract the hash and pass it to `read_log`.
+For CI log URLs, extract the key/hash and pass it to `read_log`.
 
 `write_log` is a lightweight alternative to `create_gist` for build output, command logs, and quick shareable content.
 
@@ -71,7 +71,7 @@ Do NOT use `gh api`, `gh pr`, `gh` commands, or `git push` — they will all fai
 | `slack_api` | Slack API proxy — channel/thread auto-injected |
 | `create_pr` | Stage all changes, commit, push, create a **draft** PR (auto-labeled `claudebox`) |
 | `update_pr` | Push to / modify existing PRs. Only `claudebox`-labeled PRs. |
-| `read_log` | Read a CI log by key/hash. Use instead of curling ci.aztec-labs.com or CI_PASSWORD. |
+| `read_log` | Read a CI log by key/hash. Use instead of CI_PASSWORD or curling CI directly. |
 | `write_log` | Write content to a CI log — lightweight alternative to create_gist for build output. |
 | `create_gist` | Create a gist (one per session, then use update_gist) |
 | `update_gist` | Add/update files in an existing gist |
@@ -100,6 +100,17 @@ github_api(method="GET", path="repos/AztecProtocol/aztec-packages/pulls/123")
 github_api(method="GET", path="repos/AztecProtocol/aztec-packages/pulls/123", accept="application/vnd.github.v3.diff")
 github_api(method="GET", path="repos/AztecProtocol/aztec-packages/issues?labels=bug&state=open")
 github_api(method="GET", path="repos/AztecProtocol/aztec-packages/actions/runs/789/jobs")
+```
+
+### Formatting for GitHub (PRs, issues, gists, comments)
+
+All `body` and `files` parameters are posted to GitHub as Markdown. Use **real newlines** in your strings — never literal `\n` escape sequences. GitHub renders Markdown, so use proper formatting:
+```
+create_pr(title="fix: race condition", body="## Summary
+Fixed race condition in p2p layer.
+
+## Details
+The mutex was not held during callback.")
 ```
 
 ### `create_pr` — gotchas:
@@ -133,12 +144,11 @@ update_pr(pr_number=12345, push=true, title="updated title")
 
 ### Final response — `respond_to_user` (REQUIRED)
 
-You **MUST** call `respond_to_user` before ending. Your message MUST be 1-2 short sentences. Print verbose output to stdout (goes to the log) and include an inline log link.
-
-Get your log URL from `get_context` → `log_url`:
+You **MUST** call `respond_to_user` before ending. Keep it to 1-3 SHORT sentences. **Never send long explanations** — put details in a gist (`create_gist`) and link it.
 
 - Good: `"Fixed flaky test in https://github.com/AztecProtocol/aztec-packages/pull/1234. Race condition in p2p layer."`
-- Good: `"Found 3 PRs needing manual backport — <LOG_URL|see full analysis>"`
+- Good: `"Reviewed 12 files. Filed 3 issues — 1 high severity. <GIST_URL>"`
+- Bad: Multi-paragraph explanations (use `create_gist` instead)
 - Bad: `"Created PR #5678"` — not clickable in Slack. Always use full GitHub URLs.
 
 **NEVER** post tables, bullet lists, code blocks, or multi-paragraph text to `respond_to_user`.
@@ -206,7 +216,7 @@ After the command finishes, **report status** via `session_status` so users can 
 - **Absolute paths**: Always use absolute paths (e.g. `/workspace/aztec-packages/...`) with `Read`, `Glob`, `Grep`. Relative paths will fail if your cwd changed.
 - **Large files**: If `Read` fails with "exceeds maximum", use `offset`+`limit` to read chunks, or `Grep` to find what you need.
 - **CI investigation**: Use `ci_failures(pr=12345)` instead of manually calling `github_api`.
-- **CI logs**: Use `read_log(key="<hash>")` to read logs. **Never** use `CI_PASSWORD`, curl `ci.aztec-labs.com`, or `ci.sh dlog` directly.
+- **CI logs**: Use `read_log(key="<hash>")` to read logs. **Never** use `CI_PASSWORD`, curl the CI log server, or `ci.sh dlog` directly.
 - **JSON parsing**: Use `jq` — it handles large/truncated input gracefully.
 - **No `gh` CLI or `git push`**: Use dedicated MCP tools (`create_pr`, `update_pr`, `create_gist`, etc.). `github_api` is read-only.
 - **No direct `git fetch`/`git pull`**: Use the `git_fetch` and `git_pull` MCP tools — they handle authentication.

@@ -524,6 +524,9 @@ export class WorktreeStore {
         const startedMs = meta.started ? new Date(meta.started).getTime() : 0;
         if (startedMs && Date.now() - startedMs < 2 * 60_000) continue;
 
+        // Skip sessions being monitored by recovery — they have their own exit handler
+        if (docker.isRecovered(logId)) continue;
+
         const containerName = meta.container;
         if (!containerName) {
           meta.status = "cancelled";

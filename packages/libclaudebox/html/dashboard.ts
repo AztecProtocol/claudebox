@@ -368,6 +368,9 @@ function WorkspaceCard({ w, onRefresh, nested }) {
           \`)}
         </div>
       \` : null}
+      \${w.statusText && !w.lastReply ? html\`
+        <div class="card-reply" style="color:#7aa2f7;border-left-color:#1a2a4a">\${w.statusText}</div>
+      \` : null}
       \${w.lastReply ? html\`
         <div class="card-reply">\${w.lastReply}</div>
       \` : null}
@@ -444,6 +447,9 @@ function ThreadCard({ thread, onRefresh }) {
         \${threadSlackLink ? html\`<a class="thread-msg-link" href=\${threadSlackLink} target="_blank" title="View in Slack" onClick=\${(e) => e.stopPropagation()}>\\u2197</a>\` : null}
         \${!threadSlackLink && latest.link ? html\`<a class="thread-msg-link" href=\${latest.link} target="_blank" title="View on GitHub" onClick=\${(e) => e.stopPropagation()}>\\u2197</a>\` : null}
       </div>
+      \${!expanded && latest.statusText && !latest.lastReply ? html\`
+        <div class="card-reply" style="margin:0;border-radius:0;border-top:none;color:#7aa2f7;border-left-color:#1a2a4a" onClick=\${() => setExpanded(true)}>\${latest.statusText}</div>
+      \` : null}
       \${!expanded && latest.lastReply ? html\`
         <div class="card-reply" style="margin:0;border-radius:0;border-top:none" onClick=\${() => setExpanded(true)}>\${latest.lastReply}</div>
       \` : null}

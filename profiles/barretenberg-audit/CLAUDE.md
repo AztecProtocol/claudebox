@@ -36,7 +36,7 @@ The skills load PRINCIPLES.md (known bug classes) and CRITERIA.md (code quality 
 ## Branches
 
 - **`origin/next`** — default branch, aligned with upstream. Has phase 0 audit workflows.
-- **`origin/claude-audit-phase0`** — archive of 79 commits of prior audit work: Lean4 formal proofs (Sumcheck, Gemini, ECCVM, UltraHonk, field arithmetic, Solidity verifier), audit skills, C++ findings (P1–P21), meta-issue tracking.
+- **`origin/claude-audit-phase0`** — archive of 79 commits of prior audit work: Lean4 formal proofs (Sumcheck, Gemini, ECCVM, UltraHonk, field arithmetic, Solidity verifier), audit skills, C++ findings (P1–P21).
 
 If your task references phase0, Lean4 proofs, or continuing prior audit work, clone at `origin/claude-audit-phase0`.
 
@@ -70,24 +70,35 @@ If your task references phase0, Lean4 proofs, or continuing prior audit work, cl
 | `create_pr` | Push changes and create a draft PR (for fixes) |
 | `update_pr` | Push to / modify existing PRs |
 | `create_external_pr` | Push changes and create a draft PR on **upstream** `AztecProtocol/barretenberg` (requires `create-external-pr` scope) |
-| `read_log` | Read a CI log by key/hash. Use instead of curling ci.aztec-labs.com or CI_PASSWORD. |
+| `read_log` | Read a CI log by key/hash. Use instead of CI_PASSWORD or curling CI directly. |
 | `write_log` | Write content to a CI log — lightweight alternative to create_gist for build output. |
 | `create_gist` | Create a gist (one per session, then use update_gist) |
 | `update_gist` | Add/update files in an existing gist |
 | `list_gists` | List all audit gists — review prior session summaries |
 | `read_gist` | Read full gist content by ID or URL |
-| `update_meta_issue` | Create/update a meta-issue tracking session or module audit progress |
 | `ci_failures` | CI status for a PR |
 | `audit_history` | **Call early** — get prior audit coverage and where to focus |
 | `record_stat` | Record structured data (`audit_file_review` per file, `audit_summary` per session) |
 
 `github_api` is GET-only. Whitelisted reads (scoped to `AztecProtocol/barretenberg-claude`): pulls, issues, actions, contents, commits, branches, labels, search. For writes use dedicated tools: `create_issue`, `close_issue`, `create_pr`, `update_pr`, `add_log_link`, `create_gist`, `create_audit_label`.
 
+### Formatting for GitHub (PRs, issues, gists, comments)
+
+All `body` and `files` parameters are posted to GitHub as Markdown. Use **real newlines** in your strings — never literal `\n` escape sequences. GitHub renders Markdown, so use proper formatting.
+
 ### `create_issue` — for audit findings:
 ```
 create_issue(
   title="[AUDIT] Buffer overflow in polynomial evaluation",
-  body="## Finding\n\nIn `barretenberg/cpp/src/...`, the function ...\n\n## Severity\nHigh\n\n## Impact\n...",
+  body="## Finding
+
+In `barretenberg/cpp/src/...`, the function ...
+
+## Severity
+High
+
+## Impact
+...",
   labels=["audit-finding", "area/crypto"],
   quality_dimension="crypto",
   severity="high",
@@ -97,16 +108,16 @@ create_issue(
 
 ### Workflow:
 1. `clone_repo` — **FIRST** — check out the target ref (nothing works without this)
-2. `get_context` — get session metadata
-3. `session_status("Cloned, reviewing prior audit work...")` — **post status immediately and after every major step**
-4. `audit_history` — **review prior work** to avoid re-covering ground and focus on gaps
-5. **Invoke the appropriate skill** — `/audit-module` or `/review-code-quality` (see Skills above)
-6. `record_stat` — record each file reviewed with `audit_file_review` schema
-7. `create_issue` — file each finding with severity, impact, and reproduction details
-8. `add_log_link` — cross-reference related issues to this session
-9. `create_gist` — create a summary gist (use `update_gist` if you need to add more files)
-10. `record_stat` — record `audit_summary` with the gist URL
-11. `update_meta_issue` — create session meta-issue linking all artifacts
+2. `set_workspace_name` — **immediately after cloning** — short slug describing this audit (e.g. "audit-ecc-curves", "review-sumcheck-verifier")
+3. `get_context` — get session metadata
+4. `session_status("Cloned, reviewing prior audit work...")` — **post status immediately and after every major step**
+5. `audit_history` — **review prior work** to avoid re-covering ground and focus on gaps
+6. **Invoke the appropriate skill** — `/audit-module` or `/review-code-quality` (see Skills above)
+7. `record_stat` — record each file reviewed with `audit_file_review` schema
+8. `create_issue` — file each finding with severity, impact, and reproduction details
+9. `add_log_link` — cross-reference related issues to this session
+10. `create_gist` — create a summary gist (use `update_gist` if you need to add more files)
+11. `record_stat` — record `audit_summary` with the gist URL
 12. **Mandatory review** — see below
 13. **`respond_to_user`** — final summary (REQUIRED, 1-2 sentences + gist link)
 
@@ -190,35 +201,6 @@ record_stat(schema="audit_summary", data={
 })
 ```
 
-### Meta-issues — `update_meta_issue`
-
-Meta-issues are terse tracking issues. See **#77** for the gold-standard format. You compose the full markdown body.
-
-**Two scopes:**
-- **`session`** — created at session end. Label: `meta/session/<id>`.
-- **`module`** — cross-session tracker (e.g. `ecc`). Label: `meta/module/<name>`. Updated incrementally.
-
-**Format** (match #77):
-- Status line (1 sentence)
-- Findings table: `| # | Severity | Title |`
-- Session gists table: `| Session | Scope | Gist |`
-- Fix PRs table: `| # | Description |`
-- Coverage table: `| File | Lines | Crypto | Code |`
-- Next steps (prioritized numbered list)
-
-**Module meta-issues**: Read the existing issue body first (`github_api`), merge your new findings into it, then call `update_meta_issue` with the combined body. Don't lose prior entries.
-
-**Working from a meta-issue context**: When asked to continue from a meta-issue, `read_gist` the linked gists and review linked issues before starting work. The "Next steps" section tells you where to focus.
-
-```
-update_meta_issue(
-  scope="module",
-  module_name="solidity-verifier",
-  title="[AUDIT META] Solidity Honk Verifier — Tracking Issue",
-  body="## Module: `barretenberg/sol/` — Optimized Solidity Honk Verifier\n\n**Status**: Initial audit complete. No critical/high findings.\n\n### Findings\n\n| # | Severity | Title |\n|---|----------|-------|\n| #76 | Low | Fr.sol `neg(0)` returns non-canonical MODULUS |\n\n### Next Steps\n\n1. Audit `BaseHonkVerifier.sol`\n2. crypto-2nd-pass on template"
-)
-```
-
 ### Mandatory review before finishing
 
 Before calling `respond_to_user`, you MUST:
@@ -227,8 +209,7 @@ Before calling `respond_to_user`, you MUST:
 2. **Cross-reference** — if your work relates to existing issues, `add_log_link` them
 3. **Create summary gist** — detailed findings, file coverage table, open questions (see above)
 4. **`record_stat`** — record `audit_summary` with gist URL
-5. **`update_meta_issue`** — create a session meta-issue linking all artifacts + executive summary + next recommendation
-6. **`respond_to_user`** — final 1-2 sentence summary + link to gist
+5. **`respond_to_user`** — final 1-2 sentence summary + link to gist
 
 This review is NOT optional. Skipping it means the audit trail is incomplete.
 

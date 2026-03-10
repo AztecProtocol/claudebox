@@ -4,7 +4,7 @@ import { API_SECRET, SESSION_PAGE_USER, SESSION_PAGE_PASS, MAX_CONCURRENT, DEFAU
 import { getActiveSessions, getChannelBranches } from "./runtime.ts";
 import { getHostCreds } from "../libcreds-host/index.ts";
 import { dmAuthor } from "../libcreds-host/slack.ts";
-import { existsSync, readFileSync, readdirSync, statSync, watch, mkdirSync } from "fs";
+import { existsSync, readFileSync, readdirSync, statSync, watch, mkdirSync, openSync, readSync, fstatSync, closeSync } from "fs";
 import { join } from "path";
 import type { WorktreeStore } from "./worktree-store.ts";
 import type { DockerService } from "./docker.ts";
@@ -221,14 +221,18 @@ async function buildDashboardData(store: WorktreeStore, profileFilter?: string):
       origin = "github";
     }
 
-    // Extract artifacts and latest reply from activity
+    // Extract artifacts, latest reply, and last status text from activity
     let lastReply = "";
+    let statusText = "";
     const artifactMap = new Map<string, { type: string; text: string; url: string }>();
     if (worktreeId) {
       const activity = store.readActivity(worktreeId); // newest first
       for (const a of activity) {
         if (a.type === "response" && !lastReply) {
           lastReply = a.text.length > 300 ? a.text.slice(0, 300) + "..." : a.text;
+        }
+        if (a.type === "status" && !statusText) {
+          statusText = a.text.length > 120 ? a.text.slice(0, 120) + "..." : a.text;
         }
         if (a.type === "artifact") {
           const urlMatch = a.text.match(/(https?:\/\/[^\s)>\]]+)/);
@@ -238,7 +242,7 @@ async function buildDashboardData(store: WorktreeStore, profileFilter?: string):
               const prMatch = url.match(/\/pull\/(\d+)/);
               const issueMatch = url.match(/\/issues\/(\d+)/);
               const type = url.includes("gist.github") ? "gist" : prMatch ? "pr" : issueMatch ? "issue" : "link";
-              const label = prMatch ? `#${prMatch[1]}` : issueMatch ? `#${issueMatch[1]}` : type === "gist" ? "gist" : "link";
+              const label = prMatch ? `PR #${prMatch[1]}` : issueMatch ? `Issue #${issueMatch[1]}` : type === "gist" ? "gist" : "link";
               artifactMap.set(url, { type, text: label, url });
             }
           }
@@ -265,6 +269,7 @@ async function buildDashboardData(store: WorktreeStore, profileFilter?: string):
       slackChannel: slackChannel || undefined,
       slackThreadTs: slackThread || undefined,
       link: link || undefined,
+      statusText: statusText || undefined,
       lastReply: lastReply || undefined,
       artifacts: artifactMap.size > 0 ? [...artifactMap.values()] : undefined,
     });
@@ -624,7 +629,7 @@ const routes: Route[] = [
         user: session.user || "unknown",
         sessions: sessions.map(s => ({
           log_id: s._log_id, status: s.status, exit_code: s.exit_code,
-          started: s.started, prompt: s.prompt, user: s.user, log_url: s.log_url,
+          started: s.started, prompt: s.prompt, user: s.user, log_url: s.log_url, link: s.link || "",
         })),
       });
     },
@@ -646,34 +651,78 @@ const routes: Route[] = [
         "X-Accel-Buffering": "no",
       });
 
-      // Send current state as initial event
-      const activity = store.readActivity(worktreeId).reverse(); // oldest first
+      // Send current state as initial event — deduplicate entries caused by
+      // cumulative progress events in the session streamer (same type+text+log_id
+      // appearing many times within seconds). Uses last-seen timestamp per key;
+      // entries >30s apart with the same text are kept (legitimate repeated calls).
+      const rawActivity = store.readActivity(worktreeId).reverse(); // oldest first
+      const lastSeen = new Map<string, number>();
+      const activity = rawActivity.filter(e => {
+        const key = `${e.type}|${e.log_id || ""}|${(e.text || "").slice(0, 80)}`;
+        const ts = e.ts ? new Date(e.ts).getTime() : 0;
+        const prev = lastSeen.get(key);
+        lastSeen.set(key, ts);
+        if (prev !== undefined && ts && Math.abs(ts - prev) < 30_000) return false;
+        return true;
+      });
       const currentSession = store.findByWorktreeId(worktreeId);
+      let currentLogId = currentSession?._log_id || session._log_id || "";
       res.write(`data: ${JSON.stringify({ type: "init", activity, status: currentSession?.status || "unknown", exit_code: currentSession?.exit_code ?? null })}\n\n`);
 
-      let lineCount = activity.length;
       const activityPath = join(store.worktreesDir, worktreeId, "workspace", "activity.jsonl");
+      // Track byte offset for incremental reads (avoids re-reading entire file)
+      let byteOffset = 0;
+      let leftover = "";
+      try { if (existsSync(activityPath)) byteOffset = statSync(activityPath).size; } catch {}
+      let lastStatus = currentSession?.status || "unknown";
+      let lastExitCode = currentSession?.exit_code ?? null;
 
       // Poll for new lines (fs.watch is unreliable in Docker bind mounts)
       const poll = setInterval(() => {
         try {
-          if (!existsSync(activityPath)) return;
-          const lines = readFileSync(activityPath, "utf-8").split("\n").filter(l => l.trim());
-          if (lines.length > lineCount) {
-            const newEntries = lines.slice(lineCount).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
-            for (const entry of newEntries) {
-              res.write(`data: ${JSON.stringify({ type: "activity", entry })}\n\n`);
-              // Auto-set workspace name from Claude's set_workspace_name tool
-              if (entry.type === "name" && entry.text && worktreeId) {
-                store.setWorktreeName(worktreeId, entry.text);
+          // Read new activity bytes incrementally
+          if (existsSync(activityPath)) {
+            const fileSize = statSync(activityPath).size;
+            if (fileSize > byteOffset) {
+              const fd = openSync(activityPath, "r");
+              try {
+                const buf = Buffer.alloc(fileSize - byteOffset);
+                readSync(fd, buf, 0, buf.length, byteOffset);
+                byteOffset = fileSize;
+                const text = leftover + buf.toString("utf-8");
+                const parts = text.split("\n");
+                leftover = parts.pop() ?? "";
+                for (const line of parts) {
+                  if (!line.trim()) continue;
+                  try {
+                    const entry = JSON.parse(line);
+                    res.write(`data: ${JSON.stringify({ type: "activity", entry })}\n\n`);
+                    if (entry.type === "name" && entry.text && worktreeId) {
+                      store.setWorktreeName(worktreeId, entry.text);
+                    }
+                  } catch {}
+                }
+              } finally { closeSync(fd); }
+            }
+          }
+
+          // Check status — read single session file instead of listing all
+          // Also detect if a new session started (e.g., resume)
+          const latest = store.get(currentLogId);
+          if (latest) {
+            const s = latest.status || "unknown";
+            const ec = latest.exit_code ?? null;
+            if (s !== lastStatus || ec !== lastExitCode) {
+              lastStatus = s; lastExitCode = ec;
+              res.write(`data: ${JSON.stringify({ type: "status", status: s, exit_code: ec })}\n\n`);
+              // If this session ended, check for a newer one (resume)
+              if (s !== "running") {
+                const newer = store.findByWorktreeId(worktreeId);
+                if (newer?._log_id && newer._log_id !== currentLogId) {
+                  currentLogId = newer._log_id;
+                }
               }
             }
-            lineCount = lines.length;
-          }
-          // Also check for status changes
-          const latest = store.findByWorktreeId(worktreeId);
-          if (latest) {
-            res.write(`data: ${JSON.stringify({ type: "status", status: latest.status || "unknown", exit_code: latest.exit_code ?? null })}\n\n`);
           }
         } catch {}
       }, 1500);
@@ -1177,7 +1226,7 @@ const routes: Route[] = [
                   const prMatch = url.match(/\/pull\/(\d+)/);
                   const issueMatch = url.match(/\/issues\/(\d+)/);
                   const type = url.includes("gist.github") ? "gist" : prMatch ? "pr" : issueMatch ? "issue" : "link";
-                  const label = prMatch ? `#${prMatch[1]}` : issueMatch ? `#${issueMatch[1]}` : type === "gist" ? "gist" : "link";
+                  const label = prMatch ? `PR #${prMatch[1]}` : issueMatch ? `Issue #${issueMatch[1]}` : type === "gist" ? "gist" : "link";
                   artifactMap.set(url, { type, text: label, url });
                 }
               }
@@ -1364,13 +1413,22 @@ const routes: Route[] = [
   // ── Internal API: Root comment update (sidecar → server) ─────
   {
     method: "POST", pattern: /^\/api\/internal\/comment$/, auth: "api", internal: true,
-    handler: async (req, res) => {
+    handler: async (req, res, _params, { store }) => {
       let body: any;
       try { body = JSON.parse(await readBody(req)); }
       catch { json(res, 400, { error: "invalid JSON" }); return; }
 
-      const { status, sections, trackedPRs, otherArtifacts, session } = body;
+      const { status, sections, trackedPRs, otherArtifacts, session: sidecarSession } = body;
       const results: string[] = [];
+
+      // Enrich session info from the store — sidecar doesn't have Slack/GitHub metadata
+      const logId = sidecarSession?.log_id || "";
+      const storedSession = logId ? store.get(logId) : null;
+      const session = { ...sidecarSession, ...storedSession };
+
+      const worktreeId = session?.worktree_id;
+      const host = session?.host || "claudebox.work";
+      const baseUrl = worktreeId ? `https://${host}/s/${worktreeId}` : "";
 
       // Build Slack text from sections
       const buildSlackTextFromSections = () => {
@@ -1381,32 +1439,25 @@ const routes: Route[] = [
           parts.push(status.length > 600 ? status.slice(0, 600) + "…" : status);
         }
         const footer: string[] = [];
-        const prLinks = (trackedPRs || []).map((pr: any) => `<${pr.url}|#${pr.num}>`);
+        const prLinks = (trackedPRs || []).map((pr: any) => `<${pr.url}|PR #${pr.num}>`);
         if (prLinks.length) footer.push(prLinks.join(" "));
-        const worktreeId = session?.worktree_id;
-        const host = session?.host || "claudebox.work";
-        if (worktreeId) footer.push(`<https://${host}/s/${worktreeId}|status>`);
+        if (baseUrl) footer.push(`<${baseUrl}|status>`);
         if (footer.length) parts.push(footer.join("  \u2502  "));
         return parts.join("\n");
       };
 
       // Build GitHub body from sections
+      const currentSeq = session?.log_id?.match(/-(\d+)$/)?.[1] || "";
       const buildGhBodyFromSections = () => {
         const lines: string[] = [];
-        const worktreeId = session?.worktree_id;
-        const host = session?.host || "claudebox.work";
-        const logUrl = session?.log_url || "";
-        const links: string[] = [];
-        if (worktreeId) links.push(`[Live status](https://${host}/s/${worktreeId})`);
-        if (logUrl) links.push(`[Log](${logUrl})`);
-        if (links.length) lines.push(links.join(" · "));
-        if (sections?.status) { lines.push(""); lines.push(`**Status:** ${sections.status}`); }
-        if (sections?.response) { lines.push(""); lines.push(`**Response:** ${sections.response}`); }
+        lines.push(`\u23F3 **Run #${currentSeq || "?"}** — ${sections?.status || status || "running"}`);
+        if (baseUrl) lines.push(`[Live status](${baseUrl})`);
+        if (sections?.response) { lines.push(""); lines.push(sections.response); }
         const prLines = (trackedPRs || []).map((pr: any) => {
           const label = pr.action === "created" ? "Created" : "Updated";
-          return `- **${label}** [#${pr.num}: ${pr.title}](${pr.url})`;
+          return `- **${label}** [PR #${pr.num}: ${pr.title}](${pr.url})`;
         });
-        if (prLines.length) { lines.push(""); lines.push("**Pull Requests**"); lines.push(...prLines); }
+        if (prLines.length) { lines.push(""); lines.push(prLines.join("\n")); }
         if (otherArtifacts?.length) lines.push(...otherArtifacts);
         return lines.join("\n");
       };
@@ -1435,12 +1486,16 @@ const routes: Route[] = [
   // ── Internal API: DM author on completion ─────────────────────
   {
     method: "POST", pattern: /^\/api\/internal\/dm$/, auth: "api", internal: true,
-    handler: async (req, res) => {
+    handler: async (req, res, _params, { store }) => {
       let body: any;
       try { body = JSON.parse(await readBody(req)); }
       catch { json(res, 400, { error: "invalid JSON" }); return; }
 
-      const { status, trackedPRs, session } = body;
+      const { status, trackedPRs, session: sidecarSession } = body;
+      // Enrich with stored session data (sidecar lacks Slack metadata)
+      const logId = sidecarSession?.log_id || "";
+      const storedSession = logId ? store.get(logId) : null;
+      const session = { ...sidecarSession, ...storedSession };
       try {
         const result = await dmAuthor(session, status, trackedPRs);
         json(res, 200, result);

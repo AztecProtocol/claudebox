@@ -61,10 +61,10 @@ function extractArtifactLinks(artifacts: { text: string }[]): string[] {
     seenUrls.add(url);
 
     const prMatch = url.match(/\/pull\/(\d+)/);
-    if (prMatch) { linkParts.push(`<${url}|#${prMatch[1]}>`); continue; }
+    if (prMatch) { linkParts.push(`<${url}|PR #${prMatch[1]}>`); continue; }
     if (url.includes("gist.github")) { linkParts.push(`<${url}|gist>`); continue; }
     const issueMatch = url.match(/\/issues\/(\d+)/);
-    if (issueMatch) { linkParts.push(`<${url}|#${issueMatch[1]}>`); continue; }
+    if (issueMatch) { linkParts.push(`<${url}|Issue #${issueMatch[1]}>`); continue; }
     linkParts.push(`<${url}|link>`);
   }
   return linkParts;
