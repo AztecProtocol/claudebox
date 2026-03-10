@@ -398,7 +398,7 @@ function ThreadCard({ thread, onRefresh }) {
     : thread.origin === "github" ? "github" : "http";
   const threadSlackLink = latest.slackChannel && latest.slackThreadTs
     ? "https://" + (window.__slackDomain || "slack") + ".slack.com/archives/" + latest.slackChannel + "/p" + latest.slackThreadTs.replace(".", "")
-    : null;
+    : (latest.link && /\.slack\.com\//.test(latest.link) ? latest.link : null);
 
   // Collect all artifacts across sessions for collapsed view
   const allArtifacts = useMemo(() => {

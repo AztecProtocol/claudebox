@@ -217,6 +217,8 @@ async function buildDashboardData(store: WorktreeStore, profileFilter?: string):
     if (slackChannel && slackThread) {
       origin = "slack";
       threadKey = `${slackChannel}:${slackThread}`;
+    } else if (link && /\.slack\.com\//.test(link)) {
+      origin = "slack";
     } else if (link) {
       origin = "github";
     }

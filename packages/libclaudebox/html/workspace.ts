@@ -529,6 +529,7 @@ function ActivityRow({entry, agentLogUrl}){
 // ── Link context label (PR #N, Issue #N, CI run, etc.) ──────────
 function linkLabel(url){
   if(!url)return null;
+  if(url.match(/\\.slack\\.com\\//))return{text:"Slack",url:url};
   var pr=url.match(/\\/pull\\/(\\d+)/);
   if(pr)return{text:"PR #"+pr[1],url:url};
   var issue=url.match(/\\/issues\\/(\\d+)/);
@@ -987,13 +988,16 @@ function WorkspacePage(){
   const [runs,setRuns]=useState(()=>{
     const sessionsOldest=[...D.sessions].reverse();
     const total=sessionsOldest.length;
-    return sessionsOldest.map((s,i)=>({
-      logId:s.log_id, index:i, total:total,
-      status:s.status, exitCode:s.exit_code, started:s.started,
-      prompt:s.prompt||"", user:s.user||D.user,
-      link:s.link||"",
-      slackLink:slackPermalink(s),
-    }));
+    return sessionsOldest.map((s,i)=>{
+      var sl=slackPermalink(s);
+      var lnk=s.link||"";
+      // If link is a Slack URL and we have no slackLink, use it as slackLink
+      if(!sl&&lnk&&/\\.slack\\.com\\//.test(lnk)){sl=lnk;lnk="";}
+      return{logId:s.log_id, index:i, total:total,
+        status:s.status, exitCode:s.exit_code, started:s.started,
+        prompt:s.prompt||"", user:s.user||D.user,
+        link:lnk, slackLink:sl};
+    });
   });
 
   // Extract run sequence number from logId (e.g. "abc123-3" → "3")
