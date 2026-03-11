@@ -96,6 +96,12 @@ export function registerSlackHandlers(app: App, store: WorktreeStore, docker: Do
 
   // ── @mention in channels ──────────────────────────────────────
   app.event("app_mention", async ({ event, client, say }) => {
+    // Ignore messages from bots/apps (including our own)
+    if ((event as any).bot_id || (event as any).subtype) {
+      console.log(`[MENTION] Ignoring bot/subtype message: bot_id=${(event as any).bot_id || "none"} subtype=${(event as any).subtype || "none"}`);
+      return;
+    }
+
     const channel = event.channel;
     const text = event.text ?? "";
     const isReply = !!(event as any).thread_ts;
