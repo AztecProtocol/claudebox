@@ -18,6 +18,7 @@ const plugin: Profile = {
   name: "barretenberg-audit",
 
   docker: {
+    image: "audit-devbox:latest",
     extraEnv: ["CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1"],
   },
 

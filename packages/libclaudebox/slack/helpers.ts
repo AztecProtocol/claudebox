@@ -98,9 +98,15 @@ export function buildSlackStatusFromActivity(
   // Footer: artifacts + status link + elapsed + status
   const footer: string[] = [];
   if (linkParts.length) footer.push(linkParts.join(" \u2022 "));
-  if (worktreeId) footer.push(`<${sessionUrl(worktreeId)}|status>`);
-  // Compute elapsed from first activity timestamp
-  const firstTs = activity.length > 0 ? activity[0].ts : "";
+  // Status link — include ?run=N when we know the run sequence
+  if (worktreeId) {
+    const seq = logId?.match(/-(\d+)$/)?.[1];
+    const url = sessionUrl(worktreeId) + (seq ? `?run=${seq}` : "");
+    footer.push(`<${url}|status>`);
+  }
+  // Elapsed time scoped to current run (not entire worktree lifetime)
+  const runActivity = currentLogId ? activity.filter(a => a.log_id === currentLogId) : activity;
+  const firstTs = runActivity.length > 0 ? runActivity[0].ts : "";
   if (firstTs) {
     const ms = Date.now() - new Date(firstTs).getTime();
     if (ms > 0) {

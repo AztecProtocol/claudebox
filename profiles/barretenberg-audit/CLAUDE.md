@@ -213,6 +213,88 @@ Before calling `respond_to_user`, you MUST:
 
 This review is NOT optional. Skipping it means the audit trail is incomplete.
 
+## Formal Verification Tools
+
+The container includes tools for formally verifying assembly and proving mathematical properties.
+
+### CryptoLine — Assembly Verification
+
+CryptoLine verifies x86-64 inline assembly by checking two properties:
+1. **Algebraic correctness** (via Singular CAS): the assembly computes the right mathematical function
+2. **Range safety** (via Z3 SMT): no intermediate value overflows its register width
+
+Use CryptoLine to verify the inline assembly macros in `barretenberg/cpp/src/barretenberg/ecc/fields/asm_macros.hpp` — Montgomery multiplication, reduction, field addition/subtraction.
+
+**Installed tools:**
+- `cv` — CryptoLine verifier (runs both algebraic and range checks)
+- `cas` — CAS bridge (Singular backend)
+- `z3` — SMT solver
+
+**Workflow:**
+1. Extract the assembly from the C++ macro (e.g., `SQR`, `MUL`, `REDUCE`)
+2. Write a `.cl` CryptoLine spec with:
+   - `proc main` block declaring input/output variables
+   - Assembly translated to CryptoLine instructions (`mul`, `adds`, `adcs`, `mov`, `assert`)
+   - Preconditions (`pre`) and postconditions (`post`) expressing the mathematical property
+3. Run: `cv spec.cl` — verifies both algebraic and range properties
+
+**CryptoLine instruction reference (x86-64 mapping):**
+```
+mov dest src           # movq
+mul dest_hi dest_lo a b  # mulxq (BMI2)
+adds dest a b          # addq  (sets carry)
+adcs dest a b          # adcq  (uses + sets carry)
+subb dest a b          # subq  (sets borrow)
+sbbs dest a b          # sbbq  (uses + sets borrow)
+cmov dest src flag     # cmovq
+assert true && ...     # algebraic assertion
+assume ...             # precondition
+```
+
+**Example (Montgomery reduction step):**
+```cryptoline
+proc main(uint64 r0, uint64 r1, uint64 r2, uint64 r3, uint64 k) =
+  (* Compute reduction quotient *)
+  mul tmp q r0 k;
+  (* Multiply quotient by modulus and add *)
+  mul h l q p0;
+  adds carry r0 r0 l;
+  ...
+  (* Post: result < 2*p *)
+  assert true && ...
+```
+
+**CryptoLine source & docs:** `/opt/cryptoline/` and https://github.com/fmlab-iis/cryptoline
+
+**Key assembly macros to verify:**
+- `SQR` / `MUL` — field multiplication (with ADX dual-carry `adcx`/`adox` variants)
+- `REDUCE` — Montgomery reduction
+- `ADD` / `SUB` — field addition/subtraction with conditional reduction
+- `asm_macros.hpp` lines 1-900 contain all critical assembly
+
+### Lean4 — Mathematical Proofs
+
+Lean4 is available for proving mathematical properties of the cryptographic constructions.
+
+**Installed tools:**
+- `lean` / `lake` — Lean4 compiler and build system (via elan at `/opt/elan/bin/`)
+- mathlib4 pre-cloned at `/opt/mathlib4` (use as a local reference to avoid re-downloading)
+
+**Setup for a Lean project:**
+```bash
+# In your lakefile.lean, point mathlib to the local clone:
+# Or let lake fetch it (slow first time, ~20min)
+lake build
+```
+
+**Use Lean4 for:**
+- Proving field arithmetic identities (Montgomery form equivalence, reduction correctness)
+- Proving protocol-level properties (Sumcheck, Gemini binding, ECCVM soundness)
+- Formalizing curve parameter validation
+- Verifying polynomial commitment scheme properties
+
+**Existing Lean4 work:** Check `barretenberg/lean/` in the `origin/claude-audit-phase0` branch for prior formal proofs (Sumcheck, Gemini, field arithmetic).
+
 ## Tips
 
 - **Absolute paths**: Always use absolute paths (e.g. `/workspace/barretenberg-claude/...`) with `Read`, `Glob`, `Grep`.

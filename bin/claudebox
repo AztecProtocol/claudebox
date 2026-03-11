@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# ClaudeBox launcher — runs the server with auto-update restart loop.
+#
+# Usage:
+#   claudebox [--http-only] [--no-auto-update] [--profiles=X,Y] [...]
+#
+# The server exits with code 75 when auto-update pulls new code.
+# This script restarts it automatically.
+
+set -euo pipefail
+
+# Resolve the repo directory (this script lives in <repo>/bin/)
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || echo "$0")")" && pwd)"
+REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Source env file if it exists (secrets, config)
+ENV_FILE="$HOME/.claudebox/env"
+if [ -f "$ENV_FILE" ]; then
+  set -a
+  source "$ENV_FILE"
+  set +a
+fi
+
+# Default to auto-update unless explicitly disabled
+AUTO_UPDATE="--auto-update"
+ARGS=()
+for arg in "$@"; do
+  if [ "$arg" = "--no-auto-update" ]; then
+    AUTO_UPDATE=""
+  else
+    ARGS+=("$arg")
+  fi
+done
+
+cd "$REPO_DIR"
+
+while true; do
+  echo "─── claudebox starting ($(git rev-parse --short HEAD 2>/dev/null || echo '?')) ───"
+  set +e
+  node --experimental-strip-types --no-warnings server.ts $AUTO_UPDATE "${ARGS[@]}"
+  EXIT_CODE=$?
+  set -e
+
+  if [ "$EXIT_CODE" = "75" ]; then
+    echo "─── auto-update: restarting ───"
+    sleep 1
+    continue
+  fi
+
+  echo "─── claudebox exited ($EXIT_CODE) ───"
+  exit $EXIT_CODE
+done

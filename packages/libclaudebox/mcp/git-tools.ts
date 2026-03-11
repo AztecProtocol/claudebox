@@ -21,7 +21,9 @@ export function cloneRepoCheckoutAndInit(targetDir: string, ref: string, fallbac
     execFileSync("git", ["-C", targetDir, "checkout", "--detach", ref], { timeout: 30_000, stdio: "pipe" });
   } catch {
     try {
-      execFileSync("git", ["-C", targetDir, "fetch", "origin", ref], { timeout: 120_000, stdio: "pipe" });
+      // Strip origin/ prefix — it's a local tracking name, not a remote refspec
+      const fetchRef = ref.replace(/^origin\//, "");
+      execFileSync("git", ["-C", targetDir, "fetch", "origin", fetchRef], { timeout: 120_000, stdio: "pipe" });
       execFileSync("git", ["-C", targetDir, "checkout", "--detach", "FETCH_HEAD"], { timeout: 30_000, stdio: "pipe" });
     } catch {
       try {
@@ -160,6 +162,8 @@ export interface PRToolConfig {
   label?: string;
   createDescription?: string;
   updateDescription?: string;
+  /** If set, runs before staging in create_pr/update_pr. Fails gracefully. */
+  formatBeforePush?: () => Promise<{ ok: boolean; text: string }>;
 }
 
 // ── registerCloneRepo ───────────────────────────────────────────
@@ -259,7 +263,7 @@ export function registerGitProxy(server: McpServer, config: { workspace: string 
       }
     });
 
-  server.tool("submodule_update", "Initialize and update git submodules recursively, optionally to a specific commit.",
+  server.tool("submodule_update", "Initialize and update all git submodules (shallow, parallel). Optionally target a single submodule. Run this before 'build' — most targets depend on submodules.",
     {
       path: z.string().optional().describe("Submodule path (e.g. 'noir/noir-repo'). If omitted, updates all submodules."),
       commit: z.string().optional().describe("Checkout submodule to this commit/ref after update"),
@@ -270,7 +274,7 @@ export function registerGitProxy(server: McpServer, config: { workspace: string 
         return { content: [{ type: "text", text: "No repo at " + workspace }], isError: true };
       }
       try {
-        const args = ["-C", workspace, "submodule", "update", "--init", "--recursive"];
+        const args = ["-C", workspace, "submodule", "update", "--init", "--recursive", "--depth", "1", "--jobs", "8"];
         if (path) args.push("--", path);
         const out = gitWithAuth(args, 300_000);
         let result = "Submodule" + (path ? " " + path : "s") + " initialized and updated.\n" + out;
@@ -333,8 +337,13 @@ export function registerLogTools(server: McpServer, config: { workspace: string 
           headers: { "Authorization": `Bearer ${serverToken}` },
         });
         if (!resp.ok) {
-          const err = await resp.text();
-          return { content: [{ type: "text", text: `read_log failed: ${err.slice(0, 500)}` }], isError: true };
+          const raw = await resp.text();
+          let msg: string;
+          try {
+            const parsed = JSON.parse(raw);
+            msg = parsed.error || raw;
+          } catch { msg = raw; }
+          return { content: [{ type: "text", text: `read_log failed (HTTP ${resp.status}) for key '${key}': ${msg.slice(0, 800)}` }], isError: true };
         }
 
         let output = await resp.text();
@@ -449,6 +458,13 @@ export function registerPRTools(server: McpServer, config: PRToolConfig): void {
       }
 
       try {
+        if (config.formatBeforePush) {
+          try {
+            const fmt = await config.formatBeforePush();
+            if (fmt.text) console.log(`[create_pr] format: ${fmt.text}`);
+          } catch (e: any) { console.error(`[create_pr] format failed (continuing): ${e.message}`); }
+        }
+
         const branch = `${config.branchPrefix}${workspaceName || SESSION_META.log_id || Date.now()}`;
 
         const stage = stageAndCommit(config.workspace, title, {
@@ -530,6 +546,13 @@ export function registerPRTools(server: McpServer, config: PRToolConfig): void {
         if (push) {
           const branch = prData.head?.ref;
           if (!branch) return { content: [{ type: "text", text: "Cannot determine PR branch" }], isError: true };
+
+          if (config.formatBeforePush) {
+            try {
+              const fmt = await config.formatBeforePush();
+              if (fmt.text) console.log(`[update_pr] format: ${fmt.text}`);
+            } catch (e: any) { console.error(`[update_pr] format failed (continuing): ${e.message}`); }
+          }
 
           const stage = stageAndCommit(config.workspace, title || `update PR #${pr_number}`, {
             blockClaudeFiles: config.blockClaudeFiles, includeClaudeFiles: include_claude_files,

@@ -225,6 +225,15 @@ export class DockerService {
         `${CLAUDEBOX_DIR}:${CONTAINER_HOME}/.claudebox:rw`,
       ];
       sidecarBinds.push(`${join(REPO_DIR, ".git")}:/reference-repo/.git:ro`);
+      // Mount yarn-project node_modules + prettier config for format tools
+      const ypNodeModules = join(REPO_DIR, "yarn-project/node_modules");
+      if (existsSync(ypNodeModules)) {
+        sidecarBinds.push(`${ypNodeModules}:/reference-repo/yarn-project/node_modules:ro`);
+      }
+      const prettierConfig = join(REPO_DIR, "yarn-project/foundation/.prettierrc.json");
+      if (existsSync(prettierConfig)) {
+        sidecarBinds.push(`${prettierConfig}:/reference-repo/yarn-project/foundation/.prettierrc.json:ro`);
+      }
 
       // Server URL for sidecar → server communication (internal port, not exposed to internet)
       const serverUrl = `http://host.docker.internal:${INTERNAL_PORT}`;

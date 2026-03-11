@@ -55,7 +55,7 @@ export async function updateGithubOnCompletion(
   })();
 
   const currentSeq = logId.match(/-(\d+)$/)?.[1] || "1";
-  const baseUrl = sessionUrl(worktreeId);
+  const baseUrl = sessionUrl(worktreeId) + `?run=${currentSeq}`;
 
   // Get latest response from activity
   const activity = store.readActivity(worktreeId).reverse(); // oldest first

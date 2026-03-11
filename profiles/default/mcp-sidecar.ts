@@ -9,6 +9,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerCommonTools } from "../../packages/libclaudebox/mcp/tools.ts";
 import { registerCloneRepo, registerPRTools, registerGitProxy, registerLogTools, registerIssueTools } from "../../packages/libclaudebox/mcp/git-tools.ts";
+import { registerBuildTools, formatChangedFiles } from "../../packages/libclaudebox/mcp/build-tools.ts";
 import { startMcpHttpServer } from "../../packages/libclaudebox/mcp/server.ts";
 
 // ── Profile config ──────────────────────────────────────────────
@@ -31,6 +32,8 @@ function createServer(): McpServer {
     description: `Clone the repo into ${WORKSPACE}. MUST be your FIRST tool call — the workspace is empty until you clone. Do NOT run git, ls, Read, or any file operations before calling this. Safe to call on resume — fetches new refs. Default branch is 'next' — use ref='origin/next' unless told otherwise.`,
   });
 
+  const REF_REPO = "/reference-repo";
+
   registerPRTools(server, {
     repo: REPO, workspace: WORKSPACE,
     branchPrefix: "claudebox/", defaultBase: "next",
@@ -39,10 +42,12 @@ function createServer(): McpServer {
     label: "claudebox",
     createDescription: "Push workspace commits and create a draft PR. WARNING: .claude/ files are blocked by default — pass include_claude_files=true ONLY if your PR intentionally modifies ClaudeBox infrastructure. .github/ workflow files are also blocked unless the session was started with 'ci-allow'.",
     updateDescription: "Push workspace commits and/or update an existing PR. Only works on PRs with the 'claudebox' label.",
+    formatBeforePush: () => formatChangedFiles(WORKSPACE, REF_REPO),
   });
 
   registerGitProxy(server, { workspace: WORKSPACE });
   registerLogTools(server, { workspace: WORKSPACE });
+  registerBuildTools(server, { workspace: WORKSPACE, referenceRepo: REF_REPO });
 
   registerIssueTools(server, [
     { name: "aztec_packages_create_issue", repo: REPO, description: "Create a GitHub issue in AztecProtocol/aztec-packages." },

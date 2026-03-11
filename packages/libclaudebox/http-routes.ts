@@ -1430,7 +1430,8 @@ const routes: Route[] = [
 
       const worktreeId = session?.worktree_id;
       const host = session?.host || "claudebox.work";
-      const baseUrl = worktreeId ? `https://${host}/s/${worktreeId}` : "";
+      const runSeq = session?.log_id?.match(/-(\d+)$/)?.[1] || "";
+      const baseUrl = worktreeId ? `https://${host}/s/${worktreeId}${runSeq ? `?run=${runSeq}` : ""}` : "";
 
       // Build Slack text from sections
       const buildSlackTextFromSections = (elapsedStr?: string) => {
@@ -1462,7 +1463,7 @@ const routes: Route[] = [
       })();
 
       // Build GitHub body from sections
-      const currentSeq = session?.log_id?.match(/-(\d+)$/)?.[1] || "";
+      const currentSeq = runSeq;
       const buildGhBodyFromSections = () => {
         const lines: string[] = [];
         const elapsedSuffix = elapsed ? ` (${elapsed})` : "";
@@ -1549,18 +1550,47 @@ const routes: Route[] = [
 
       try {
         const { spawnSync } = await import("child_process");
-        const { join } = await import("path");
-        const repoDir = process.env.CLAUDE_REPO_DIR || join(process.env.HOME || "", "repo");
-        const ciSh = join(repoDir, "ci.sh");
-        const result = spawnSync("bash", ["-c", `cd "${repoDir}" && "${ciSh}" dlog "${key}"`], {
-          encoding: "utf-8", timeout: 30_000, stdio: ["pipe", "pipe", "pipe"],
+        const { gunzipSync } = await import("zlib");
+        const redisHost = process.env.CI_REDIS || "localhost";
+
+        // Direct redis GET — no shell, no ci.sh, no untrusted code
+        const result = spawnSync("redis-cli", ["--raw", "-h", redisHost, "GET", key], {
+          timeout: 15_000, maxBuffer: 50 * 1024 * 1024,
         });
         if (result.status !== 0) {
-          json(res, 502, { error: (result.stderr || "").trim().slice(0, 500) });
+          json(res, 502, { error: `redis-cli failed: ${(result.stderr || "").toString().trim().slice(0, 300)}`, key });
           return;
         }
-        // Strip ci.sh startup noise (Slack listener, PID lines)
-        let output = (result.stdout || "").replace(/^(?:Starting Slack listener\.\.\.\n|Started \(PID \d+\)\n)*/m, "");
+
+        let buf = result.stdout as Buffer;
+        // redis-cli --raw appends a trailing newline — strip it before length check
+        if (buf && buf.length > 0 && buf[buf.length - 1] === 0x0a) buf = buf.subarray(0, -1);
+
+        if (!buf || buf.length === 0) {
+          // Fallback: HTTP log server
+          const ciPassword = process.env.CI_PASSWORD;
+          if (ciPassword) {
+            const resp = await fetch(`http://ci.aztec-labs.com/${key}.txt`, {
+              headers: { "Authorization": `Basic ${Buffer.from(`aztec:${ciPassword}`).toString("base64")}` },
+            });
+            if (resp.ok) {
+              res.writeHead(200, { "Content-Type": "text/plain" });
+              res.end(await resp.text());
+              return;
+            }
+          }
+          json(res, 404, { error: "Key not found", key });
+          return;
+        }
+
+        // Decompress if gzipped (magic bytes 1f 8b)
+        let output: string;
+        if (buf[0] === 0x1f && buf[1] === 0x8b) {
+          output = gunzipSync(buf).toString("utf-8");
+        } else {
+          output = buf.toString("utf-8");
+        }
+
         res.writeHead(200, { "Content-Type": "text/plain" });
         res.end(output);
       } catch (e: any) {

@@ -174,6 +174,18 @@ This ensures your commits apply cleanly to the PR target. Without this, the PR d
 - **For backports**: target the version branch directly (e.g. `v4`)
 - **For devnet backports**: find the latest with `git branch -r --list 'origin/v*-devnet*' --sort=-committerdate | head -1`
 
+## Backporting — commit structure
+
+When backporting (cherry-picking commits to an older branch), **preserve the full history** with exactly 3 commits:
+
+1. **Cherry-pick commit (with conflicts)** — Run `git cherry-pick <commit> || true`. Stage the conflicted files AS-IS including conflict markers, then commit. This records the original cherry-pick attempt **in git history** so reviewers can see exactly what conflicted. **This commit MUST exist in the PR history** even though it won't compile.
+
+2. **Conflict resolution commit** — Resolve the conflict markers from commit 1. Only touch lines that have conflicts — nothing else. Commit with a message like `fix: resolve cherry-pick conflicts`.
+
+3. **Build fixes commit** — Fix any remaining compilation errors, missing imports, API differences between branches, etc. Run the build (`build` tool or `make`) to verify. Commit with a message describing what was adapted.
+
+This 3-commit structure lets reviewers see: (a) what the original code looked like, (b) how conflicts were resolved, and (c) what additional changes were needed for the older branch. **Never squash these into one commit.**
+
 ## Building
 
 Use `make <target>` from `/workspace/aztec-packages`. The `Makefile` defines the full dependency graph:
