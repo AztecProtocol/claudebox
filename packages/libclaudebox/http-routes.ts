@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
 import { SignJWT, jwtVerify, type JWTPayload } from "jose";
-import { API_SECRET, SESSION_PAGE_USER, SESSION_PAGE_PASS, MAX_CONCURRENT, DEFAULT_BASE_BRANCH } from "./config.ts";
+import { createHmac, timingSafeEqual } from "crypto";
+import { API_SECRET, SESSION_PAGE_USER, SESSION_PAGE_PASS, MAX_CONCURRENT, DEFAULT_BASE_BRANCH, GITHUB_WEBHOOK_SECRET } from "./config.ts";
 import { getActiveSessions, getChannelBranches } from "./runtime.ts";
 import { getHostCreds } from "../libcreds-host/index.ts";
 import { dmAuthor } from "../libcreds-host/slack.ts";
@@ -414,6 +415,111 @@ const routes: Route[] = [
           responded = true;
           console.error(`[HTTP] ${e.message}`); json(res, 500, { error: "internal error" });
         }
+      });
+    },
+  },
+
+  // POST /api/github/webhook — GitHub webhook for label-triggered reviews
+  {
+    method: "POST", pattern: /^\/api\/github\/webhook$/, auth: "none",
+    handler: async (req, res, _params, { store, docker }) => {
+      const event = req.headers["x-github-event"] as string;
+      const sig = req.headers["x-hub-signature-256"] as string;
+      const rawBody = await readBody(req);
+
+      // Verify HMAC signature
+      if (GITHUB_WEBHOOK_SECRET) {
+        if (!sig) { json(res, 401, { error: "missing signature" }); return; }
+        const expected = "sha256=" + createHmac("sha256", GITHUB_WEBHOOK_SECRET).update(rawBody).digest("hex");
+        if (!timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) {
+          json(res, 401, { error: "invalid signature" });
+          return;
+        }
+      }
+
+      // Only process pull_request labeled events
+      if (event !== "pull_request") { json(res, 200, { ignored: true, reason: `event=${event}` }); return; }
+
+      let payload: any;
+      try { payload = JSON.parse(rawBody); } catch { json(res, 400, { error: "invalid JSON" }); return; }
+
+      if (payload.action !== "labeled") { json(res, 200, { ignored: true, reason: `action=${payload.action}` }); return; }
+
+      const labelName = payload.label?.name;
+      if (labelName !== "claude-review") { json(res, 200, { ignored: true, reason: `label=${labelName}` }); return; }
+
+      const pr = payload.pull_request;
+      if (!pr) { json(res, 400, { error: "missing pull_request" }); return; }
+
+      const prNumber = pr.number;
+      const prTitle = pr.title || "";
+      const prAuthor = pr.user?.login || "unknown";
+      const prUrl = pr.html_url || `https://github.com/${payload.repository?.full_name}/pull/${prNumber}`;
+      const repo = payload.repository?.full_name || "AztecProtocol/aztec-packages";
+      const headRef = pr.head?.ref || "";
+
+      console.log(`[WEBHOOK] claude-review label on ${repo}#${prNumber} "${prTitle}" by ${prAuthor}`);
+
+      // Capacity check
+      if (getActiveSessions() >= MAX_CONCURRENT) {
+        json(res, 503, { error: "at capacity" });
+        return;
+      }
+
+      // Dedup: check if a session is already running for this PR
+      const prKey = prKeyFromUrl(prUrl);
+      if (prKey) {
+        const bound = store.getPrBinding(prKey);
+        if (bound) {
+          const prev = store.findByWorktreeId(bound);
+          if (prev?.status === "running") {
+            json(res, 409, { error: "review session already running for this PR" });
+            return;
+          }
+        }
+      }
+
+      const prompt = `Review PR #${prNumber}: ${prTitle}
+${prUrl}
+
+Author: ${prAuthor}
+Head branch: ${headRef}
+
+## Instructions
+
+1. Fetch and read the full PR diff, description, and all comments
+2. Read any linked or attached issues referenced in the PR body or comments
+3. For each changed file, read the FULL file to understand surrounding context
+4. Look at recent git history (last 20 commits) for the changed files to understand evolution
+5. Check CI status with ci_failures
+6. Do a thorough review — assume every line is suspect. Focus on non-obvious bugs:
+   - Edge cases (zero values, empty collections, overflow)
+   - Concurrency issues (races, missing locks, ordering assumptions)
+   - Security (missing validation, injection, unsafe patterns)
+   - Correctness (off-by-one, wrong operator, inverted conditions)
+   - Compatibility (breaking changes, API drift, constant sync)
+7. If you find a clear, direct fix, create a PR with it
+8. When done, call manage_review_labels(pr_number=${prNumber}) to swap labels
+9. Create a gist with your full review
+10. Call respond_to_user with a terse summary + gist link`;
+
+      let responded = false;
+      docker.runContainerSession({
+        prompt,
+        userName: `review/${prAuthor}`,
+        link: prUrl,
+        targetRef: `origin/${headRef}`,
+        profile: "review",
+      }, store, undefined, (logUrl, worktreeId) => {
+        if (prKey) store.bindPr(prKey, worktreeId);
+        if (!responded) {
+          responded = true;
+          console.log(`[WEBHOOK] Review session started: ${logUrl}`);
+          json(res, 202, { ok: true, log_url: logUrl, worktree_id: worktreeId, pr: prNumber });
+        }
+      }).catch((e) => {
+        console.error(`[WEBHOOK] Session error: ${e}`);
+        if (!responded) { responded = true; json(res, 500, { error: "internal error" }); }
       });
     },
   },

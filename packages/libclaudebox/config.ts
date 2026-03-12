@@ -6,16 +6,17 @@ import { homedir } from "os";
 // centralized in libcreds / libcreds-host. Do NOT read them here.
 export const SLACK_APP_TOKEN = process.env.SLACK_APP_TOKEN!;
 export const API_SECRET = process.env.CLAUDEBOX_API_SECRET || "";
+export const GITHUB_WEBHOOK_SECRET = process.env.GITHUB_WEBHOOK_SECRET || "";
 export const HTTP_PORT = parseInt(process.env.CLAUDEBOX_PORT || "3000", 10);
 export const INTERNAL_PORT = parseInt(process.env.CLAUDEBOX_INTERNAL_PORT || String(HTTP_PORT + 2), 10);
 export const MAX_CONCURRENT = 10;
 
 // ── Paths ───────────────────────────────────────────────────────
 export const REPO_DIR = process.env.CLAUDE_REPO_DIR ?? join(homedir(), "repo");
-export const SESSIONS_DIR = join(REPO_DIR, ".claude", "claudebox", "sessions");
 export const DOCKER_IMAGE = process.env.CLAUDEBOX_DOCKER_IMAGE || "devbox:latest";
 export const CLAUDEBOX_DIR = join(homedir(), ".claudebox");
-export const CLAUDEBOX_SESSIONS_DIR = join(CLAUDEBOX_DIR, "sessions"); // legacy
+export const SESSIONS_DIR = join(CLAUDEBOX_DIR, "sessions");
+export const CLAUDEBOX_SESSIONS_DIR = SESSIONS_DIR; // alias for back-compat
 export const CLAUDEBOX_WORKTREES_DIR = join(CLAUDEBOX_DIR, "worktrees");
 export const CLAUDEBOX_STATS_DIR = join(CLAUDEBOX_DIR, "stats");
 // Parent of packages/libclaudebox/ — the root claudebox directory
