@@ -125,6 +125,21 @@ export class DockerService {
     const wt = store.getOrCreateWorktree(opts.worktreeId);
     const { worktreeId, workspaceDir, claudeProjectsDir } = wt;
 
+    // Kill any leftover containers from previous runs on this worktree
+    const prevSessions = store.listByWorktree(worktreeId);
+    for (const prev of prevSessions) {
+      if (prev.status === "running" && prev._log_id) {
+        const prevContainer = prev.container || `claudebox-${prev._log_id}`;
+        const prevSidecar = prev.sidecar || `claudebox-sidecar-${prev._log_id}`;
+        const prevNetwork = `claudebox-net-${prev._log_id}`;
+        this.stopAndRemoveSync(prevContainer, 3);
+        this.stopAndRemoveSync(prevSidecar, 3);
+        this.removeNetworkSync(prevNetwork);
+        store.update(prev._log_id, { status: "cancelled", exit_code: 137, finished: new Date().toISOString() });
+        console.log(`[DOCKER] Cleaned up previous run ${prev._log_id} on worktree ${worktreeId}`);
+      }
+    }
+
     const logId = store.nextSessionLogId(worktreeId);
     const sessionUuid = randomUUID();
     const networkName = `claudebox-net-${logId}`;
