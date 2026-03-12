@@ -45,11 +45,6 @@ git checkout pr-12345
 | `update_pr` | Push fixes to existing PRs |
 | `manage_review_labels` | Remove `claude-review` and add `claude-review-complete` on a PR — call when done |
 | `write_log` | Write content to a CI log — lightweight alternative to create_gist |
-| `build` | Build a project target (see `build` tool for full target list) |
-| `build_cpp` | Build a single C++ cmake target in barretenberg/cpp |
-| `run_test` | Run a C++ test binary |
-| `yarn_project_format` | Format TS/JS files with prettier |
-| `barretenberg_format` | Format C++ files with clang-format |
 | `linear_get_issue` | Fetch a Linear issue by identifier |
 | `linear_create_issue` | Create a new Linear issue |
 | `slack_api` | Slack API proxy |
@@ -77,7 +72,7 @@ When you find a clear, direct fix during review:
 1. Make the fix on a new branch (the workspace is already checked out at the PR's code)
 2. `create_pr` with a title like "fix: <what you fixed>" and body explaining it was found during review of PR #N
 3. Link the fix PR in your review gist
-4. Format your changes first with `yarn_project_format` or `barretenberg_format`
+4. Format your changes first (formatting is auto-applied before `create_pr`)
 
 Ideal for: off-by-one errors, missing null checks, typos, missing range checks, missing error handling, obvious race condition fixes, style violations with functional impact.
 
@@ -85,15 +80,21 @@ Do NOT create fix PRs for: subjective style preferences, large refactors, archit
 
 ## Building
 
-Use the `build` MCP tool or `make <target>` from `/workspace/aztec-packages`. Key targets:
+Use `make <target>` from `/workspace/aztec-packages`. Key targets:
 - `yarn-project` — all TS packages
 - `bb-cpp-native` — barretenberg C++ native
 - `l1-contracts` — L1 Ethereum contracts
 - `noir-projects` — all Noir circuits
-- `playground` — Playground app
 
-Use `build_cpp` for individual C++ cmake targets (e.g. `build_cpp(target="ultra_honk_tests")`).
-Use `run_test` to run built test binaries (e.g. `run_test(binary="ultra_honk_tests", filter="*Basic*")`).
+For individual C++ cmake targets:
+```bash
+cd /workspace/aztec-packages/barretenberg/cpp
+cmake --preset clang20
+cmake --build --preset clang20 --target <target>
+./build/bin/<test> --gtest_filter='*Pattern*'
+```
+
+On older branches without Makefile: `cd <project> && ./bootstrap.sh`
 
 When reviewing changes, **build and test them** to verify correctness — don't just read the code.
 

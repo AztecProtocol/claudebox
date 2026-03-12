@@ -66,6 +66,7 @@ All GitHub writes MUST go through dedicated MCP tools. `github_api` is **read-on
 | `create_gist` | Create a gist (one per session, then use update_gist) |
 | `update_gist` | Add/update files in an existing gist |
 | `ci_failures` | CI status for a PR — failed jobs, pass/fail history, links |
+| `aztec_packages_create_issue` | Create a GitHub issue in AztecProtocol/aztec-packages |
 | `linear_get_issue` | Fetch a Linear issue by identifier (e.g. `A-453`) |
 | `linear_create_issue` | Create a new Linear issue |
 | `record_stat` | Record structured data to JSONL (see tool description for schemas) |
@@ -97,24 +98,61 @@ All `body` and `files` parameters are posted to GitHub as Markdown. Use **real n
 
 ## Building
 
-Use the `build` MCP tool or `make <target>` from `/workspace/aztec-packages`. The `Makefile` defines the full dependency graph.
+Run builds from `/workspace/aztec-packages` using `make` or per-project `bootstrap.sh`.
 
-Key aggregate targets:
-- `fast` — full default build
+**IMPORTANT**: There are no MCP build tools. Use Bash directly. Builds can take a long time — only build what you actually need.
+
+### Makefile targets (preferred, next branch+)
+
+```bash
+cd /workspace/aztec-packages
+make <target>
+```
+
+Aggregate targets:
+- `fast` — full default build (barretenberg + boxes + playground + docs + aztec-up + all tests)
 - `full` — fast + extra tests + benches
 - `release` — fast + cross-compiled binaries
 
-Key project targets:
-- `yarn-project` — all TS packages
-- `bb-cpp-native` — barretenberg C++ native
-- `noir` — Noir compiler
-- `l1-contracts` — L1 Ethereum contracts
-- `playground` — Playground app (produces dist/)
-- `noir-projects` — all Noir circuits
+Barretenberg C++:
+- `bb-cpp-native` — native build (bb + bb-avm binaries)
+- `bb-cpp-wasm` / `bb-cpp-wasm-threads` — WASM builds
+- `bb-cpp` — all of: native + wasm + wasm-threads
+- `bb-cpp-asan` — address sanitizer build
 
-Use `build_cpp` for individual C++ cmake targets (faster than full `bb-cpp-native`).
+Barretenberg other: `bb-ts`, `bb-rs`, `bb-sol`, `bb-acir`, `bb-docs`, `bb-crs`, `bb-bbup`
 
-For individual projects: `cd /workspace/aztec-packages/<project> && ./bootstrap.sh`
+Noir: `noir`, `noir-projects`, `noir-protocol-circuits`, `noir-contracts`, `aztec-nr`
+
+Other: `yarn-project`, `l1-contracts`, `l1-contracts-src`, `playground`, `boxes`, `docs`
+
+### bootstrap.sh fallback (older branches without Makefile)
+
+```bash
+cd /workspace/aztec-packages/<project>
+./bootstrap.sh [function]
+```
+
+Examples: `cd barretenberg/cpp && ./bootstrap.sh build_native`, `cd yarn-project && ./bootstrap.sh`
+
+### C++ cmake targets (faster for single binaries)
+
+```bash
+cd /workspace/aztec-packages/barretenberg/cpp
+cmake --preset clang20           # configure (once)
+cmake --build --preset clang20 --target <target>  # e.g. bb, ultra_honk_tests
+```
+
+Presets: `clang20` (default), `clang20-no-avm`, `debug`, `debug-fast`, `asan-fast`
+
+Test binaries land in `build/bin/` — run with `./build/bin/<test> --gtest_filter='*Pattern*'`
+
+### Formatting
+
+- **TypeScript** (yarn-project): `npx prettier --write <files>` from `yarn-project/`
+- **C++** (barretenberg): `./format.sh changed` from `barretenberg/cpp/`
+
+Formatting is auto-applied before `create_pr` / `update_pr`.
 
 ### Build logs
 

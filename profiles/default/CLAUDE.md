@@ -182,7 +182,7 @@ When backporting (cherry-picking commits to an older branch), **preserve the ful
 
 2. **Conflict resolution commit** — Resolve the conflict markers from commit 1. Only touch lines that have conflicts — nothing else. Commit with a message like `fix: resolve cherry-pick conflicts`.
 
-3. **Build fixes commit** — Fix any remaining compilation errors, missing imports, API differences between branches, etc. Run the build (`build` tool or `make`) to verify. Commit with a message describing what was adapted.
+3. **Build fixes commit** — Fix any remaining compilation errors, missing imports, API differences between branches, etc. Run `make <target>` to verify. Commit with a message describing what was adapted.
 
 This 3-commit structure lets reviewers see: (a) what the original code looked like, (b) how conflicts were resolved, and (c) what additional changes were needed for the older branch. **Never squash these into one commit.**
 

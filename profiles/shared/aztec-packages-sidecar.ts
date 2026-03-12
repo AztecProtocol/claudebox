@@ -14,7 +14,7 @@ import {
   registerCloneRepo, registerPRTools, registerGitProxy,
   registerLogTools, registerIssueTools,
 } from "../../packages/libclaudebox/mcp/git-tools.ts";
-import { registerBuildTools, formatChangedFiles } from "../../packages/libclaudebox/mcp/build-tools.ts";
+import { formatChangedFiles } from "../../packages/libclaudebox/mcp/build-tools.ts";
 
 // ── Defaults ─────────────────────────────────────────────────────
 export const REPO = "AztecProtocol/aztec-packages";
@@ -57,7 +57,6 @@ export function registerAztecPackagesTools(server: McpServer, opts: AztecPackage
 
   registerGitProxy(server, { workspace: WORKSPACE });
   registerLogTools(server, { workspace: WORKSPACE });
-  registerBuildTools(server, { workspace: WORKSPACE, referenceRepo: REF_REPO });
 
   const issueRepos = [
     { name: "aztec_packages_create_issue", repo: REPO, description: "Create a GitHub issue in AztecProtocol/aztec-packages." },
