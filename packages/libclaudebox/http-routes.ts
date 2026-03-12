@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "http";
 import { SignJWT, jwtVerify, type JWTPayload } from "jose";
 import { createHmac, timingSafeEqual } from "crypto";
 import { API_SECRET, SESSION_PAGE_USER, SESSION_PAGE_PASS, MAX_CONCURRENT, DEFAULT_BASE_BRANCH, GITHUB_WEBHOOK_SECRET } from "./config.ts";
-import { getActiveSessions, getChannelBranches } from "./runtime.ts";
+import { getActiveSessions, getChannelBranches, getChannelProfiles } from "./runtime.ts";
 import { getHostCreds } from "../libcreds-host/index.ts";
 import { dmAuthor } from "../libcreds-host/slack.ts";
 import { existsSync, readFileSync, readdirSync, statSync, watch, mkdirSync, openSync, readSync, fstatSync, closeSync } from "fs";
@@ -390,26 +390,44 @@ const routes: Route[] = [
 
       console.log(`[HTTP] POST /run user=${body.user ?? "?"} prompt=${truncate(prompt, 120)}${worktreeId ? ` (worktree=${worktreeId})` : ""}`);
 
-      // ── Resolve Slack context from prior session or body ──
-      const slackChannel = body.slack_channel || resumedSession?.slack_channel || "";
-      const slackThreadTs = body.slack_thread_ts || resumedSession?.slack_thread_ts || "";
+      // ── Resolve Slack context: prior session → body → profile channel ──
+      const sessionProfile = resumedSession?.profile || runProfile || "";
+      let slackChannel = body.slack_channel || resumedSession?.slack_channel || "";
+      let slackThreadTs = body.slack_thread_ts || resumedSession?.slack_thread_ts || "";
       let slackMessageTs = "";
       let slackChannelName = resumedSession?.slack_channel_name || "";
 
-      if (slackChannel && slackThreadTs && SLACK_BOT_TOKEN) {
+      // Reverse lookup: find the Slack channel associated with this profile
+      if (!slackChannel && SLACK_BOT_TOKEN) {
+        const profileMap = getChannelProfiles(); // { channelId → profileName }
+        for (const [ch, prof] of Object.entries(profileMap)) {
+          if (prof === sessionProfile || (!sessionProfile && prof === "default")) {
+            slackChannel = ch;
+            break;
+          }
+        }
+      }
+
+      if (slackChannel && SLACK_BOT_TOKEN) {
         try {
+          const shortPrompt = truncate(prompt, 120);
+          const postArgs: any = { channel: slackChannel, text: `*ClaudeBox* (via GitHub): _${shortPrompt}_` };
+          if (slackThreadTs) postArgs.thread_ts = slackThreadTs;
           const slackResp = await fetch("https://slack.com/api/chat.postMessage", {
             method: "POST",
             headers: { "Authorization": `Bearer ${SLACK_BOT_TOKEN}`, "Content-Type": "application/json" },
-            body: JSON.stringify({ channel: slackChannel, thread_ts: slackThreadTs, text: "ClaudeBox starting\u2026" }),
+            body: JSON.stringify(postArgs),
           });
           const slackData = await slackResp.json() as any;
-          if (slackData.ok) slackMessageTs = slackData.ts || "";
+          if (slackData.ok) {
+            slackMessageTs = slackData.ts || "";
+            if (!slackThreadTs) slackThreadTs = slackMessageTs;
+          }
           if (!slackChannelName) {
             const info = await resolveSlackChannelInfo(slackChannel);
             slackChannelName = info?.name || "";
           }
-          console.log(`[HTTP] Posted Slack reply in ${slackChannel} thread=${slackThreadTs} ts=${slackMessageTs}`);
+          console.log(`[HTTP] Posted Slack message in ${slackChannel}${slackThreadTs ? ` thread=${slackThreadTs}` : ""} ts=${slackMessageTs}`);
         } catch (e: any) {
           console.warn(`[HTTP] Slack post failed: ${e.message}`);
         }
