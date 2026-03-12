@@ -1867,7 +1867,7 @@ async function credsCommand(args: string[]): Promise<void> {
     }
 
     const meta = readCredsMeta(slotDir);
-    console.log(`  Saved current credentials → ${slotName} (${meta.email})`);
+    console.log(`  Saved current credentials → ${slotName}`);
     console.log();
     return;
   }
