@@ -3,7 +3,6 @@ import type { WorktreeStore } from "../worktree-store.ts";
 import type { DockerService } from "../docker.ts";
 import { truncate, extractHashFromUrl, sessionUrl } from "../util.ts";
 import { toTargetRef } from "../base-branch.ts";
-import { loadProfile } from "../profile-loader.ts";
 import { getHostCreds } from "../../libcreds-host/index.ts";
 
 /**
@@ -207,40 +206,15 @@ export async function handleTerminalCommand(
   return true;
 }
 
-/** Drain queued Slack messages for a worktree and auto-resume if any exist. */
-async function drainQueueAndResume(
-  client: any, channel: string, threadTs: string | null,
-  worktreeId: string, store: WorktreeStore, docker: DockerService,
-  baseBranch: string, channelName: string,
-): Promise<void> {
+/** Drain queued Slack messages for a worktree after a session finishes.
+ *  Messages are logged but NOT auto-resumed — the user must explicitly reply in the thread. */
+function drainQueuedMessages(worktreeId: string, store: WorktreeStore): void {
   try {
     const session = store.findByWorktreeId(worktreeId);
     if (!session?._log_id) return;
     const queued = store.drainQueue(session._log_id);
-
     if (queued.length) {
-      const combined = queued.map(q => `[${q.user}]: ${q.text}`).join("\n\n");
-      console.log(`[QUEUE] Draining ${queued.length} queued message(s) for worktree ${worktreeId}`);
-      startReplySession(
-        client, channel, threadTs, combined, session,
-        queued[0].user, store, docker, baseBranch, false, channelName, false, session.profile || "",
-      );
-      return;
-    }
-
-    // No user messages queued — check for profile summary prompt (only on first session, not on resumes)
-    const profile = session.profile || "";
-    const sessions = store.listByWorktree(worktreeId);
-    const isFirstSession = sessions.length <= 1;
-    if (profile && isFirstSession) {
-      const summaryPrompt = (await loadProfile(profile)).summaryPrompt || "";
-      if (summaryPrompt) {
-        console.log(`[SUMMARY] Queueing summary prompt for worktree ${worktreeId} (profile=${profile})`);
-        startReplySession(
-          client, channel, threadTs, summaryPrompt, session,
-          "system", store, docker, baseBranch, true, channelName, false, profile,
-        );
-      }
+      console.log(`[QUEUE] Drained ${queued.length} queued message(s) for worktree ${worktreeId} (not auto-resuming)`);
     }
   } catch (e: any) {
     console.error(`[QUEUE] Failed to drain queue for ${worktreeId}: ${e.message}`);
@@ -305,7 +279,7 @@ export async function startNewSession(
           .catch((e) => console.warn(`[WARN] Slack status update failed: ${e}`));
       }
       if (capturedWorktreeId) {
-        drainQueueAndResume(client, channel, threadTs, capturedWorktreeId, store, docker, baseBranch, channelName);
+        drainQueuedMessages(capturedWorktreeId, store);
       }
     });
   } catch (e) {
@@ -375,7 +349,7 @@ export async function startReplySession(
           .catch((e) => console.warn(`[WARN] Slack status update failed: ${e}`));
       }
       if (capturedWorktreeId) {
-        drainQueueAndResume(client, channel, threadTs, capturedWorktreeId, store, docker, baseBranch, channelName);
+        drainQueuedMessages(capturedWorktreeId, store);
       }
     });
   } catch (e) {

@@ -11,7 +11,7 @@ import type { WorktreeStore } from "./worktree-store.ts";
 import type { DockerService } from "./docker.ts";
 import type { RunMeta, Artifact, EnrichedWorkspace, ThreadGroup, ChannelGroup } from "./types.ts";
 import { workspacePageHTML, dashboardHTML, auditDashboardHTML, personalDashboardHTML, type WorkspaceCard } from "./html/templates.ts";
-import { parseMessage, parseKeywords, validateResumeSession, truncate, prKeyFromUrl } from "./util.ts";
+import { parseMessage, parseKeywords, validateResumeSession, truncate, prKeyFromUrl, sessionUrl } from "./util.ts";
 import { updateSlackStatus } from "./slack/helpers.ts";
 import { discoverProfiles } from "./profile-loader.ts";
 
@@ -390,9 +390,38 @@ const routes: Route[] = [
 
       console.log(`[HTTP] POST /run user=${body.user ?? "?"} prompt=${truncate(prompt, 120)}${worktreeId ? ` (worktree=${worktreeId})` : ""}`);
 
+      // ── Slack context: if slack_channel provided, post an initial message ──
+      const slackChannel = body.slack_channel || "";
+      const slackThreadTs = body.slack_thread_ts || "";
+      let slackMessageTs = "";
+      let slackChannelName = "";
+
+      if (slackChannel && SLACK_BOT_TOKEN) {
+        try {
+          const postArgs: any = { channel: slackChannel, text: "ClaudeBox starting\u2026" };
+          if (slackThreadTs) postArgs.thread_ts = slackThreadTs;
+          const slackResp = await fetch("https://slack.com/api/chat.postMessage", {
+            method: "POST",
+            headers: { "Authorization": `Bearer ${SLACK_BOT_TOKEN}`, "Content-Type": "application/json" },
+            body: JSON.stringify(postArgs),
+          });
+          const slackData = await slackResp.json() as any;
+          if (slackData.ok) slackMessageTs = slackData.ts || "";
+          const info = await resolveSlackChannelInfo(slackChannel);
+          slackChannelName = info?.name || "";
+          console.log(`[HTTP] Posted Slack message in ${slackChannel} ts=${slackMessageTs}`);
+        } catch (e: any) {
+          console.warn(`[HTTP] Slack post failed: ${e.message}`);
+        }
+      }
+
       let responded = false;
+      let capturedWorktreeId = "";
+      let capturedLogUrl = "";
+      const finalPrompt = parsed?.type === "reply-hash" ? parsed.prompt : prompt;
+
       docker.runContainerSession({
-        prompt: parsed?.type === "reply-hash" ? parsed.prompt : prompt,
+        prompt: finalPrompt,
         userName: body.user,
         commentId: body.comment_id,
         runCommentId: body.run_comment_id,
@@ -403,11 +432,37 @@ const routes: Route[] = [
         ciAllow,
         profile: (resumedSession?.profile || runProfile) || undefined,
         model: body.model || undefined,
+        ...(slackChannel && slackMessageTs ? {
+          slackChannel,
+          slackChannelName,
+          slackThreadTs: slackThreadTs || slackMessageTs,
+          slackMessageTs,
+        } : {}),
       }, store, undefined, (logUrl, newWorktreeId) => {
+        capturedWorktreeId = newWorktreeId;
+        capturedLogUrl = logUrl;
         if (prKey) store.bindPr(prKey, newWorktreeId);
+        if (slackChannel && slackThreadTs) store.bindThread(slackChannel, slackThreadTs, newWorktreeId);
+        // Update Slack message with working status
+        if (slackMessageTs && SLACK_BOT_TOKEN) {
+          fetch("https://slack.com/api/chat.update", {
+            method: "POST",
+            headers: { "Authorization": `Bearer ${SLACK_BOT_TOKEN}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ channel: slackChannel, ts: slackMessageTs, text: `_working\u2026_ <${sessionUrl(newWorktreeId)}|status>` }),
+          }).catch(() => {});
+        }
         if (!responded) {
           responded = true;
           json(res, 202, { log_url: logUrl, worktree_id: newWorktreeId, status: "started" });
+        }
+      }).then((exitCode) => {
+        // On completion, update Slack status like Slack-originated sessions
+        if (slackMessageTs && slackChannel && capturedLogUrl) {
+          const latestSession = capturedWorktreeId ? store.findByWorktreeId(capturedWorktreeId) : null;
+          const capturedLogId = latestSession?._log_id || "";
+          const statusSuffix = exitCode === 0 ? "completed" : `error (exit ${exitCode})`;
+          updateSlackStatus(slackChannel, slackMessageTs, statusSuffix, capturedLogUrl, capturedWorktreeId, store, finalPrompt, capturedLogId)
+            .catch((e) => console.warn(`[WARN] Slack status update failed: ${e}`));
         }
       }).catch((e) => {
         console.error(`[HTTP] Session error: ${e}`);

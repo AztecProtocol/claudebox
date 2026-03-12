@@ -575,26 +575,11 @@ export class WorktreeStore {
         await docker.stopAndRemove(sidecarName, 3).catch(() => {});
         await docker.removeNetwork(networkName).catch(() => {});
 
-        // Check if eligible for auto-resume
-        const ageMs = meta.started ? Date.now() - new Date(meta.started).getTime() : Infinity;
-        const canResume = !!meta.worktree_id && !!meta.slack_channel
-          && ageMs < 60 * 60_000
-          && exitCode !== 0
-          && !meta.auto_resumed;
-
-        if (canResume) {
-          meta.status = "interrupted";
-          meta.exit_code = exitCode;
-          meta.finished = new Date().toISOString();
-          writeFileSync(path, JSON.stringify(meta, null, 2));
-          console.log(`[RECONCILE] ${logId}: running → interrupted (exit=${exitCode}, age=${Math.round(ageMs / 60_000)}m)`);
-        } else {
-          meta.status = "cancelled";
-          meta.exit_code = exitCode;
-          meta.finished = new Date().toISOString();
-          writeFileSync(path, JSON.stringify(meta, null, 2));
-          console.log(`[RECONCILE] ${logId}: running → cancelled (exit=${exitCode})`);
-        }
+        meta.status = "cancelled";
+        meta.exit_code = exitCode;
+        meta.finished = new Date().toISOString();
+        writeFileSync(path, JSON.stringify(meta, null, 2));
+        console.log(`[RECONCILE] ${logId}: running → cancelled (exit=${exitCode})`);
       } catch {}
     }
   }

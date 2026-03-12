@@ -122,6 +122,35 @@ export function registerSlackHandlers(app: App, store: WorktreeStore, docker: Do
   app.event("message", async ({ event, client, say }) => {
     const channelType = (event as any).channel_type || "";
     console.log(`[MSG_EVENT] channel_type=${channelType} channel=${event.channel} subtype=${(event as any).subtype || "none"} bot_id=${(event as any).bot_id || "none"}`);
+
+    // ── Auto-merge failure trigger (bot messages in channels) ──
+    if ((event as any).bot_id && channelType === "channel") {
+      const text = (event as any).text ?? "";
+      const mergeFailMatch = text.match(/Auto-merge\s+(\S+)\s*→\s*(\S+)\s+failed due to conflicts/i);
+      if (mergeFailMatch) {
+        const urlMatch = text.match(/<(https:\/\/github\.com\/[^|>]+(?:\/pull\/\d+)[^|>]*)/);
+        if (urlMatch) {
+          const prUrl = urlMatch[1];
+          const [source, target] = [mergeFailMatch[1], mergeFailMatch[2]];
+          const channel = event.channel;
+          const threadTs = (event as any).ts;
+          const profile = getChannelProfiles()[channel] || "";
+          const baseBranch = await resolveBaseBranch(client, channel);
+          const channelName = await resolveChannelName(client, channel);
+
+          if (getActiveSessions() >= MAX_CONCURRENT) {
+            console.log(`[AUTO-MERGE] Skipping — at capacity (${MAX_CONCURRENT})`);
+            return;
+          }
+
+          const prompt = `Auto-merge ${source} → ${target} failed due to conflicts. Resolve the conflicts and push.\n\nPR: ${prUrl}`;
+          console.log(`[AUTO-MERGE] Triggering session for ${prUrl} (${source} → ${target})`);
+          await startNewSession(client, channel, threadTs, prompt, "", "Aztec CI", store, docker, baseBranch, false, channelName, false, profile);
+          return;
+        }
+      }
+    }
+
     if (channelType !== "im" && channelType !== "mpim") return;
     if ((event as any).bot_id || (event as any).subtype) return;
 
