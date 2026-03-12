@@ -390,26 +390,26 @@ const routes: Route[] = [
 
       console.log(`[HTTP] POST /run user=${body.user ?? "?"} prompt=${truncate(prompt, 120)}${worktreeId ? ` (worktree=${worktreeId})` : ""}`);
 
-      // ── Slack context: if slack_channel provided, post an initial message ──
-      const slackChannel = body.slack_channel || "";
-      const slackThreadTs = body.slack_thread_ts || "";
+      // ── Resolve Slack context from prior session or body ──
+      const slackChannel = body.slack_channel || resumedSession?.slack_channel || "";
+      const slackThreadTs = body.slack_thread_ts || resumedSession?.slack_thread_ts || "";
       let slackMessageTs = "";
-      let slackChannelName = "";
+      let slackChannelName = resumedSession?.slack_channel_name || "";
 
-      if (slackChannel && SLACK_BOT_TOKEN) {
+      if (slackChannel && slackThreadTs && SLACK_BOT_TOKEN) {
         try {
-          const postArgs: any = { channel: slackChannel, text: "ClaudeBox starting\u2026" };
-          if (slackThreadTs) postArgs.thread_ts = slackThreadTs;
           const slackResp = await fetch("https://slack.com/api/chat.postMessage", {
             method: "POST",
             headers: { "Authorization": `Bearer ${SLACK_BOT_TOKEN}`, "Content-Type": "application/json" },
-            body: JSON.stringify(postArgs),
+            body: JSON.stringify({ channel: slackChannel, thread_ts: slackThreadTs, text: "ClaudeBox starting\u2026" }),
           });
           const slackData = await slackResp.json() as any;
           if (slackData.ok) slackMessageTs = slackData.ts || "";
-          const info = await resolveSlackChannelInfo(slackChannel);
-          slackChannelName = info?.name || "";
-          console.log(`[HTTP] Posted Slack message in ${slackChannel} ts=${slackMessageTs}`);
+          if (!slackChannelName) {
+            const info = await resolveSlackChannelInfo(slackChannel);
+            slackChannelName = info?.name || "";
+          }
+          console.log(`[HTTP] Posted Slack reply in ${slackChannel} thread=${slackThreadTs} ts=${slackMessageTs}`);
         } catch (e: any) {
           console.warn(`[HTTP] Slack post failed: ${e.message}`);
         }
@@ -435,7 +435,7 @@ const routes: Route[] = [
         ...(slackChannel && slackMessageTs ? {
           slackChannel,
           slackChannelName,
-          slackThreadTs: slackThreadTs || slackMessageTs,
+          slackThreadTs,
           slackMessageTs,
         } : {}),
       }, store, undefined, (logUrl, newWorktreeId) => {
