@@ -33,7 +33,10 @@ export function hasScope(name: string): boolean {
   return _scopes.has(name);
 }
 
-export const statusPageUrl = WORKTREE_ID ? `https://${CLAUDEBOX_HOST}/s/${WORKTREE_ID}` : "";
+const _runSeq = (process.env.CLAUDEBOX_LOG_ID || "").match(/-(\d+)$/)?.[1] || "";
+export const statusPageUrl = WORKTREE_ID
+  ? `https://${CLAUDEBOX_HOST}/s/${WORKTREE_ID}${_runSeq ? `?run=${_runSeq}` : ""}`
+  : "";
 
 // ── Per-session metadata directory ───────────────────────────────
 if (WORKTREE_ID) {

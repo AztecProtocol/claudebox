@@ -117,7 +117,7 @@ function compactArtifact(text: string): string {
   const issueMatch = text.match(/^(?:Closed )?[Ii]ssue #(\d+).*?(https?:\/\/\S+)/);
   if (issueMatch) {
     const prefix = text.startsWith("Closed") ? "Closed " : "";
-    return `<a href="${esc(issueMatch[2])}" target="_blank" class="link artifact-link">${prefix}#${issueMatch[1]}</a>`;
+    return `<a href="${esc(issueMatch[2])}" target="_blank" class="link artifact-link">${prefix}Issue #${issueMatch[1]}</a>`;
   }
 
   // Cross-ref: "Cross-ref #70: context"
@@ -222,4 +222,10 @@ export interface WorkspaceCard {
   slackThreadTs?: string;
   /** GitHub link (PR or action run URL) */
   link?: string;
+  /** Last session_status text from activity */
+  statusText?: string;
+  /** Latest response text (truncated) */
+  lastReply?: string;
+  /** Artifacts (issues, PRs, gists) */
+  artifacts?: Array<{ type: string; text: string; url: string }>;
 }

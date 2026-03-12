@@ -1716,6 +1716,193 @@ async function streamLogs(server: { url: string; user: string; password: string 
   }
 }
 
+// ── Creds command ────────────────────────────────────────────────
+
+const CREDS_DIR = join(homedir(), ".claudebox", "credentials");
+const CLAUDE_DIR = join(homedir(), ".claude");
+const CLAUDE_CREDS = join(CLAUDE_DIR, ".credentials.json");
+
+function credsSlots(): { name: string; path: string }[] {
+  if (!existsSync(CREDS_DIR)) return [];
+  return readdirSync(CREDS_DIR)
+    .filter(d => existsSync(join(CREDS_DIR, d, ".credentials.json")))
+    .sort()
+    .map(name => ({ name, path: join(CREDS_DIR, name) }));
+}
+
+function readCredsMeta(credPath: string): { email: string; expires: string; expired: boolean } {
+  try {
+    const creds = JSON.parse(readFileSync(join(credPath, ".credentials.json"), "utf-8"));
+    const oauth = creds.claudeAiOauth || {};
+    const expiresAt = oauth.expiresAt || 0;
+    const expired = expiresAt < Date.now();
+    const expiresDate = expiresAt ? new Date(expiresAt).toISOString().replace("T", " ").slice(0, 19) : "unknown";
+
+    // Try to read email from .claude.json in the slot
+    let email = "";
+    const claudeJson = join(credPath, ".claude.json");
+    if (existsSync(claudeJson)) {
+      try {
+        const cfg = JSON.parse(readFileSync(claudeJson, "utf-8"));
+        email = cfg.oauthAccount?.emailAddress || "";
+      } catch {}
+    }
+    // Fallback: check the token prefix for differentiation
+    if (!email) {
+      const token = (oauth.accessToken || "").slice(0, 25);
+      email = token ? `token:${token}...` : "unknown";
+    }
+    return { email, expires: expiresDate, expired };
+  } catch {
+    return { email: "error", expires: "error", expired: true };
+  }
+}
+
+function activeSlotName(): string | null {
+  if (!existsSync(CLAUDE_CREDS)) return null;
+  try {
+    const activeCreds = readFileSync(CLAUDE_CREDS, "utf-8");
+    const activeToken = JSON.parse(activeCreds).claudeAiOauth?.refreshToken || "";
+    if (!activeToken) return null;
+    for (const slot of credsSlots()) {
+      try {
+        const slotCreds = JSON.parse(readFileSync(join(slot.path, ".credentials.json"), "utf-8"));
+        if ((slotCreds.claudeAiOauth?.refreshToken || "") === activeToken) return slot.name;
+      } catch {}
+    }
+  } catch {}
+  return null;
+}
+
+async function credsCommand(args: string[]): Promise<void> {
+  const sub = args[0];
+
+  if (sub === "list" || sub === "ls" || !sub) {
+    const slots = credsSlots();
+    if (!slots.length) {
+      console.log(`No credential slots found.\n\nSet up slots:\n  mkdir -p ${CREDS_DIR}/account-1\n  cp ~/.claude/.credentials.json ${CREDS_DIR}/account-1/`);
+      return;
+    }
+    const active = activeSlotName();
+    const pad = Math.max(...slots.map(s => s.name.length), 4);
+
+    console.log(`\n  ${"SLOT".padEnd(pad)}  ${"IDENTITY".padEnd(30)}  ${"EXPIRES".padEnd(19)}  STATUS`);
+    console.log(`  ${"─".repeat(pad)}  ${"─".repeat(30)}  ${"─".repeat(19)}  ──────`);
+    for (const slot of slots) {
+      const meta = readCredsMeta(slot.path);
+      const isActive = slot.name === active;
+      const marker = isActive ? "● " : "  ";
+      const statusParts: string[] = [];
+      if (isActive) statusParts.push("\x1b[32mactive\x1b[0m");
+      if (meta.expired) statusParts.push("\x1b[31mexpired\x1b[0m");
+      else statusParts.push("\x1b[32mvalid\x1b[0m");
+      console.log(`${marker}${slot.name.padEnd(pad)}  ${meta.email.padEnd(30)}  ${meta.expires}  ${statusParts.join(" ")}`);
+    }
+    console.log();
+    return;
+  }
+
+  if (sub === "use" || sub === "promote") {
+    const slotName = args[1];
+    if (!slotName) { console.error("Usage: claudebox creds use <slot-name>"); process.exit(1); }
+
+    const slot = credsSlots().find(s => s.name === slotName);
+    if (!slot) { console.error(`Slot "${slotName}" not found. Run: claudebox creds list`); process.exit(1); }
+
+    const srcCreds = join(slot.path, ".credentials.json");
+    if (!existsSync(srcCreds)) { console.error(`No .credentials.json in slot "${slotName}"`); process.exit(1); }
+
+    // Back up current credentials to a slot if not already tracked
+    const active = activeSlotName();
+    if (active && active !== slotName) {
+      // Current creds are already in a slot, just switch
+      console.log(`  Deactivating: ${active}`);
+    } else if (!active && existsSync(CLAUDE_CREDS)) {
+      // Current creds aren't in any slot — save them
+      const backupName = `backup-${Date.now()}`;
+      const backupDir = join(CREDS_DIR, backupName);
+      mkdirSync(backupDir, { recursive: true });
+      writeFileSync(join(backupDir, ".credentials.json"), readFileSync(CLAUDE_CREDS));
+      chmodSync(join(backupDir, ".credentials.json"), 0o600);
+      console.log(`  Backed up current credentials → ${backupName}`);
+    }
+
+    // Copy slot credentials to active location
+    writeFileSync(CLAUDE_CREDS, readFileSync(srcCreds));
+    chmodSync(CLAUDE_CREDS, 0o600);
+
+    // Also copy .claude.json if the slot has one
+    const srcClaudeJson = join(slot.path, ".claude.json");
+    const dstClaudeJson = join(homedir(), ".claude.json");
+    if (existsSync(srcClaudeJson)) {
+      writeFileSync(dstClaudeJson, readFileSync(srcClaudeJson));
+      chmodSync(dstClaudeJson, 0o600);
+    }
+
+    const meta = readCredsMeta(slot.path);
+    console.log(`  ● Activated: ${slotName} (${meta.email})`);
+    if (meta.expired) console.log(`  ⚠ Token is expired — Claude will refresh on next use`);
+    console.log();
+    return;
+  }
+
+  if (sub === "save") {
+    const slotName = args[1];
+    if (!slotName) { console.error("Usage: claudebox creds save <slot-name>"); process.exit(1); }
+    if (!/^[a-z0-9][a-z0-9._-]*$/i.test(slotName)) { console.error("Invalid slot name (use alphanumeric, hyphens, dots)"); process.exit(1); }
+
+    const slotDir = join(CREDS_DIR, slotName);
+    mkdirSync(slotDir, { recursive: true });
+
+    if (!existsSync(CLAUDE_CREDS)) { console.error("No active credentials to save"); process.exit(1); }
+
+    writeFileSync(join(slotDir, ".credentials.json"), readFileSync(CLAUDE_CREDS));
+    chmodSync(join(slotDir, ".credentials.json"), 0o600);
+
+    // Also save .claude.json for the account identity
+    const claudeJson = join(homedir(), ".claude.json");
+    if (existsSync(claudeJson)) {
+      writeFileSync(join(slotDir, ".claude.json"), readFileSync(claudeJson));
+      chmodSync(join(slotDir, ".claude.json"), 0o600);
+    }
+
+    const meta = readCredsMeta(slotDir);
+    console.log(`  Saved current credentials → ${slotName}`);
+    console.log();
+    return;
+  }
+
+  if (sub === "rm" || sub === "remove") {
+    const slotName = args[1];
+    if (!slotName) { console.error("Usage: claudebox creds rm <slot-name>"); process.exit(1); }
+
+    const slot = credsSlots().find(s => s.name === slotName);
+    if (!slot) { console.error(`Slot "${slotName}" not found`); process.exit(1); }
+
+    const active = activeSlotName();
+    if (active === slotName) { console.error(`Cannot remove active slot. Switch first: claudebox creds use <other>`); process.exit(1); }
+
+    const { rmSync } = await import("fs");
+    rmSync(slot.path, { recursive: true });
+    console.log(`  Removed slot: ${slotName}`);
+    console.log();
+    return;
+  }
+
+  console.log(`claudebox creds — manage Claude OAuth credentials
+
+Usage:
+  claudebox creds                    List all credential slots
+  claudebox creds list               List all credential slots
+  claudebox creds use <slot>         Activate a credential slot
+  claudebox creds save <slot>        Save current credentials to a slot
+  claudebox creds rm <slot>          Remove a credential slot
+
+Slots are stored in: ${CREDS_DIR}/
+Each slot is a directory containing .credentials.json (and optionally .claude.json).
+`);
+}
+
 // ── Main ────────────────────────────────────────────────────────
 
 const [command, ...args] = process.argv.slice(2);
@@ -1774,6 +1961,10 @@ switch (command) {
   case "register":
     registerCommand(args).catch(e => { console.error(e.message); process.exit(1); });
     break;
+  case "creds":
+  case "credentials":
+    credsCommand(args).catch(e => { console.error(e.message); process.exit(1); });
+    break;
   default:
     console.log(`ClaudeBox CLI
 
@@ -1795,6 +1986,7 @@ Usage:
   claudebox register --user-id <id> --server-url <url>   Register for DM routing
   claudebox status                                       Health check / local summary
   claudebox profiles                                     List available profiles
+  claudebox creds [list|use|save|rm]                      Manage OAuth credentials
   claudebox config <key> [value]                         Get/set config
 
 Sessions are identified by name (session/<name>) or worktree ID.

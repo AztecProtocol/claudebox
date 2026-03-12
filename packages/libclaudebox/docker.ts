@@ -14,6 +14,7 @@ import {
   buildLogUrl,
 } from "./config.ts";
 import { incrActiveSessions, decrActiveSessions } from "./runtime.ts";
+import { updateGithubOnCompletion } from "./github-completion.ts";
 
 // Token env vars — sourced from libcreds-host (the only package that reads token env vars).
 import { getContainerTokens } from "../libcreds-host/index.ts";
@@ -124,6 +125,21 @@ export class DockerService {
     const wt = store.getOrCreateWorktree(opts.worktreeId);
     const { worktreeId, workspaceDir, claudeProjectsDir } = wt;
 
+    // Kill any leftover containers from previous runs on this worktree
+    const prevSessions = store.listByWorktree(worktreeId);
+    for (const prev of prevSessions) {
+      if (prev.status === "running" && prev._log_id) {
+        const prevContainer = prev.container || `claudebox-${prev._log_id}`;
+        const prevSidecar = prev.sidecar || `claudebox-sidecar-${prev._log_id}`;
+        const prevNetwork = `claudebox-net-${prev._log_id}`;
+        this.stopAndRemoveSync(prevContainer, 3);
+        this.stopAndRemoveSync(prevSidecar, 3);
+        this.removeNetworkSync(prevNetwork);
+        store.update(prev._log_id, { status: "cancelled", exit_code: 137, finished: new Date().toISOString() });
+        console.log(`[DOCKER] Cleaned up previous run ${prev._log_id} on worktree ${worktreeId}`);
+      }
+    }
+
     const logId = store.nextSessionLogId(worktreeId);
     const sessionUuid = randomUUID();
     const networkName = `claudebox-net-${logId}`;
@@ -180,6 +196,9 @@ export class DockerService {
       slack_channel_name: opts.slackChannelName || "",
       slack_thread_ts: opts.slackThreadTs || "",
       slack_message_ts: opts.slackMessageTs || "",
+      run_comment_id: opts.runCommentId || "",
+      comment_id: opts.commentId || "",
+      repo: basename(REPO_DIR) === "aztec-packages" ? "AztecProtocol/aztec-packages" : "",
       claude_session_id: sessionUuid,
       worktree_id: worktreeId,
       base_branch: baseBranch,
@@ -221,6 +240,15 @@ export class DockerService {
         `${CLAUDEBOX_DIR}:${CONTAINER_HOME}/.claudebox:rw`,
       ];
       sidecarBinds.push(`${join(REPO_DIR, ".git")}:/reference-repo/.git:ro`);
+      // Mount yarn-project node_modules + prettier config for format tools
+      const ypNodeModules = join(REPO_DIR, "yarn-project/node_modules");
+      if (existsSync(ypNodeModules)) {
+        sidecarBinds.push(`${ypNodeModules}:/reference-repo/yarn-project/node_modules:ro`);
+      }
+      const prettierConfig = join(REPO_DIR, "yarn-project/foundation/.prettierrc.json");
+      if (existsSync(prettierConfig)) {
+        sidecarBinds.push(`${prettierConfig}:/reference-repo/yarn-project/foundation/.prettierrc.json:ro`);
+      }
 
       // Server URL for sidecar → server communication (internal port, not exposed to internet)
       const serverUrl = `http://host.docker.internal:${INTERNAL_PORT}`;
@@ -302,6 +330,7 @@ export class DockerService {
         "-e", `PARENT_LOG_ID=${logId}`,
         "-e", `CLAUDEBOX_PROFILE=${profileDir}`,
         "-e", `CLAUDEBOX_MODEL=${opts.model || ""}`,
+        "-e", `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1`,
       ];
       // Pass tag categories to sidecar
       const tagCats = profile.tagCategories || [];
@@ -418,6 +447,9 @@ export class DockerService {
             writeFileSync(metaPath, JSON.stringify(m, null, 2));
           } catch {}
 
+          // Update GitHub PR comment on completion
+          updateGithubOnCompletion(store, logId, worktreeId, exitCode)
+            .catch((e) => console.warn(`[DOCKER] GitHub completion update failed: ${e.message}`));
 
           resolve(exitCode);
         });
@@ -428,6 +460,168 @@ export class DockerService {
       cleanup();
       store.update(logId, { status: "error", error: e.message, finished: new Date().toISOString() });
       return 1;
+    }
+  }
+
+  // Set of logIds being monitored by recoverRunningSessions — prevents reconcile
+  // from interfering with sessions we've already re-attached to.
+  private recoveredSessions = new Set<string>();
+
+  /** Check if a session is being monitored by recovery (for reconcile to skip). */
+  isRecovered(logId: string): boolean {
+    return this.recoveredSessions.has(logId);
+  }
+
+  /**
+   * Recover sessions that are still running in Docker after a server restart.
+   * Re-attaches session streamers and exit monitors for orphaned containers.
+   */
+  async recoverRunningSessions(store: WorktreeStore): Promise<void> {
+    const all = store.listAll();
+    const running = all.filter(s => s.status === "running" && s.container);
+
+    if (!running.length) {
+      console.log("[RECOVER] No running sessions to recover.");
+      return;
+    }
+
+    console.log(`[RECOVER] Found ${running.length} session(s) marked running — checking containers...`);
+
+    for (const session of running) {
+      const logId = session._log_id!;
+      const containerName = session.container!;
+      const worktreeId = session.worktree_id;
+
+      try {
+        // Check if the Docker container is actually still running
+        const { running: isRunning, exitCode } = this.inspectContainerSync(containerName);
+
+        if (!isRunning) {
+          // Container already exited — just update the session status
+          const sidecarName = session.sidecar || `claudebox-sidecar-${logId}`;
+          const networkName = `claudebox-net-${logId}`;
+          this.forceRemoveSync(containerName);
+          this.forceRemoveSync(sidecarName);
+          this.removeNetworkSync(networkName);
+          store.update(logId, {
+            status: "completed",
+            exit_code: exitCode,
+            finished: new Date().toISOString(),
+          });
+          console.log(`[RECOVER] ${logId}: container already exited (code=${exitCode}) — marked completed`);
+          continue;
+        }
+
+        // Container is still running — re-attach!
+        console.log(`[RECOVER] ${logId}: container ${containerName} still running — re-attaching...`);
+        incrActiveSessions();
+        this.recoveredSessions.add(logId);
+
+        // Shared exit handler — used by both with-worktree and without-worktree paths
+        const onContainerExit = (code: number, streamer?: SessionStreamer, cacheLogProc?: ChildProcess | null) => {
+          this.recoveredSessions.delete(logId);
+          decrActiveSessions();
+          console.log(`[RECOVER] Container ${containerName} exited: ${code}`);
+
+          // Stop streamer and cache_log
+          if (streamer) streamer.stop();
+          if (cacheLogProc) setTimeout(() => { cacheLogProc.stdin?.end(); }, 500);
+
+          // Clean up containers/network
+          const sidecarName = session.sidecar || `claudebox-sidecar-${logId}`;
+          const networkName = `claudebox-net-${logId}`;
+          this.forceRemoveSync(containerName);
+          this.stopAndRemoveSync(sidecarName, 5);
+          this.removeNetworkSync(networkName);
+
+          // Only update status if not already cancelled (e.g. by cancelSession)
+          const current = store.get(logId);
+          if (current && current.status === "running") {
+            store.update(logId, {
+              status: "completed",
+              finished: new Date().toISOString(),
+              exit_code: code,
+            });
+          }
+
+          // Record activity line count
+          if (worktreeId) {
+            try {
+              const actLines = store.readActivity(worktreeId).length;
+              const metaPath = join(store.worktreesDir, worktreeId, "meta.json");
+              const m = store.getWorktreeMeta(worktreeId);
+              m.activity_synced_lines = actLines;
+              writeFileSync(metaPath, JSON.stringify(m, null, 2));
+            } catch {}
+
+            // Update GitHub PR comment on completion
+            updateGithubOnCompletion(store, logId, worktreeId, code)
+              .catch((e) => console.warn(`[RECOVER] GitHub completion update failed: ${e.message}`));
+          }
+        };
+
+        // Set up streamer + exit monitor
+        let streamer: SessionStreamer | undefined;
+        let cacheLogProc: ChildProcess | null = null;
+
+        if (worktreeId) {
+          try {
+            const workspaceDir = join(store.worktreesDir, worktreeId, "workspace");
+            const claudeProjectsDir = join(store.worktreesDir, worktreeId, "claude-projects");
+            const activityLog = join(workspaceDir, "activity.jsonl");
+
+            // Start cache_log if available
+            const cacheLogBin = join(REPO_DIR, "ci3", "cache_log");
+            if (existsSync(cacheLogBin)) {
+              cacheLogProc = spawn(cacheLogBin, ["claudebox", logId], {
+                stdio: ["pipe", "inherit", "inherit"],
+                env: { ...process.env, DUP: "1" },
+              });
+            }
+
+            streamer = new SessionStreamer({
+              projectDir: claudeProjectsDir,
+              activityLog,
+              repoDir: REPO_DIR,
+              parentLogId: logId,
+              onOutput: (text) => { cacheLogProc?.stdin?.write(text); },
+            });
+            streamer.start().catch(() => {});
+          } catch (e: any) {
+            console.warn(`[RECOVER] ${logId}: failed to start streamer: ${e.message}`);
+          }
+        }
+
+        // Spawn `docker wait` to monitor container exit
+        // Works even if container already exited between inspect and now — returns immediately
+        const capturedStreamer = streamer;
+        const capturedCacheLog = cacheLogProc;
+        let exited = false;
+        const waiter = spawn("docker", ["wait", containerName], {
+          stdio: ["ignore", "pipe", "ignore"],
+        });
+
+        // Accumulate stdout (docker wait may deliver exit code in chunks)
+        // and parse on close to avoid double-firing onContainerExit
+        let waiterBuf = "";
+        waiter.stdout?.on("data", (d: Buffer) => { waiterBuf += d.toString(); });
+        waiter.on("close", () => {
+          if (exited) return;
+          exited = true;
+          const code = parseInt(waiterBuf.trim(), 10) || 1;
+          onContainerExit(code, capturedStreamer, capturedCacheLog);
+        });
+
+        waiter.on("error", () => {
+          if (exited) return;
+          exited = true;
+          onContainerExit(1, capturedStreamer, capturedCacheLog);
+        });
+
+        console.log(`[RECOVER] ${logId}: re-attached streamer + exit monitor`);
+      } catch (e: any) {
+        console.warn(`[RECOVER] ${logId}: error during recovery: ${e.message}`);
+      }
     }
   }
 

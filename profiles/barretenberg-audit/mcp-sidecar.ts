@@ -401,58 +401,6 @@ crypto-2nd-pass is ONLY valid when a DIFFERENT session already reviewed the file
       }
     });
 
-  // ── update_meta_issue ──────────────────────────────────────────
-  server.tool("update_meta_issue",
-    `Create or update an audit tracking meta-issue. The body you provide is used verbatim — you compose the full markdown.
-
-Two scopes:
-- **session**: Tracks THIS session's work. Label: meta/session/<id>.
-- **module**: Cross-session tracker for a module. Label: meta/module/<name>. Updated incrementally.
-
-For module meta-issues: read the existing issue body first (via github_api), merge your new findings, then call this with the combined body.
-
-See issue #77 for the gold-standard format — tables for findings, gists, PRs, coverage; terse status line; prioritized next steps.`,
-    {
-      scope: z.enum(["session", "module"]).describe("session = this session; module = cross-session module tracker"),
-      module_name: z.string().optional().describe("Required for scope=module. e.g. 'ecc', 'solidity-verifier'"),
-      title: z.string().describe("Issue title, e.g. '[AUDIT META] ECC Module — Tracking Issue'"),
-      body: z.string().describe("Full issue body (Markdown). You compose this — include findings table, gist links, coverage, next steps."),
-      labels: z.array(z.string()).optional().describe("Extra labels beyond the auto-applied meta label"),
-    },
-    async ({ scope, module_name, title, body, labels }) => {
-      if (scope === "module" && !module_name) return { content: [{ type: "text", text: "module_name required for scope=module" }], isError: true };
-
-      const creds = getCreds();
-      const metaLabel = scope === "session"
-        ? `meta/session/${SESSION_META.log_id || WORKTREE_ID}`
-        : `meta/module/${module_name}`;
-
-      try {
-        await Promise.all([
-          creds.github.createLabel(REPO, { name: metaLabel, color: scope === "session" ? "0e8a16" : "1d76db", description: "Audit meta-issue" }).catch(() => {}),
-          creds.github.createLabel(REPO, { name: "meta-issue", color: "c5def5", description: "Audit meta-issue" }).catch(() => {}),
-        ]);
-
-        const allLabels = [metaLabel, "meta-issue", ...(labels || [])];
-        const existing = await creds.github.listIssues(REPO, { labels: metaLabel, state: "open", per_page: "1" });
-
-        if (existing.length && existing[0]?.number) {
-          const num = existing[0].number;
-          await creds.github.updateIssue(REPO, num, { title, body });
-          logActivity("artifact", `Updated meta #${num} — ${existing[0].html_url}`);
-          return { content: [{ type: "text", text: `Updated #${num}: ${existing[0].html_url}` }] };
-        } else {
-          const issue = await creds.github.createIssue(REPO, { title, body, labels: allLabels });
-          logActivity("artifact", `Created meta #${issue.number} — ${issue.html_url}`);
-          otherArtifacts.push(`- [Meta #${issue.number}](${issue.html_url})`);
-          await updateRootComment();
-          return { content: [{ type: "text", text: `Created #${issue.number}: ${issue.html_url}` }] };
-        }
-      } catch (e: any) {
-        return { content: [{ type: "text", text: `update_meta_issue: ${sanitizeError(e.message)}` }], isError: true };
-      }
-    });
-
   // ── create_external_pr — push to upstream barretenberg ──────────
   server.tool("create_external_pr",
     `Create a PR on the UPSTREAM repo (AztecProtocol/barretenberg), not the audit fork.

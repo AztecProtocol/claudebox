@@ -102,7 +102,7 @@ export function truncateForSlack(text: string, maxLen = 600): string {
 function buildArtifactsSlack(): string {
   const prLinks: string[] = [];
   for (const [num, pr] of trackedPRs) {
-    prLinks.push(`<${pr.url}|#${num}>`);
+    prLinks.push(`<${pr.url}|PR #${num}>`);
   }
   const lines: string[] = [];
   if (prLinks.length) lines.push(prLinks.join(" "));

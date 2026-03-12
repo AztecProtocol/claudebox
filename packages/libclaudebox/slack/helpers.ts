@@ -61,10 +61,10 @@ function extractArtifactLinks(artifacts: { text: string }[]): string[] {
     seenUrls.add(url);
 
     const prMatch = url.match(/\/pull\/(\d+)/);
-    if (prMatch) { linkParts.push(`<${url}|#${prMatch[1]}>`); continue; }
+    if (prMatch) { linkParts.push(`<${url}|PR #${prMatch[1]}>`); continue; }
     if (url.includes("gist.github")) { linkParts.push(`<${url}|gist>`); continue; }
     const issueMatch = url.match(/\/issues\/(\d+)/);
-    if (issueMatch) { linkParts.push(`<${url}|#${issueMatch[1]}>`); continue; }
+    if (issueMatch) { linkParts.push(`<${url}|Issue #${issueMatch[1]}>`); continue; }
     linkParts.push(`<${url}|link>`);
   }
   return linkParts;
@@ -95,10 +95,26 @@ export function buildSlackStatusFromActivity(
   const artifacts = activity.filter(a => a.type === "artifact" && (!currentLogId || !a.log_id || a.log_id === currentLogId));
   const linkParts = extractArtifactLinks(artifacts);
 
-  // Footer: artifacts + status link + status
+  // Footer: artifacts + status link + elapsed + status
   const footer: string[] = [];
   if (linkParts.length) footer.push(linkParts.join(" \u2022 "));
-  if (worktreeId) footer.push(`<${sessionUrl(worktreeId)}|status>`);
+  // Status link — include ?run=N when we know the run sequence
+  if (worktreeId) {
+    const seq = logId?.match(/-(\d+)$/)?.[1];
+    const url = sessionUrl(worktreeId) + (seq ? `?run=${seq}` : "");
+    footer.push(`<${url}|status>`);
+  }
+  // Elapsed time scoped to current run (not entire worktree lifetime)
+  const runActivity = currentLogId ? activity.filter(a => a.log_id === currentLogId) : activity;
+  const firstTs = runActivity.length > 0 ? runActivity[0].ts : "";
+  if (firstTs) {
+    const ms = Date.now() - new Date(firstTs).getTime();
+    if (ms > 0) {
+      const mins = Math.floor(ms / 60000);
+      const elapsed = mins < 1 ? "<1m" : mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h${mins % 60}m`;
+      footer.push(elapsed);
+    }
+  }
   footer.push(`_${status}_`);
   parts.push(footer.join("  \u2502  "));
 

@@ -1,10 +1,11 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
 import { SignJWT, jwtVerify, type JWTPayload } from "jose";
-import { API_SECRET, SESSION_PAGE_USER, SESSION_PAGE_PASS, MAX_CONCURRENT, DEFAULT_BASE_BRANCH } from "./config.ts";
+import { createHmac, timingSafeEqual } from "crypto";
+import { API_SECRET, SESSION_PAGE_USER, SESSION_PAGE_PASS, MAX_CONCURRENT, DEFAULT_BASE_BRANCH, GITHUB_WEBHOOK_SECRET } from "./config.ts";
 import { getActiveSessions, getChannelBranches } from "./runtime.ts";
 import { getHostCreds } from "../libcreds-host/index.ts";
 import { dmAuthor } from "../libcreds-host/slack.ts";
-import { existsSync, readFileSync, readdirSync, statSync, watch, mkdirSync } from "fs";
+import { existsSync, readFileSync, readdirSync, statSync, watch, mkdirSync, openSync, readSync, fstatSync, closeSync } from "fs";
 import { join } from "path";
 import type { WorktreeStore } from "./worktree-store.ts";
 import type { DockerService } from "./docker.ts";
@@ -128,6 +129,27 @@ function getSlackChannelInfo(channelId: string): SlackChannelInfo | null {
   return null; // unknown channel — no info
 }
 
+/** Resolve channel info via Slack API and cache it. */
+async function resolveSlackChannelInfo(channelId: string): Promise<SlackChannelInfo | null> {
+  if (channelInfoCache.has(channelId)) return channelInfoCache.get(channelId)!;
+  if (channelId.startsWith("D")) { const info = { name: "", isDm: true }; channelInfoCache.set(channelId, info); return info; }
+  if (!SLACK_BOT_TOKEN || !channelId) return null;
+  try {
+    const resp = await fetch(`https://slack.com/api/conversations.info?channel=${channelId}`, {
+      headers: { "Authorization": `Bearer ${SLACK_BOT_TOKEN}` },
+    });
+    const data = await resp.json() as any;
+    if (data.ok) {
+      const ch = data.channel || {};
+      const isDm = !!ch.is_im || !!ch.is_mpim;
+      const info: SlackChannelInfo = { name: ch.name || "", isDm };
+      channelInfoCache.set(channelId, info);
+      return info;
+    }
+  } catch {}
+  return null;
+}
+
 /** Strip "Slack thread context..." suffix from prompts for display */
 function stripSlackContext(prompt: string): string {
   // Match any variant: "Slack thread context:", "Slack thread context (recent):", etc.
@@ -171,10 +193,10 @@ async function buildDashboardData(store: WorktreeStore, profileFilter?: string):
     if (channelId) channelIds.add(channelId);
   }
   const channelInfoMap = new Map<string, SlackChannelInfo>();
-  for (const id of channelIds) {
-    const info = getSlackChannelInfo(id);
+  await Promise.all([...channelIds].map(async (id) => {
+    const info = await resolveSlackChannelInfo(id);
     if (info) channelInfoMap.set(id, info);
-  }
+  }));
 
   // Build flat workspace list
   const workspaces: WorkspaceCard[] = [];
@@ -196,8 +218,39 @@ async function buildDashboardData(store: WorktreeStore, profileFilter?: string):
     if (slackChannel && slackThread) {
       origin = "slack";
       threadKey = `${slackChannel}:${slackThread}`;
+    } else if (link && /\.slack\.com\//.test(link)) {
+      origin = "slack";
     } else if (link) {
       origin = "github";
+    }
+
+    // Extract artifacts, latest reply, and last status text from activity
+    let lastReply = "";
+    let statusText = "";
+    const artifactMap = new Map<string, { type: string; text: string; url: string }>();
+    if (worktreeId) {
+      const activity = store.readActivity(worktreeId); // newest first
+      for (const a of activity) {
+        if (a.type === "response" && !lastReply) {
+          lastReply = a.text.length > 300 ? a.text.slice(0, 300) + "..." : a.text;
+        }
+        if (a.type === "status" && !statusText) {
+          statusText = a.text.length > 120 ? a.text.slice(0, 120) + "..." : a.text;
+        }
+        if (a.type === "artifact") {
+          const urlMatch = a.text.match(/(https?:\/\/[^\s)>\]]+)/);
+          if (urlMatch) {
+            const url = urlMatch[1].replace(/[.,;:!?]+$/, '');
+            if (!artifactMap.has(url)) {
+              const prMatch = url.match(/\/pull\/(\d+)/);
+              const issueMatch = url.match(/\/issues\/(\d+)/);
+              const type = url.includes("gist.github") ? "gist" : prMatch ? "pr" : issueMatch ? "issue" : "link";
+              const label = prMatch ? `PR #${prMatch[1]}` : issueMatch ? `Issue #${issueMatch[1]}` : type === "gist" ? "gist" : "link";
+              artifactMap.set(url, { type, text: label, url });
+            }
+          }
+        }
+      }
     }
 
     workspaces.push({
@@ -219,6 +272,9 @@ async function buildDashboardData(store: WorktreeStore, profileFilter?: string):
       slackChannel: slackChannel || undefined,
       slackThreadTs: slackThread || undefined,
       link: link || undefined,
+      statusText: statusText || undefined,
+      lastReply: lastReply || undefined,
+      artifacts: artifactMap.size > 0 ? [...artifactMap.values()] : undefined,
     });
   }
 
@@ -359,6 +415,111 @@ const routes: Route[] = [
           responded = true;
           console.error(`[HTTP] ${e.message}`); json(res, 500, { error: "internal error" });
         }
+      });
+    },
+  },
+
+  // POST /api/github/webhook — GitHub webhook for label-triggered reviews
+  {
+    method: "POST", pattern: /^\/api\/github\/webhook$/, auth: "none",
+    handler: async (req, res, _params, { store, docker }) => {
+      const event = req.headers["x-github-event"] as string;
+      const sig = req.headers["x-hub-signature-256"] as string;
+      const rawBody = await readBody(req);
+
+      // Verify HMAC signature
+      if (GITHUB_WEBHOOK_SECRET) {
+        if (!sig) { json(res, 401, { error: "missing signature" }); return; }
+        const expected = "sha256=" + createHmac("sha256", GITHUB_WEBHOOK_SECRET).update(rawBody).digest("hex");
+        if (!timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) {
+          json(res, 401, { error: "invalid signature" });
+          return;
+        }
+      }
+
+      // Only process pull_request labeled events
+      if (event !== "pull_request") { json(res, 200, { ignored: true, reason: `event=${event}` }); return; }
+
+      let payload: any;
+      try { payload = JSON.parse(rawBody); } catch { json(res, 400, { error: "invalid JSON" }); return; }
+
+      if (payload.action !== "labeled") { json(res, 200, { ignored: true, reason: `action=${payload.action}` }); return; }
+
+      const labelName = payload.label?.name;
+      if (labelName !== "claude-review") { json(res, 200, { ignored: true, reason: `label=${labelName}` }); return; }
+
+      const pr = payload.pull_request;
+      if (!pr) { json(res, 400, { error: "missing pull_request" }); return; }
+
+      const prNumber = pr.number;
+      const prTitle = pr.title || "";
+      const prAuthor = pr.user?.login || "unknown";
+      const prUrl = pr.html_url || `https://github.com/${payload.repository?.full_name}/pull/${prNumber}`;
+      const repo = payload.repository?.full_name || "AztecProtocol/aztec-packages";
+      const headRef = pr.head?.ref || "";
+
+      console.log(`[WEBHOOK] claude-review label on ${repo}#${prNumber} "${prTitle}" by ${prAuthor}`);
+
+      // Capacity check
+      if (getActiveSessions() >= MAX_CONCURRENT) {
+        json(res, 503, { error: "at capacity" });
+        return;
+      }
+
+      // Dedup: check if a session is already running for this PR
+      const prKey = prKeyFromUrl(prUrl);
+      if (prKey) {
+        const bound = store.getPrBinding(prKey);
+        if (bound) {
+          const prev = store.findByWorktreeId(bound);
+          if (prev?.status === "running") {
+            json(res, 409, { error: "review session already running for this PR" });
+            return;
+          }
+        }
+      }
+
+      const prompt = `Review PR #${prNumber}: ${prTitle}
+${prUrl}
+
+Author: ${prAuthor}
+Head branch: ${headRef}
+
+## Instructions
+
+1. Fetch and read the full PR diff, description, and all comments
+2. Read any linked or attached issues referenced in the PR body or comments
+3. For each changed file, read the FULL file to understand surrounding context
+4. Look at recent git history (last 20 commits) for the changed files to understand evolution
+5. Check CI status with ci_failures
+6. Do a thorough review — assume every line is suspect. Focus on non-obvious bugs:
+   - Edge cases (zero values, empty collections, overflow)
+   - Concurrency issues (races, missing locks, ordering assumptions)
+   - Security (missing validation, injection, unsafe patterns)
+   - Correctness (off-by-one, wrong operator, inverted conditions)
+   - Compatibility (breaking changes, API drift, constant sync)
+7. If you find a clear, direct fix, create a PR with it
+8. When done, call manage_review_labels(pr_number=${prNumber}) to swap labels
+9. Create a gist with your full review
+10. Call respond_to_user with a terse summary + gist link`;
+
+      let responded = false;
+      docker.runContainerSession({
+        prompt,
+        userName: `review/${prAuthor}`,
+        link: prUrl,
+        targetRef: `origin/${headRef}`,
+        profile: "review",
+      }, store, undefined, (logUrl, worktreeId) => {
+        if (prKey) store.bindPr(prKey, worktreeId);
+        if (!responded) {
+          responded = true;
+          console.log(`[WEBHOOK] Review session started: ${logUrl}`);
+          json(res, 202, { ok: true, log_url: logUrl, worktree_id: worktreeId, pr: prNumber });
+        }
+      }).catch((e) => {
+        console.error(`[WEBHOOK] Session error: ${e}`);
+        if (!responded) { responded = true; json(res, 500, { error: "internal error" }); }
       });
     },
   },
@@ -576,7 +737,7 @@ const routes: Route[] = [
         user: session.user || "unknown",
         sessions: sessions.map(s => ({
           log_id: s._log_id, status: s.status, exit_code: s.exit_code,
-          started: s.started, prompt: s.prompt, user: s.user, log_url: s.log_url,
+          started: s.started, prompt: s.prompt, user: s.user, log_url: s.log_url, link: s.link || "",
         })),
       });
     },
@@ -598,34 +759,78 @@ const routes: Route[] = [
         "X-Accel-Buffering": "no",
       });
 
-      // Send current state as initial event
-      const activity = store.readActivity(worktreeId).reverse(); // oldest first
+      // Send current state as initial event — deduplicate entries caused by
+      // cumulative progress events in the session streamer (same type+text+log_id
+      // appearing many times within seconds). Uses last-seen timestamp per key;
+      // entries >30s apart with the same text are kept (legitimate repeated calls).
+      const rawActivity = store.readActivity(worktreeId).reverse(); // oldest first
+      const lastSeen = new Map<string, number>();
+      const activity = rawActivity.filter(e => {
+        const key = `${e.type}|${e.log_id || ""}|${(e.text || "").slice(0, 80)}`;
+        const ts = e.ts ? new Date(e.ts).getTime() : 0;
+        const prev = lastSeen.get(key);
+        lastSeen.set(key, ts);
+        if (prev !== undefined && ts && Math.abs(ts - prev) < 30_000) return false;
+        return true;
+      });
       const currentSession = store.findByWorktreeId(worktreeId);
+      let currentLogId = currentSession?._log_id || session._log_id || "";
       res.write(`data: ${JSON.stringify({ type: "init", activity, status: currentSession?.status || "unknown", exit_code: currentSession?.exit_code ?? null })}\n\n`);
 
-      let lineCount = activity.length;
       const activityPath = join(store.worktreesDir, worktreeId, "workspace", "activity.jsonl");
+      // Track byte offset for incremental reads (avoids re-reading entire file)
+      let byteOffset = 0;
+      let leftover = "";
+      try { if (existsSync(activityPath)) byteOffset = statSync(activityPath).size; } catch {}
+      let lastStatus = currentSession?.status || "unknown";
+      let lastExitCode = currentSession?.exit_code ?? null;
 
       // Poll for new lines (fs.watch is unreliable in Docker bind mounts)
       const poll = setInterval(() => {
         try {
-          if (!existsSync(activityPath)) return;
-          const lines = readFileSync(activityPath, "utf-8").split("\n").filter(l => l.trim());
-          if (lines.length > lineCount) {
-            const newEntries = lines.slice(lineCount).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
-            for (const entry of newEntries) {
-              res.write(`data: ${JSON.stringify({ type: "activity", entry })}\n\n`);
-              // Auto-set workspace name from Claude's set_workspace_name tool
-              if (entry.type === "name" && entry.text && worktreeId) {
-                store.setWorktreeName(worktreeId, entry.text);
+          // Read new activity bytes incrementally
+          if (existsSync(activityPath)) {
+            const fileSize = statSync(activityPath).size;
+            if (fileSize > byteOffset) {
+              const fd = openSync(activityPath, "r");
+              try {
+                const buf = Buffer.alloc(fileSize - byteOffset);
+                readSync(fd, buf, 0, buf.length, byteOffset);
+                byteOffset = fileSize;
+                const text = leftover + buf.toString("utf-8");
+                const parts = text.split("\n");
+                leftover = parts.pop() ?? "";
+                for (const line of parts) {
+                  if (!line.trim()) continue;
+                  try {
+                    const entry = JSON.parse(line);
+                    res.write(`data: ${JSON.stringify({ type: "activity", entry })}\n\n`);
+                    if (entry.type === "name" && entry.text && worktreeId) {
+                      store.setWorktreeName(worktreeId, entry.text);
+                    }
+                  } catch {}
+                }
+              } finally { closeSync(fd); }
+            }
+          }
+
+          // Check status — read single session file instead of listing all
+          // Also detect if a new session started (e.g., resume)
+          const latest = store.get(currentLogId);
+          if (latest) {
+            const s = latest.status || "unknown";
+            const ec = latest.exit_code ?? null;
+            if (s !== lastStatus || ec !== lastExitCode) {
+              lastStatus = s; lastExitCode = ec;
+              res.write(`data: ${JSON.stringify({ type: "status", status: s, exit_code: ec })}\n\n`);
+              // If this session ended, check for a newer one (resume)
+              if (s !== "running") {
+                const newer = store.findByWorktreeId(worktreeId);
+                if (newer?._log_id && newer._log_id !== currentLogId) {
+                  currentLogId = newer._log_id;
+                }
               }
             }
-            lineCount = lines.length;
-          }
-          // Also check for status changes
-          const latest = store.findByWorktreeId(worktreeId);
-          if (latest) {
-            res.write(`data: ${JSON.stringify({ type: "status", status: latest.status || "unknown", exit_code: latest.exit_code ?? null })}\n\n`);
           }
         } catch {}
       }, 1500);
@@ -1087,12 +1292,12 @@ const routes: Route[] = [
       for (const s of all) {
         if (s.slack_channel) channelIds.add(s.slack_channel);
       }
-      // Resolve channel names
+      // Resolve channel names (async via Slack API)
       const channelNameMap = new Map<string, SlackChannelInfo>();
-      for (const id of channelIds) {
-        const info = getSlackChannelInfo(id);
+      await Promise.all([...channelIds].map(async (id) => {
+        const info = await resolveSlackChannelInfo(id);
         if (info) channelNameMap.set(id, info);
-      }
+      }));
 
       // Group by worktree first (like buildDashboardData), then enrich
       const worktreeMap = new Map<string, RunMeta[]>();
@@ -1129,7 +1334,7 @@ const routes: Route[] = [
                   const prMatch = url.match(/\/pull\/(\d+)/);
                   const issueMatch = url.match(/\/issues\/(\d+)/);
                   const type = url.includes("gist.github") ? "gist" : prMatch ? "pr" : issueMatch ? "issue" : "link";
-                  const label = prMatch ? `#${prMatch[1]}` : issueMatch ? `#${issueMatch[1]}` : type === "gist" ? "gist" : "link";
+                  const label = prMatch ? `PR #${prMatch[1]}` : issueMatch ? `Issue #${issueMatch[1]}` : type === "gist" ? "gist" : "link";
                   artifactMap.set(url, { type, text: label, url });
                 }
               }
@@ -1316,16 +1521,26 @@ const routes: Route[] = [
   // ── Internal API: Root comment update (sidecar → server) ─────
   {
     method: "POST", pattern: /^\/api\/internal\/comment$/, auth: "api", internal: true,
-    handler: async (req, res) => {
+    handler: async (req, res, _params, { store }) => {
       let body: any;
       try { body = JSON.parse(await readBody(req)); }
       catch { json(res, 400, { error: "invalid JSON" }); return; }
 
-      const { status, sections, trackedPRs, otherArtifacts, session } = body;
+      const { status, sections, trackedPRs, otherArtifacts, session: sidecarSession } = body;
       const results: string[] = [];
 
+      // Enrich session info from the store — sidecar doesn't have Slack/GitHub metadata
+      const logId = sidecarSession?.log_id || "";
+      const storedSession = logId ? store.get(logId) : null;
+      const session = { ...sidecarSession, ...storedSession };
+
+      const worktreeId = session?.worktree_id;
+      const host = session?.host || "claudebox.work";
+      const runSeq = session?.log_id?.match(/-(\d+)$/)?.[1] || "";
+      const baseUrl = worktreeId ? `https://${host}/s/${worktreeId}${runSeq ? `?run=${runSeq}` : ""}` : "";
+
       // Build Slack text from sections
-      const buildSlackTextFromSections = () => {
+      const buildSlackTextFromSections = (elapsedStr?: string) => {
         const parts: string[] = [];
         if (sections?.response) {
           parts.push(sections.response.length > 600 ? sections.response.slice(0, 600) + "…" : sections.response);
@@ -1333,32 +1548,39 @@ const routes: Route[] = [
           parts.push(status.length > 600 ? status.slice(0, 600) + "…" : status);
         }
         const footer: string[] = [];
-        const prLinks = (trackedPRs || []).map((pr: any) => `<${pr.url}|#${pr.num}>`);
+        const prLinks = (trackedPRs || []).map((pr: any) => `<${pr.url}|PR #${pr.num}>`);
         if (prLinks.length) footer.push(prLinks.join(" "));
-        const worktreeId = session?.worktree_id;
-        const host = session?.host || "claudebox.work";
-        if (worktreeId) footer.push(`<https://${host}/s/${worktreeId}|status>`);
+        if (baseUrl) footer.push(`<${baseUrl}|status>`);
+        if (elapsedStr) footer.push(elapsedStr);
         if (footer.length) parts.push(footer.join("  \u2502  "));
         return parts.join("\n");
       };
 
+      // Elapsed time since session started
+      const elapsed = (() => {
+        const started = session?.started;
+        if (!started) return "";
+        const ms = Date.now() - new Date(started).getTime();
+        if (ms < 0) return "";
+        const mins = Math.floor(ms / 60000);
+        if (mins < 1) return "<1m";
+        if (mins < 60) return `${mins}m`;
+        return `${Math.floor(mins / 60)}h${mins % 60}m`;
+      })();
+
       // Build GitHub body from sections
+      const currentSeq = runSeq;
       const buildGhBodyFromSections = () => {
         const lines: string[] = [];
-        const worktreeId = session?.worktree_id;
-        const host = session?.host || "claudebox.work";
-        const logUrl = session?.log_url || "";
-        const links: string[] = [];
-        if (worktreeId) links.push(`[Live status](https://${host}/s/${worktreeId})`);
-        if (logUrl) links.push(`[Log](${logUrl})`);
-        if (links.length) lines.push(links.join(" · "));
-        if (sections?.status) { lines.push(""); lines.push(`**Status:** ${sections.status}`); }
-        if (sections?.response) { lines.push(""); lines.push(`**Response:** ${sections.response}`); }
+        const elapsedSuffix = elapsed ? ` (${elapsed})` : "";
+        lines.push(`\u23F3 **Run #${currentSeq || "?"}** — ${sections?.status || status || "running"}${elapsedSuffix}`);
+        if (baseUrl) lines.push(`[Live status](${baseUrl})`);
+        if (sections?.response) { lines.push(""); lines.push(sections.response); }
         const prLines = (trackedPRs || []).map((pr: any) => {
           const label = pr.action === "created" ? "Created" : "Updated";
-          return `- **${label}** [#${pr.num}: ${pr.title}](${pr.url})`;
+          return `- **${label}** [PR #${pr.num}: ${pr.title}](${pr.url})`;
         });
-        if (prLines.length) { lines.push(""); lines.push("**Pull Requests**"); lines.push(...prLines); }
+        if (prLines.length) { lines.push(""); lines.push(prLines.join("\n")); }
         if (otherArtifacts?.length) lines.push(...otherArtifacts);
         return lines.join("\n");
       };
@@ -1367,7 +1589,7 @@ const routes: Route[] = [
       if (session?.slack_channel && session?.slack_message_ts) {
         try {
           const slackCreds = getHostCreds({ slackChannel: session.slack_channel, slackMessageTs: session.slack_message_ts });
-          const d = await slackCreds.slack.updateMessage(buildSlackTextFromSections(), { channel: session.slack_channel, ts: session.slack_message_ts });
+          const d = await slackCreds.slack.updateMessage(buildSlackTextFromSections(elapsed), { channel: session.slack_channel, ts: session.slack_message_ts });
           results.push(d?.ok ? "Slack updated" : `Slack: ${d?.error || "unknown"}`);
         } catch (e: any) { results.push(`Slack: ${e.message}`); }
       }
@@ -1387,12 +1609,16 @@ const routes: Route[] = [
   // ── Internal API: DM author on completion ─────────────────────
   {
     method: "POST", pattern: /^\/api\/internal\/dm$/, auth: "api", internal: true,
-    handler: async (req, res) => {
+    handler: async (req, res, _params, { store }) => {
       let body: any;
       try { body = JSON.parse(await readBody(req)); }
       catch { json(res, 400, { error: "invalid JSON" }); return; }
 
-      const { status, trackedPRs, session } = body;
+      const { status, trackedPRs, session: sidecarSession } = body;
+      // Enrich with stored session data (sidecar lacks Slack metadata)
+      const logId = sidecarSession?.log_id || "";
+      const storedSession = logId ? store.get(logId) : null;
+      const session = { ...sidecarSession, ...storedSession };
       try {
         const result = await dmAuthor(session, status, trackedPRs);
         json(res, 200, result);
@@ -1430,18 +1656,47 @@ const routes: Route[] = [
 
       try {
         const { spawnSync } = await import("child_process");
-        const { join } = await import("path");
-        const repoDir = process.env.CLAUDE_REPO_DIR || join(process.env.HOME || "", "repo");
-        const ciSh = join(repoDir, "ci.sh");
-        const result = spawnSync("bash", ["-c", `cd "${repoDir}" && "${ciSh}" dlog "${key}"`], {
-          encoding: "utf-8", timeout: 30_000, stdio: ["pipe", "pipe", "pipe"],
+        const { gunzipSync } = await import("zlib");
+        const redisHost = process.env.CI_REDIS || "localhost";
+
+        // Direct redis GET — no shell, no ci.sh, no untrusted code
+        const result = spawnSync("redis-cli", ["--raw", "-h", redisHost, "GET", key], {
+          timeout: 15_000, maxBuffer: 50 * 1024 * 1024,
         });
         if (result.status !== 0) {
-          json(res, 502, { error: (result.stderr || "").trim().slice(0, 500) });
+          json(res, 502, { error: `redis-cli failed: ${(result.stderr || "").toString().trim().slice(0, 300)}`, key });
           return;
         }
-        // Strip ci.sh startup noise (Slack listener, PID lines)
-        let output = (result.stdout || "").replace(/^(?:Starting Slack listener\.\.\.\n|Started \(PID \d+\)\n)*/m, "");
+
+        let buf = result.stdout as Buffer;
+        // redis-cli --raw appends a trailing newline — strip it before length check
+        if (buf && buf.length > 0 && buf[buf.length - 1] === 0x0a) buf = buf.subarray(0, -1);
+
+        if (!buf || buf.length === 0) {
+          // Fallback: HTTP log server
+          const ciPassword = process.env.CI_PASSWORD;
+          if (ciPassword) {
+            const resp = await fetch(`http://ci.aztec-labs.com/${key}.txt`, {
+              headers: { "Authorization": `Basic ${Buffer.from(`aztec:${ciPassword}`).toString("base64")}` },
+            });
+            if (resp.ok) {
+              res.writeHead(200, { "Content-Type": "text/plain" });
+              res.end(await resp.text());
+              return;
+            }
+          }
+          json(res, 404, { error: "Key not found", key });
+          return;
+        }
+
+        // Decompress if gzipped (magic bytes 1f 8b)
+        let output: string;
+        if (buf[0] === 0x1f && buf[1] === 0x8b) {
+          output = gunzipSync(buf).toString("utf-8");
+        } else {
+          output = buf.toString("utf-8");
+        }
+
         res.writeHead(200, { "Content-Type": "text/plain" });
         res.end(output);
       } catch (e: any) {

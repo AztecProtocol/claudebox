@@ -97,18 +97,40 @@ export class WorktreeStore {
 
   /** List all sessions, newest first. */
   listAll(): RunMeta[] {
-    if (!existsSync(this.sessionsDir)) return [];
-    return readdirSync(this.sessionsDir)
-      .filter(f => f.endsWith(".json"))
-      .map(f => {
+    const results: RunMeta[] = [];
+    const seen = new Set<string>();
+
+    // Read from primary sessions dir (flat <logId>.json files)
+    if (existsSync(this.sessionsDir)) {
+      for (const f of readdirSync(this.sessionsDir)) {
+        if (!f.endsWith(".json")) continue;
         try {
           const s: RunMeta = JSON.parse(readFileSync(join(this.sessionsDir, f), "utf-8"));
           s._log_id = basename(f, ".json");
-          return s;
-        } catch { return null; }
-      })
-      .filter((s): s is RunMeta => s !== null)
-      .sort((a, b) => (b.started || "").localeCompare(a.started || ""));
+          seen.add(s._log_id);
+          results.push(s);
+        } catch {}
+      }
+    }
+
+    // Read legacy subdirectory format (<id>/meta.json) in same sessions dir
+    if (existsSync(this.sessionsDir)) {
+      for (const d of readdirSync(this.sessionsDir)) {
+        const metaPath = join(this.sessionsDir, d, "meta.json");
+        if (!existsSync(metaPath)) continue;
+        try {
+          const s: RunMeta = JSON.parse(readFileSync(metaPath, "utf-8"));
+          const logId = s._log_id || s.log_id || `${d}-1`;
+          if (seen.has(logId)) continue;
+          s._log_id = logId;
+          if (!s.worktree_id) s.worktree_id = d;
+          seen.add(logId);
+          results.push(s);
+        } catch {}
+      }
+    }
+
+    return results.sort((a, b) => (b.started || "").localeCompare(a.started || ""));
   }
 
   /** List all sessions for a given worktree_id, newest first. */
@@ -523,6 +545,9 @@ export class WorktreeStore {
         // Don't reconcile sessions that just started — give containers time to spin up
         const startedMs = meta.started ? new Date(meta.started).getTime() : 0;
         if (startedMs && Date.now() - startedMs < 2 * 60_000) continue;
+
+        // Skip sessions being monitored by recovery — they have their own exit handler
+        if (docker.isRecovered(logId)) continue;
 
         const containerName = meta.container;
         if (!containerName) {
