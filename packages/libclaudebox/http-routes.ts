@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "http";
 import { SignJWT, jwtVerify, type JWTPayload } from "jose";
 import { createHmac, timingSafeEqual } from "crypto";
 import { API_SECRET, SESSION_PAGE_USER, SESSION_PAGE_PASS, MAX_CONCURRENT, DEFAULT_BASE_BRANCH, GITHUB_WEBHOOK_SECRET } from "./config.ts";
-import { getActiveSessions, getChannelBranches, getChannelProfiles } from "./runtime.ts";
+import { getActiveSessions, getChannelBranches } from "./runtime.ts";
 import { getHostCreds } from "../libcreds-host/index.ts";
 import { dmAuthor } from "../libcreds-host/slack.ts";
 import { existsSync, readFileSync, readdirSync, statSync, watch, mkdirSync, openSync, readSync, fstatSync, closeSync } from "fs";
@@ -390,22 +390,20 @@ const routes: Route[] = [
 
       console.log(`[HTTP] POST /run user=${body.user ?? "?"} prompt=${truncate(prompt, 120)}${worktreeId ? ` (worktree=${worktreeId})` : ""}`);
 
-      // ── Resolve Slack context: prior session → body → profile channel ──
-      const sessionProfile = resumedSession?.profile || runProfile || "";
+      // ── Resolve Slack context: prior session → link URL → body ──
       let slackChannel = body.slack_channel || resumedSession?.slack_channel || "";
       let slackThreadTs = body.slack_thread_ts || resumedSession?.slack_thread_ts || "";
       let slackMessageTs = "";
       let slackChannelName = resumedSession?.slack_channel_name || "";
 
-      // Reverse lookup: find the Slack channel associated with this profile
-      if (!slackChannel && SLACK_BOT_TOKEN) {
-        const profileMap = getChannelProfiles(); // { channelId → profileName }
-        for (const [ch, prof] of Object.entries(profileMap)) {
-          if (prof === sessionProfile || (!sessionProfile && prof === "default")) {
-            slackChannel = ch;
-            break;
-          }
-        }
+      // Parse Slack URL from link field: https://WORKSPACE.slack.com/archives/CHANNEL/pTIMESTAMP?thread_ts=...
+      if (!slackChannel && body.link && /\.slack\.com\//.test(body.link)) {
+        const chMatch = body.link.match(/\/archives\/([A-Z0-9]+)\//);
+        const tsMatch = body.link.match(/\/p(\d{10})(\d{6})/);
+        const threadMatch = body.link.match(/[?&]thread_ts=(\d+\.\d+)/);
+        if (chMatch) slackChannel = chMatch[1];
+        if (threadMatch) slackThreadTs = threadMatch[1];
+        else if (tsMatch) slackThreadTs = `${tsMatch[1]}.${tsMatch[2]}`;
       }
 
       if (slackChannel && SLACK_BOT_TOKEN) {
