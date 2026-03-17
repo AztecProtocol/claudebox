@@ -130,6 +130,10 @@ Keep it to 1-2 SHORT sentences. **Never send long explanations** — put details
 
 Use `audit-finding` label on `create_issue` for findings.
 
+### CRITICAL — Do NOT re-file existing issues
+
+Before creating any issue, check `audit_history` and the existing issues list. If a finding already has a linked GitHub issue (visible as a URL in the code comments, audit history, or issue tracker), it is NOT a new finding — do NOT create a duplicate issue. Only file issues for genuinely NEW findings that have no existing issue. When in doubt, use `github_api` to search existing issues first.
+
 ### Cross-referencing — `add_log_link`
 
 Build an audit trail by linking issues to sessions. When you investigate an existing finding or question:
