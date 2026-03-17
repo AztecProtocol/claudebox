@@ -1781,17 +1781,19 @@ Head branch: ${headRef}
     method: "POST", pattern: /^\/api\/internal\/claim-work$/, auth: "api", internal: true,
     handler: async (req, res, _m, ctx) => {
       const body = JSON.parse(await readBody(req));
-      const { log_id, work_description } = body;
+      const { log_id, work_description, profile } = body;
       if (!log_id || !work_description) { json(res, 400, { error: "log_id and work_description required" }); return; }
 
       // Atomically write the work description to this session
       ctx.store.update(log_id, { work_description });
 
-      // Return all sessions from last 24h for the agent to analyze
+      // Return sessions from last 24h, filtered to the same profile
       const cutoff = Date.now() - 24 * 60 * 60 * 1000;
       const recent = ctx.store.listAll().filter(s => {
         if (!s.started) return false;
-        return new Date(s.started).getTime() > cutoff;
+        if (new Date(s.started).getTime() <= cutoff) return false;
+        if (profile && s.profile && s.profile !== profile) return false;
+        return true;
       });
 
       const sessions = recent.map(s => ({

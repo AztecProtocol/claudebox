@@ -156,7 +156,7 @@ export class HostClient {
     const logId = this.sessionMeta?.log_id;
     if (!logId) return null;
     return this.serverFetch("/api/internal/claim-work", {
-      body: { log_id: logId, work_description: workDescription },
+      body: { log_id: logId, work_description: workDescription, profile: this.profile },
     });
   }
 
