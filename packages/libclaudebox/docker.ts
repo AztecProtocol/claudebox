@@ -21,8 +21,8 @@ import { getContainerTokens } from "../libcreds-host/index.ts";
 import { loadProfile } from "./profile-loader.ts";
 import type { DockerConfig } from "./profile.ts";
 
-// Container user — determined by the Docker image
-const CONTAINER_USER = process.env.CLAUDEBOX_CONTAINER_USER || "claude";
+// Container user — must match the image's primary user (aztec-dev, uid 30079).
+const CONTAINER_USER = process.env.CLAUDEBOX_CONTAINER_USER || "aztec-dev";
 const CONTAINER_HOME = `/home/${CONTAINER_USER}`;
 
 // Host git identity — passed into containers so git commit works
@@ -235,7 +235,7 @@ export class DockerService {
         `${claudeProjectsDir}:${CONTAINER_HOME}/.claude/projects/-workspace:ro`,
         `${CLAUDEBOX_CODE_DIR}:/opt/claudebox:ro`,
         `${profileHostDir}:/opt/claudebox-profile:rw`,
-        `${BASTION_SSH_KEY}:/home/aztec-dev/.ssh/build_instance_key:ro`,
+        `${BASTION_SSH_KEY}:${CONTAINER_HOME}/.ssh/build_instance_key:ro`,
         `${CLAUDEBOX_STATS_DIR}:/stats:rw`,
         `${CLAUDEBOX_DIR}:${CONTAINER_HOME}/.claudebox:rw`,
       ];
@@ -248,6 +248,13 @@ export class DockerService {
       const prettierConfig = join(REPO_DIR, "yarn-project/foundation/.prettierrc.json");
       if (existsSync(prettierConfig)) {
         sidecarBinds.push(`${prettierConfig}:/reference-repo/yarn-project/foundation/.prettierrc.json:ro`);
+      }
+
+      // GCP service account — bind-mount key file; containers activate it themselves
+      const gcpSaKey = join(homedir(), "claudesa.json");
+      const hasGcp = existsSync(gcpSaKey);
+      if (hasGcp) {
+        sidecarBinds.push(`${gcpSaKey}:/opt/gcp/claudesa.json:ro`);
       }
 
       // Server URL for sidecar → server communication (internal port, not exposed to internet)
@@ -286,6 +293,7 @@ export class DockerService {
           `CLAUDEBOX_CI_ALLOW=${opts.ciAllow ? "1" : "0"}`,
           `CLAUDEBOX_PROFILE=${profileDir}`,
           `CLAUDEBOX_SCOPES=${(opts.scopes || []).join(",")}`,
+          ...(hasGcp ? [`GOOGLE_APPLICATION_CREDENTIALS=/opt/gcp/claudesa.json`] : []),
         ],
         HostConfig: {
           NetworkMode: networkName,
@@ -341,6 +349,11 @@ export class DockerService {
       }
       if (dockerConfig.extraBinds) {
         for (const b of dockerConfig.extraBinds) claudeArgs.push("-v", b);
+      }
+      // GCP credentials
+      if (hasGcp) {
+        claudeArgs.push("-v", `${gcpSaKey}:/opt/gcp/claudesa.json:ro`);
+        claudeArgs.push("-e", `GOOGLE_APPLICATION_CREDENTIALS=/opt/gcp/claudesa.json`);
       }
       // Mount reference repo for sparse pre-clone
       claudeArgs.push("-v", `${join(REPO_DIR, ".git")}:/reference-repo/.git:ro`);

@@ -270,9 +270,8 @@ For writes, use dedicated tools: create_pr, update_pr, create_gist, create_issue
     {
       description: z.string().describe("Short description of the gist"),
       files: z.record(z.string()).describe("Map of filename → content, e.g. {\"output.log\": \"...\", \"analysis.md\": \"...\"}"),
-      public_gist: z.boolean().default(false).describe("Whether the gist is public (default: false/secret)"),
     },
-    async ({ description, files, public_gist }) => {
+    async ({ description, files }) => {
       if (!hasGhToken()) return { content: [{ type: "text", text: "No GitHub access configured" }], isError: true };
       if (sessionGistId) {
         return { content: [{ type: "text", text: `A gist was already created this session: ${sessionGistUrl}\nUse update_gist(gist_id="${sessionGistId}", ...) to add or update files instead of creating another gist.` }], isError: true };
@@ -285,7 +284,7 @@ For writes, use dedicated tools: create_pr, update_pr, create_gist, create_issue
       }
 
       try {
-        const gist = await getCreds().github.createGist({ description, files: gistFiles, public: public_gist });
+        const gist = await getCreds().github.createGist({ description, files: gistFiles });
         sessionGistId = gist.id;
         sessionGistUrl = gist.html_url;
         logActivity("artifact", `Gist: ${gist.html_url}`);

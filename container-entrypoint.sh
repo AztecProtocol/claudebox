@@ -55,6 +55,14 @@ $([ -n "$RESUME_ID" ] && echo "- Resuming: $RESUME_ID")
 $([ -n "$MODEL" ] && echo "- Model: $MODEL")
 METAEOF
 
+# ── Step 2b: Activate GCP service account if available ────────────
+if [ -n "${GOOGLE_APPLICATION_CREDENTIALS:-}" ] && [ -f "${GOOGLE_APPLICATION_CREDENTIALS}" ]; then
+    gcloud auth activate-service-account --key-file="$GOOGLE_APPLICATION_CREDENTIALS" --quiet 2>/dev/null \
+        && gcloud config set project "$(jq -r .project_id "$GOOGLE_APPLICATION_CREDENTIALS")" --quiet 2>/dev/null \
+        && echo "GCP:     $(jq -r .client_email "$GOOGLE_APPLICATION_CREDENTIALS")" \
+        || echo "GCP:     activation failed (non-fatal)"
+fi
+
 # ── Step 3: Read prompt ──────────────────────────────────────────
 if [ ! -f "$PROMPT_FILE" ]; then
     echo "ERROR: $PROMPT_FILE not found" >&2

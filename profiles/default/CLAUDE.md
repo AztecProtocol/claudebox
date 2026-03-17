@@ -188,6 +188,8 @@ This 3-commit structure lets reviewers see: (a) what the original code looked li
 
 ## Building
 
+**IMPORTANT: No Docker inside containers.** The `docker` socket is not available. Most builds do NOT need Docker — they use cmake, cargo, and node directly. However, Redis-based caching and any step that shells out to `docker` will fail gracefully.
+
 Use `make <target>` from `/workspace/aztec-packages`. The `Makefile` defines the full dependency graph:
 
 | Target | What it builds |
@@ -197,13 +199,15 @@ Use `make <target>` from `/workspace/aztec-packages`. The `Makefile` defines the
 | `bb-cpp-native` | Barretenberg C++ native build |
 | `l1-contracts` | L1 Ethereum contracts |
 
-For individual projects:
+For individual projects, use bootstrap.sh (downloads cached artifacts when available):
 ```bash
 cd /workspace/aztec-packages/yarn-project && ./bootstrap.sh
 cd /workspace/aztec-packages/barretenberg/cpp && ./bootstrap.sh
+cd /workspace/aztec-packages/noir && ./bootstrap.sh
+cd /workspace/aztec-packages/l1-contracts && ./bootstrap.sh
 ```
 
-The container has all required toolchains (Rust, Node, etc.).
+The container has all required toolchains (Rust, Node, emscripten, etc.) but **not Docker**.
 
 ### Build logs
 
@@ -211,9 +215,9 @@ For long-running commands (`./bootstrap.sh`, `make`, test suites), capture the o
 
 ```bash
 # Run build, capture output
-make yarn-project 2>&1 | tee /tmp/build.log
+cd /workspace/aztec-packages/yarn-project && ./bootstrap.sh 2>&1 | tee /tmp/build.log
 # Share via write_log MCP tool
-write_log(content=<contents of /tmp/build.log>, key="make-yarn-project")
+write_log(content=<contents of /tmp/build.log>, key="yarn-project-build")
 ```
 
 Or pipe through `cache_log` directly for real-time streaming:
@@ -235,6 +239,17 @@ After the command finishes, **report status** via `session_status` so users can 
 - **Git conflicts on resume**: If `git_fetch` fails with "untracked files would be overwritten", run `git checkout . && git clean -fd` first.
 - **Always use full GitHub URLs**: `https://github.com/AztecProtocol/aztec-packages/pull/123` not `PR #123`.
 - **`session_status` edits in place**: It updates the existing Slack/GitHub status message. Call it often — it won't create noise.
+
+## GCP / Network Logs
+
+This container has **GCP credentials pre-configured** (`gcloud` is authenticated as `claudebox-sa@testnet-440309.iam.gserviceaccount.com`). You can run `gcloud` commands directly.
+
+For querying live network logs (testnet, devnet, etc.), **read `/opt/claudebox-profile/.claude/agents/network-logs.md` first** — it contains all the gcloud filter recipes, pod naming conventions, and query patterns. Follow its rules exactly (no JSON format, no pipes, no Python).
+
+Key rules not to forget:
+- Always filter `resource.labels.container_name="aztec"` — this excludes non-Aztec containers (eth-beacon, ethereum, etc.)
+- Always exclude L1 noise: `NOT jsonPayload.module=~"^l1"` and `NOT jsonPayload.module="aztec:ethereum"`
+- Ignore anything from `eth-*` containers entirely — they are not Aztec components
 
 ## Rules
 - **Call `session_status` after every major step** — cloning, reading code, building, testing, creating PR. The user is watching live.

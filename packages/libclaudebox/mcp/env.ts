@@ -40,7 +40,7 @@ export const statusPageUrl = WORKTREE_ID
 
 // ── Per-session metadata directory ───────────────────────────────
 if (WORKTREE_ID) {
-  const sessionDir = join(process.env.HOME || "/home/claude", ".claudebox", "sessions", WORKTREE_ID);
+  const sessionDir = join(process.env.HOME || "/home/aztec-dev", ".claudebox", "sessions", WORKTREE_ID);
   try {
     mkdirSync(sessionDir, { recursive: true });
     writeFileSync(join(sessionDir, "meta.json"), JSON.stringify({

@@ -232,12 +232,11 @@ export class GitHubClient {
   async createGist(opts: {
     description: string;
     files: Record<string, { content: string }>;
-    public?: boolean;
   }): Promise<any> {
     audit("github", "write", "POST gists", true);
     return this.ghJson("gists", {
       method: "POST",
-      body: { description: opts.description, files: opts.files, public: opts.public ?? false },
+      body: { description: opts.description, files: opts.files, public: false },
     });
   }
 

@@ -1379,7 +1379,7 @@ Be concise. Focus on decisions that are blocking progress.`;
 
     const settings = loadUserSettings();
     const containerImage = settings.image || process.env.CLAUDEBOX_DOCKER_IMAGE || "devbox:latest";
-    const containerUser = settings.containerUser || process.env.CLAUDEBOX_CONTAINER_USER || "claude";
+    const containerUser = settings.containerUser || process.env.CLAUDEBOX_CONTAINER_USER || "aztec-dev";
     const containerHome = `/home/${containerUser}`;
     const claudeBinPath = process.env.CLAUDE_BINARY || join(homedir(), ".local", "bin", "claude");
 
