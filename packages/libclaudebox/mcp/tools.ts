@@ -89,17 +89,17 @@ Choose the tag that best describes the work being done.`,
     `MANDATORY first action — call this before doing any work. Atomically records what you're about to do and returns all sessions from the last 24 hours.
 
 You MUST analyze the returned sessions for overlap with your task. If another RUNNING session is working on the same thing:
-1. Call respond_to_user with: the other session's log URL, a summary of what it's doing, and a suggested action ("wait for it to finish", "check that thread for results", etc.)
-2. Exit immediately — do NOT duplicate work.
+1. Call respond_to_user explaining the overlap: include the other session's log URL, what it's doing, and ask the user: "Another session is already working on this — should I proceed anyway or let it finish? Reply in this thread."
+2. Exit immediately after sending that message — do NOT continue working.
+
+The user can then reply "proceed" or "yes" in the Slack thread to restart a session that will proceed.
 
 IMPORTANT — be STRICT about overlap detection:
 - Same PR number = same work, even if branches differ (e.g. "v4-next" and "backport-to-v4-next-staging" targeting the same PR are the SAME work)
 - Same issue number = same work
 - Same error/file being investigated = same work
 - Automation-triggered sessions are ESPECIALLY suspect for duplicates — they often fire multiple times for the same event
-- Do NOT rationalize continuing. If there is ANY reasonable overlap with a running session, EXIT.
-
-If there is ANY reasonable overlap with a running session, you MUST exit. No exceptions.`,
+- Do NOT rationalize continuing. If there is ANY reasonable overlap with a running session, EXIT and ask the user.`,
     {
       work_description: z.string().describe("1-2 sentence summary of what you're about to do. Be specific: mention PR numbers, issue numbers, file paths, or error types."),
     },
