@@ -88,12 +88,18 @@ Choose the tag that best describes the work being done.`,
   server.tool("claim_work",
     `MANDATORY first action — call this before doing any work. Atomically records what you're about to do and returns all sessions from the last 24 hours.
 
-You MUST analyze the returned sessions for overlap with your task. If another session (running or recently completed) is working on the same thing:
+You MUST analyze the returned sessions for overlap with your task. If another RUNNING session is working on the same thing:
 1. Call respond_to_user with: the other session's log URL, a summary of what it's doing, and a suggested action ("wait for it to finish", "check that thread for results", etc.)
 2. Exit immediately — do NOT duplicate work.
 
-If the user explicitly asked you to work on this despite a duplicate, proceed anyway.
-If no overlap, proceed with your task normally.`,
+IMPORTANT — be STRICT about overlap detection:
+- Same PR number = same work, even if branches differ (e.g. "v4-next" and "backport-to-v4-next-staging" targeting the same PR are the SAME work)
+- Same issue number = same work
+- Same error/file being investigated = same work
+- Automation-triggered sessions are ESPECIALLY suspect for duplicates — they often fire multiple times for the same event
+- Do NOT rationalize continuing. If there is ANY reasonable overlap with a running session, EXIT.
+
+Only proceed if your prompt contains explicit text like "ignore duplicates" or "force".`,
     {
       work_description: z.string().describe("1-2 sentence summary of what you're about to do. Be specific: mention PR numbers, issue numbers, file paths, or error types."),
     },
