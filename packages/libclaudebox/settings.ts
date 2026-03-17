@@ -17,7 +17,7 @@ export interface UserSettings {
   defaultProfile?: string;
   /** Extra directories to scan for profiles (in addition to repo profiles/) */
   profileDirs?: string[];
-  /** Container user (default: "claude") */
+  /** Container user (default: "aztec-dev") */
   containerUser?: string;
   /** Server URL for CLI commands */
   server?: string;

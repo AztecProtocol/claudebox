@@ -51,15 +51,15 @@ export function registerCommonTools(server: McpServer, opts: ProfileOpts): void 
       logActivity("status", status);
       addProgress("status", status);
       const results = await updateRootComment(status);
-      return { content: [{ type: "text", text: results.length ? results.join("\n") : "No channels configured" }] };
+      return { content: [{ type: "text", text: results.length ? results.join("\n") : "Status updated" }] };
     });
 
   // ── set_workspace_name ─────────────────────────────────────────
   server.tool("set_workspace_name",
-    `Set a short, descriptive name for this workspace. Call this early (right after cloning).
+    `MANDATORY — call immediately after clone_repo. Sets the workspace name used as the git branch name (e.g. "claudebox/<name>" or "audit/<name>") and displayed in the dashboard and Slack.
 The name should be a concise slug describing the task (2-5 words, lowercase, hyphens).
 Examples: "fix-flaky-p2p-test", "audit-polynomial-commitment", "add-g0-flag"
-The name is used as the git branch name and appears in the dashboard and Slack.`,
+If you skip this, branches will have ugly auto-generated IDs instead of meaningful names.`,
     { name: z.string().describe("Short descriptive slug, e.g. fix-flaky-p2p-test") },
     async ({ name }) => {
       const slug = name.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 60);
@@ -87,24 +87,27 @@ Choose the tag that best describes the work being done.`,
   server.tool("respond_to_user",
     `Send your final response to the user. Updates the Slack message inline. You MUST call this before ending.
 
-Your response appears directly in Slack (not quoted). Keep it concise but informative — a few sentences is fine. For detailed analysis, print to stdout and link to the log.
+Keep it to 1-3 SHORT sentences. **Never send long explanations** — put details in a gist (create_gist) and link it.
 
 ALWAYS reference PRs and issues as full GitHub links (https://github.com/${repo}/pull/123), never just "#123". This makes messages clickable in Slack.
 
 PRs you create/update are automatically shown as compact #NNN links — no need to repeat them unless adding context.
 
 - GOOD: "Fixed flaky test — race condition in p2p layer. Applied the same pattern from the stdlib fix."
-- GOOD: "Found 3 PRs needing manual backport — <LOG_URL|see full analysis>"
+- GOOD: "Reviewed 12 files. Filed 3 issues. Full analysis: <GIST_URL>"
+- BAD: Multi-paragraph explanations (use create_gist instead)
 - BAD: "Created PR #5678" — not clickable, and PR is already shown
 
-Avoid code blocks and long bullet lists — those belong in the log.`,
-    { message: z.string().describe(`Concise response. Use full GitHub URLs for PRs/issues (https://github.com/${repo}/pull/123), not #123.`) },
-    async ({ message }) => {
+No code blocks, bullet lists, or long text — those belong in a gist.`,
+    { message: z.string().describe(`1-3 sentences max. Use full GitHub URLs. Put long analysis in create_gist.`) },
+    async (params) => {
+      // Unescape literal \n sequences the model sometimes sends
+      const message = params.message.replace(/\\n/g, "\n");
       setRespondToUserCalled(true);
       logActivity("response", message);
       addProgress("response", message);
       const results = await updateRootComment(message);
-      if (!results.length) results.push("No channels configured — message printed to log only");
+      if (!results.length) results.push("Response recorded");
       return { content: [{ type: "text", text: results.join("\n") }] };
     });
 
@@ -267,21 +270,21 @@ For writes, use dedicated tools: create_pr, update_pr, create_gist, create_issue
     {
       description: z.string().describe("Short description of the gist"),
       files: z.record(z.string()).describe("Map of filename → content, e.g. {\"output.log\": \"...\", \"analysis.md\": \"...\"}"),
-      public_gist: z.boolean().default(false).describe("Whether the gist is public (default: false/secret)"),
     },
-    async ({ description, files, public_gist }) => {
+    async ({ description, files }) => {
       if (!hasGhToken()) return { content: [{ type: "text", text: "No GitHub access configured" }], isError: true };
       if (sessionGistId) {
         return { content: [{ type: "text", text: `A gist was already created this session: ${sessionGistUrl}\nUse update_gist(gist_id="${sessionGistId}", ...) to add or update files instead of creating another gist.` }], isError: true };
       }
 
+      // Unescape literal \n sequences the model sometimes sends
       const gistFiles: Record<string, { content: string }> = {};
       for (const [name, content] of Object.entries(files)) {
-        gistFiles[name] = { content };
+        gistFiles[name] = { content: content.replace(/\\n/g, "\n") };
       }
 
       try {
-        const gist = await getCreds().github.createGist({ description, files: gistFiles, public: public_gist });
+        const gist = await getCreds().github.createGist({ description, files: gistFiles });
         sessionGistId = gist.id;
         sessionGistUrl = gist.html_url;
         logActivity("artifact", `Gist: ${gist.html_url}`);
@@ -303,9 +306,10 @@ For writes, use dedicated tools: create_pr, update_pr, create_gist, create_issue
     async ({ gist_id, description, files }) => {
       if (!hasGhToken()) return { content: [{ type: "text", text: "No GitHub access configured" }], isError: true };
 
+      // Unescape literal \n sequences the model sometimes sends
       const gistFiles: Record<string, { content: string }> = {};
       for (const [name, content] of Object.entries(files)) {
-        gistFiles[name] = { content };
+        gistFiles[name] = { content: content.replace(/\\n/g, "\n") };
       }
 
       try {

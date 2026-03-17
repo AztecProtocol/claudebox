@@ -50,7 +50,7 @@ const DELAY_MS = parseInt(process.env.MOCK_DELAY_MS || "100", 10);
 // Where Claude writes session JSONL — in the real setup, this is bind-mounted
 // from the host's claudeProjectsDir. Use CLAUDEBOX_PROJECTS_DIR for tests.
 const projectsDir = process.env.CLAUDEBOX_PROJECTS_DIR
-  || join(process.env.HOME || "/home/claude", ".claude", "projects", "-workspace");
+  || join(process.env.HOME || "/home/aztec-dev", ".claude", "projects", "-workspace");
 mkdirSync(projectsDir, { recursive: true });
 
 const sessionFile = join(projectsDir, `${SESSION_ID}.jsonl`);

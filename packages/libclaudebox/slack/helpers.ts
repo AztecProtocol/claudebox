@@ -3,7 +3,6 @@ import type { WorktreeStore } from "../worktree-store.ts";
 import type { DockerService } from "../docker.ts";
 import { truncate, extractHashFromUrl, sessionUrl } from "../util.ts";
 import { toTargetRef } from "../base-branch.ts";
-import { loadProfile } from "../profile-loader.ts";
 import { getHostCreds } from "../../libcreds-host/index.ts";
 
 /**
@@ -61,10 +60,10 @@ function extractArtifactLinks(artifacts: { text: string }[]): string[] {
     seenUrls.add(url);
 
     const prMatch = url.match(/\/pull\/(\d+)/);
-    if (prMatch) { linkParts.push(`<${url}|#${prMatch[1]}>`); continue; }
+    if (prMatch) { linkParts.push(`<${url}|PR #${prMatch[1]}>`); continue; }
     if (url.includes("gist.github")) { linkParts.push(`<${url}|gist>`); continue; }
     const issueMatch = url.match(/\/issues\/(\d+)/);
-    if (issueMatch) { linkParts.push(`<${url}|#${issueMatch[1]}>`); continue; }
+    if (issueMatch) { linkParts.push(`<${url}|Issue #${issueMatch[1]}>`); continue; }
     linkParts.push(`<${url}|link>`);
   }
   return linkParts;
@@ -95,10 +94,26 @@ export function buildSlackStatusFromActivity(
   const artifacts = activity.filter(a => a.type === "artifact" && (!currentLogId || !a.log_id || a.log_id === currentLogId));
   const linkParts = extractArtifactLinks(artifacts);
 
-  // Footer: artifacts + status link + status
+  // Footer: artifacts + status link + elapsed + status
   const footer: string[] = [];
   if (linkParts.length) footer.push(linkParts.join(" \u2022 "));
-  if (worktreeId) footer.push(`<${sessionUrl(worktreeId)}|status>`);
+  // Status link — include ?run=N when we know the run sequence
+  if (worktreeId) {
+    const seq = logId?.match(/-(\d+)$/)?.[1];
+    const url = sessionUrl(worktreeId) + (seq ? `?run=${seq}` : "");
+    footer.push(`<${url}|status>`);
+  }
+  // Elapsed time scoped to current run (not entire worktree lifetime)
+  const runActivity = currentLogId ? activity.filter(a => a.log_id === currentLogId) : activity;
+  const firstTs = runActivity.length > 0 ? runActivity[0].ts : "";
+  if (firstTs) {
+    const ms = Date.now() - new Date(firstTs).getTime();
+    if (ms > 0) {
+      const mins = Math.floor(ms / 60000);
+      const elapsed = mins < 1 ? "<1m" : mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h${mins % 60}m`;
+      footer.push(elapsed);
+    }
+  }
   footer.push(`_${status}_`);
   parts.push(footer.join("  \u2502  "));
 
@@ -191,40 +206,15 @@ export async function handleTerminalCommand(
   return true;
 }
 
-/** Drain queued Slack messages for a worktree and auto-resume if any exist. */
-async function drainQueueAndResume(
-  client: any, channel: string, threadTs: string | null,
-  worktreeId: string, store: WorktreeStore, docker: DockerService,
-  baseBranch: string, channelName: string,
-): Promise<void> {
+/** Drain queued Slack messages for a worktree after a session finishes.
+ *  Messages are logged but NOT auto-resumed — the user must explicitly reply in the thread. */
+function drainQueuedMessages(worktreeId: string, store: WorktreeStore): void {
   try {
     const session = store.findByWorktreeId(worktreeId);
     if (!session?._log_id) return;
     const queued = store.drainQueue(session._log_id);
-
     if (queued.length) {
-      const combined = queued.map(q => `[${q.user}]: ${q.text}`).join("\n\n");
-      console.log(`[QUEUE] Draining ${queued.length} queued message(s) for worktree ${worktreeId}`);
-      startReplySession(
-        client, channel, threadTs, combined, session,
-        queued[0].user, store, docker, baseBranch, false, channelName, false, session.profile || "",
-      );
-      return;
-    }
-
-    // No user messages queued — check for profile summary prompt (only on first session, not on resumes)
-    const profile = session.profile || "";
-    const sessions = store.listByWorktree(worktreeId);
-    const isFirstSession = sessions.length <= 1;
-    if (profile && isFirstSession) {
-      const summaryPrompt = (await loadProfile(profile)).summaryPrompt || "";
-      if (summaryPrompt) {
-        console.log(`[SUMMARY] Queueing summary prompt for worktree ${worktreeId} (profile=${profile})`);
-        startReplySession(
-          client, channel, threadTs, summaryPrompt, session,
-          "system", store, docker, baseBranch, true, channelName, false, profile,
-        );
-      }
+      console.log(`[QUEUE] Drained ${queued.length} queued message(s) for worktree ${worktreeId} (not auto-resuming)`);
     }
   } catch (e: any) {
     console.error(`[QUEUE] Failed to drain queue for ${worktreeId}: ${e.message}`);
@@ -289,7 +279,7 @@ export async function startNewSession(
           .catch((e) => console.warn(`[WARN] Slack status update failed: ${e}`));
       }
       if (capturedWorktreeId) {
-        drainQueueAndResume(client, channel, threadTs, capturedWorktreeId, store, docker, baseBranch, channelName);
+        drainQueuedMessages(capturedWorktreeId, store);
       }
     });
   } catch (e) {
@@ -359,7 +349,7 @@ export async function startReplySession(
           .catch((e) => console.warn(`[WARN] Slack status update failed: ${e}`));
       }
       if (capturedWorktreeId) {
-        drainQueueAndResume(client, channel, threadTs, capturedWorktreeId, store, docker, baseBranch, channelName);
+        drainQueuedMessages(capturedWorktreeId, store);
       }
     });
   } catch (e) {

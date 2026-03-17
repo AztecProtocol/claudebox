@@ -22,7 +22,7 @@ function buildCompletionSummary(): string {
 
   const parts: string[] = [];
   try {
-    const projDir = join(process.env.HOME || "/home/claude", ".claude", "projects", "-workspace");
+    const projDir = join(process.env.HOME || "/home/aztec-dev", ".claude", "projects", "-workspace");
     if (existsSync(projDir)) {
       const files = readdirSync(projDir)
         .filter(f => f.endsWith(".jsonl"))

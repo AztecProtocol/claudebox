@@ -68,10 +68,10 @@ function runMockInDocker(opts: {
     // Mount workspace at /workspace (read-write) — same as real flow
     "-v", `${opts.workspaceDir}:/workspace:rw`,
     // Mount claude-projects dir
-    "-v", `${opts.claudeProjectsDir}:/home/claude/.claude/projects/-workspace:rw`,
+    "-v", `${opts.claudeProjectsDir}:/home/aztec-dev/.claude/projects/-workspace:rw`,
     // Environment
     "-e", "CLAUDEBOX_WORKSPACE=/workspace",
-    "-e", "CLAUDEBOX_PROJECTS_DIR=/home/claude/.claude/projects/-workspace",
+    "-e", "CLAUDEBOX_PROJECTS_DIR=/home/aztec-dev/.claude/projects/-workspace",
     "-e", `CLAUDEBOX_PROMPT=${opts.prompt}`,
     "-e", "MOCK_DELAY_MS=10",
     // Working directory is /workspace

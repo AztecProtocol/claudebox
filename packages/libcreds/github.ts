@@ -205,6 +205,11 @@ export class GitHubClient {
     return this.ghJson(`repos/${repo}/issues/${issueNumber}/labels`, { method: "POST", body: { labels } });
   }
 
+  async removeLabel(repo: string, issueNumber: number, label: string): Promise<void> {
+    audit("github", "write", `DELETE repos/${repo}/issues/${issueNumber}/labels/${label}`, true);
+    await this.ghFetch(`repos/${repo}/issues/${issueNumber}/labels/${encodeURIComponent(label)}`, { method: "DELETE" });
+  }
+
   async createLabel(repo: string, opts: { name: string; color: string; description?: string }): Promise<any> {
     audit("github", "write", `POST repos/${repo}/labels`, true);
     return this.ghJson(`repos/${repo}/labels`, { method: "POST", body: opts });
@@ -227,12 +232,11 @@ export class GitHubClient {
   async createGist(opts: {
     description: string;
     files: Record<string, { content: string }>;
-    public?: boolean;
   }): Promise<any> {
     audit("github", "write", "POST gists", true);
     return this.ghJson("gists", {
       method: "POST",
-      body: { description: opts.description, files: opts.files, public: opts.public ?? false },
+      body: { description: opts.description, files: opts.files, public: false },
     });
   }
 

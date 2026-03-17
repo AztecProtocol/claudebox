@@ -37,7 +37,8 @@ function createServer(): McpServer {
   registerCloneRepo(server, {
     repo: REPO, workspace: WORKSPACE,
     strategy: "authenticated-url",
-    refHint: `'origin/${DEV_BRANCH}', 'abc123'`,
+    fallbackRef: `origin/${DEV_BRANCH}`,
+    refHint: `'origin/${DEV_BRANCH}' (default branch), 'abc123'`,
   });
 
   registerPRTools(server, {

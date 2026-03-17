@@ -40,9 +40,10 @@ cat > /tmp/mcp.json <<EOF
 }
 EOF
 
-# ── Step 2: Write session metadata CLAUDE.md ─────────────────────
-# Profile instructions live in $PROFILE_DIR/CLAUDE.md (loaded via --add-dir).
-# This file just injects session-specific context into the workspace.
+# ── Step 2: Write workspace CLAUDE.md (session metadata only) ──
+# Profile instructions come via --add-dir $PROFILE_DIR; the env var
+# CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1 tells Claude to load
+# CLAUDE.md from --add-dir directories.
 mkdir -p /workspace/.claude
 cat > /workspace/.claude/CLAUDE.md <<METAEOF
 # Session
@@ -53,6 +54,14 @@ cat > /workspace/.claude/CLAUDE.md <<METAEOF
 $([ -n "$RESUME_ID" ] && echo "- Resuming: $RESUME_ID")
 $([ -n "$MODEL" ] && echo "- Model: $MODEL")
 METAEOF
+
+# ── Step 2b: Activate GCP service account if available ────────────
+if [ -n "${GOOGLE_APPLICATION_CREDENTIALS:-}" ] && [ -f "${GOOGLE_APPLICATION_CREDENTIALS}" ]; then
+    gcloud auth activate-service-account --key-file="$GOOGLE_APPLICATION_CREDENTIALS" --quiet 2>/dev/null \
+        && gcloud config set project "$(jq -r .project_id "$GOOGLE_APPLICATION_CREDENTIALS")" --quiet 2>/dev/null \
+        && echo "GCP:     $(jq -r .client_email "$GOOGLE_APPLICATION_CREDENTIALS")" \
+        || echo "GCP:     activation failed (non-fatal)"
+fi
 
 # ── Step 3: Read prompt ──────────────────────────────────────────
 if [ ! -f "$PROMPT_FILE" ]; then
