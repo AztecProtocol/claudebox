@@ -99,7 +99,7 @@ IMPORTANT — be STRICT about overlap detection:
 - Automation-triggered sessions are ESPECIALLY suspect for duplicates — they often fire multiple times for the same event
 - Do NOT rationalize continuing. If there is ANY reasonable overlap with a running session, EXIT.
 
-Only proceed if your prompt contains explicit text like "ignore duplicates" or "force".`,
+If there is ANY reasonable overlap with a running session, you MUST exit. No exceptions.`,
     {
       work_description: z.string().describe("1-2 sentence summary of what you're about to do. Be specific: mention PR numbers, issue numbers, file paths, or error types."),
     },

@@ -490,7 +490,8 @@ export function registerPRTools(server: McpServer, config: PRToolConfig): void {
         });
 
         if (config.label) {
-          try { await creds.github.addLabels(config.repo, pr.number, [config.label]); } catch {}
+          const labels = [config.label, "ci-draft"];
+          try { await creds.github.addLabels(config.repo, pr.number, labels); } catch {}
         }
 
         addTrackedPR(pr.number, title, pr.html_url, "created");
