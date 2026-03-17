@@ -1780,7 +1780,7 @@ Head branch: ${headRef}
   {
     method: "POST", pattern: /^\/api\/internal\/claim-work$/, auth: "api", internal: true,
     handler: async (req, res, _m, ctx) => {
-      const body = await readBody(req);
+      const body = JSON.parse(await readBody(req));
       const { log_id, work_description } = body;
       if (!log_id || !work_description) { json(res, 400, { error: "log_id and work_description required" }); return; }
 
