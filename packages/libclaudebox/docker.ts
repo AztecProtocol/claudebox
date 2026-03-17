@@ -250,6 +250,12 @@ export class DockerService {
         sidecarBinds.push(`${prettierConfig}:/reference-repo/yarn-project/foundation/.prettierrc.json:ro`);
       }
 
+      // CRS (bn254 trusted setup) — 2GB, mount read-only to avoid re-downloading
+      const crsDir = join(homedir(), ".bb-crs");
+      if (existsSync(crsDir)) {
+        sidecarBinds.push(`${crsDir}:${CONTAINER_HOME}/.bb-crs:ro`);
+      }
+
       // GCP service account — bind-mount key file; containers activate it themselves
       const gcpSaKey = join(homedir(), "claudesa.json");
       const hasGcp = existsSync(gcpSaKey);
@@ -349,6 +355,10 @@ export class DockerService {
       }
       if (dockerConfig.extraBinds) {
         for (const b of dockerConfig.extraBinds) claudeArgs.push("-v", b);
+      }
+      // CRS (bn254 trusted setup)
+      if (existsSync(crsDir)) {
+        claudeArgs.push("-v", `${crsDir}:${CONTAINER_HOME}/.bb-crs:ro`);
       }
       // GCP credentials
       if (hasGcp) {
