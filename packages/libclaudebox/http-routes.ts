@@ -1775,6 +1775,45 @@ Head branch: ${headRef}
       }
     },
   },
+
+  // ── Internal API: claim work + return recent sessions for dedup ──
+  {
+    method: "POST", pattern: /^\/api\/internal\/claim-work$/, auth: "api", internal: true,
+    handler: async (req, res, _m, ctx) => {
+      const body = JSON.parse(await readBody(req));
+      const { log_id, work_description, profile } = body;
+      if (!log_id || !work_description) { json(res, 400, { error: "log_id and work_description required" }); return; }
+
+      // Atomically write the work description to this session
+      ctx.store.update(log_id, { work_description });
+
+      // Return sessions from last 24h, filtered to the same profile
+      const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+      const recent = ctx.store.listAll().filter(s => {
+        if (!s.started) return false;
+        if (new Date(s.started).getTime() <= cutoff) return false;
+        if (profile && s.profile && s.profile !== profile) return false;
+        return true;
+      });
+
+      const sessions = recent.map(s => ({
+        log_id: s._log_id || "",
+        status: s.status || "",
+        prompt: (s.prompt || "").slice(0, 300),
+        work_description: s.work_description || "",
+        link: s.link || "",
+        log_url: s.log_url || "",
+        started: s.started || "",
+        finished: s.finished || "",
+        user: s.user || "",
+        profile: s.profile || "",
+        slack_channel: s.slack_channel || "",
+        slack_thread_ts: s.slack_thread_ts || "",
+      }));
+
+      json(res, 200, { sessions });
+    },
+  },
 ];
 
 // ── Server factory ──────────────────────────────────────────────

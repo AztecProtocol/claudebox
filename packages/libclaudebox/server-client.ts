@@ -149,6 +149,17 @@ export class HostClient {
     }
   }
 
+  // ── Claim work (dedup) ───────────────────────────────────────
+
+  async claimWork(workDescription: string): Promise<{ sessions: any[] } | null> {
+    if (!this.hasServer) return null;
+    const logId = this.sessionMeta?.log_id;
+    if (!logId) return null;
+    return this.serverFetch("/api/internal/claim-work", {
+      body: { log_id: logId, work_description: workDescription, profile: this.profile },
+    });
+  }
+
   // ── Session metadata ─────────────────────────────────────────
 
   updateRunMeta(meta: Record<string, string>): void {

@@ -131,10 +131,10 @@ update_pr(pr_number=12345, push=true, title="updated title")
 ```
 
 ### Workflow:
-1. The repo is pre-cloned at `/workspace/aztec-packages`. If you need a different ref, use `clone_repo`.
-2. `set_workspace_name` — give this workspace a short slug (e.g. "fix-flaky-p2p-test")
-3. `get_context` — get session metadata (log_url, base_branch, etc.)
-4. `session_status("Reading codebase...")` — **post status immediately and after every major step**
+1. **`session_status("Acknowledged")`** — post status IMMEDIATELY so the user knows you're alive
+2. **`claim_work("fixing flaky p2p test in e2e suite")`** — MANDATORY. Describe what you're about to do. This checks for duplicate work across all recent sessions. If another session is already handling your task, respond with its log URL and exit. If the user explicitly asked you to proceed despite a duplicate, continue anyway.
+3. `set_workspace_name` — give this workspace a short slug (e.g. "fix-flaky-p2p-test")
+4. `get_context` — get session metadata (log_url, base_branch, etc.)
 5. Do your work (code changes, builds, tests, etc.)
    - Call `session_status` after each phase: "Building...", "Running tests...", "Tests passing, creating PR..."
 6. `create_pr` / `update_pr` — if you made changes worth PRing

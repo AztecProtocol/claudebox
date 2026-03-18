@@ -17,6 +17,7 @@ import {
   logActivity, addProgress, updateRootComment,
   otherArtifacts, truncateForSlack,
   respondToUserCalled, setRespondToUserCalled,
+  getHostClient,
 } from "./activity.ts";
 import { getCreds, hasGhToken, hasLinearToken } from "./helpers.ts";
 
@@ -82,6 +83,60 @@ Choose the tag that best describes the work being done.`,
         return { content: [{ type: "text", text: `Tagged: ${tag}` }] };
       });
   }
+
+  // ── claim_work ───────────────────────────────────────────────
+  server.tool("claim_work",
+    `MANDATORY first action — call this before doing any work. Atomically records what you're about to do and returns all sessions from the last 24 hours.
+
+You MUST analyze the returned sessions for overlap with your task. If another RUNNING session is working on the same thing:
+1. Call respond_to_user explaining the overlap: include the other session's log URL, what it's doing, and ask the user: "Another session is already working on this — should I proceed anyway or let it finish? Reply in this thread."
+2. Exit immediately after sending that message — do NOT continue working.
+
+The user can then reply "proceed" or "yes" in the Slack thread to restart a session that will proceed.
+
+IMPORTANT — be STRICT about overlap detection:
+- Same PR number = same work, even if branches differ (e.g. "v4-next" and "backport-to-v4-next-staging" targeting the same PR are the SAME work)
+- Same issue number = same work
+- Same error/file being investigated = same work
+- Automation-triggered sessions are ESPECIALLY suspect for duplicates — they often fire multiple times for the same event
+- Do NOT rationalize continuing. If there is ANY reasonable overlap with a running session, EXIT and ask the user.`,
+    {
+      work_description: z.string().describe("1-2 sentence summary of what you're about to do. Be specific: mention PR numbers, issue numbers, file paths, or error types."),
+    },
+    async ({ work_description }) => {
+      logActivity("claim", work_description);
+      try {
+        const result = await getHostClient().claimWork(work_description);
+        if (!result) return { content: [{ type: "text", text: "Work claimed (no server — dedup unavailable). Proceed." }] };
+
+        const { sessions } = result;
+        // Filter out this session itself
+        const myLogId = SESSION_META.log_id;
+        const others = sessions.filter((s: any) => s.log_id !== myLogId);
+
+        if (others.length === 0) {
+          return { content: [{ type: "text", text: "Work claimed. No recent sessions found — you are clear to proceed." }] };
+        }
+
+        const lines = others.map((s: any) => {
+          const status = s.status === "running" ? "🔴 RUNNING" : `✅ ${s.status}`;
+          const desc = s.work_description || s.prompt?.slice(0, 150) || "(no description)";
+          const link = s.link || "";
+          const logUrl = s.log_url || "";
+          const user = s.user || "unknown";
+          const started = s.started ? new Date(s.started).toISOString().slice(0, 16) : "";
+          return `- [${status}] ${desc}\n  User: ${user} | Started: ${started}\n  Link: ${link}\n  Log: ${logUrl}`;
+        });
+
+        return { content: [{ type: "text", text:
+          `Work claimed. Review these recent sessions for overlap:\n\n${lines.join("\n\n")}\n\n` +
+          `If any session is already handling your task, call respond_to_user with the other session's log URL and a suggested action, then exit. ` +
+          `If the user explicitly insisted on this work, or there is no overlap, proceed normally.`
+        }] };
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `Work claimed (dedup check failed: ${e.message}). Proceed with caution.` }] };
+      }
+    });
 
   // ── respond_to_user ───────────────────────────────────────────
   server.tool("respond_to_user",

@@ -64,6 +64,20 @@ async function handleIncomingMessage(msg: IncomingMessage, store: WorktreeStore,
   if (msg.isReply) {
     const prevSession = store.findLastInThread(msg.channel, msg.threadTs);
     if (prevSession?.status === "running" && prevSession._log_id) {
+      // Check for stop/cancel command — kill the running container
+      const stopMatch = /^\s*(stop|cancel|kill|abort)\b/i.test(cmd);
+      if (stopMatch) {
+        const containerName = prevSession.container || `claudebox-${prevSession._log_id}`;
+        const sidecarName = prevSession.sidecar || `claudebox-sidecar-${prevSession._log_id}`;
+        const networkName = `claudebox-net-${prevSession._log_id}`;
+        docker.stopAndRemoveSync(containerName, 3);
+        docker.stopAndRemoveSync(sidecarName, 3);
+        docker.removeNetworkSync(networkName);
+        store.update(prevSession._log_id, { status: "cancelled", exit_code: 137, finished: new Date().toISOString() });
+        await msg.respond({ text: `:octagonal_sign: Session stopped.`, thread_ts: msg.threadTs });
+        console.log(`[HANDLER] User ${userName} stopped session ${prevSession._log_id}`);
+        return;
+      }
       store.queueMessage(prevSession._log_id, { text: cmd, user: userName, ts: new Date().toISOString() });
       await msg.respond({ text: `:hourglass: Queued \u2014 your message will be sent when the current session finishes.`, thread_ts: msg.threadTs });
       return;
