@@ -2,8 +2,7 @@ import type { App } from "@slack/bolt";
 import type { WorktreeStore } from "../worktree-store.ts";
 import type { DockerService } from "../docker.ts";
 import type { DmRegistry } from "../dm-registry.ts";
-import { MAX_CONCURRENT } from "../config.ts";
-import { getActiveSessions, getChannelProfiles } from "../runtime.ts";
+import { getActiveSessions, getChannelProfiles, hasCapacity, getEffectiveMaxConcurrent, getCronStore } from "../runtime.ts";
 import { parseMessage, parseKeywords, validateResumeSession, truncate, extractHashFromUrl, sessionUrl } from "../util.ts";
 import {
   resolveUserName, getThreadContext, handleTerminalCommand,
@@ -34,9 +33,11 @@ async function handleIncomingMessage(msg: IncomingMessage, store: WorktreeStore,
   // Terminal command
   if (await handleTerminalCommand(cmd, msg.channel, msg.threadTs, msg.isReply, msg.respond, store)) return;
 
-  // Capacity check
-  if (getActiveSessions() >= MAX_CONCURRENT) {
-    await msg.respond({ text: `ClaudeBox is at capacity (${MAX_CONCURRENT} sessions). Try again later.`, thread_ts: msg.threadTs });
+  // Capacity check (per-profile)
+  const channelProfile = getChannelProfiles()[msg.channel] || "";
+  if (!hasCapacity(channelProfile)) {
+    const max = getEffectiveMaxConcurrent(channelProfile);
+    await msg.respond({ text: `ClaudeBox is at capacity (${max === Infinity ? "∞" : max} max). Try again later.`, thread_ts: msg.threadTs });
     return;
   }
 
@@ -90,10 +91,32 @@ async function handleIncomingMessage(msg: IncomingMessage, store: WorktreeStore,
     }
   }
 
-  // New session — parse keywords (new-session, quiet, ci-allow, profile) only here
-  const { forceNew, quiet: explicitQuiet, ciAllow, profile: keywordProfile, prompt: effectivePrompt } = parseKeywords(parsed);
-  const profile = keywordProfile || getChannelProfiles()[msg.channel] || "";
-  const quiet = await resolveQuietMode(msg.client, msg.channel, explicitQuiet);
+  // New session — parse --flags and profile keyword
+  const { forceNew, ciAllow, cronAllow, listCrons, profile: keywordProfile, prompt: effectivePrompt } = parseKeywords(parsed);
+  const profile = keywordProfile || channelProfile || "";
+
+  // --list-crons: standalone command, no session
+  if (listCrons !== false) {
+    try {
+      const cronStore = getCronStore();
+      if (!cronStore) { await msg.respond({ text: "Cron system not initialized.", thread_ts: msg.threadTs }); return; }
+      const channelId = typeof listCrons === "string" ? listCrons : msg.channel;
+      const jobs = cronStore.list(channelId);
+      if (!jobs.length) {
+        await msg.respond({ text: "No cron jobs found.", thread_ts: msg.threadTs });
+      } else {
+        const lines = jobs.map(j =>
+          `• *${j.name}* (\`${j.id}\`): \`${j.schedule}\` ${j.enabled ? "✓" : "⏸"}\n  _${j.prompt.slice(0, 100)}${j.prompt.length > 100 ? "..." : ""}_`
+        );
+        await msg.respond({ text: `*Cron Jobs:*\n${lines.join("\n")}`, thread_ts: msg.threadTs });
+      }
+    } catch (e: any) {
+      await msg.respond({ text: `Error listing crons: ${e.message}`, thread_ts: msg.threadTs });
+    }
+    return;
+  }
+
+  const quiet = await resolveQuietMode(msg.client, msg.channel, null);
   const prompt = (parsed.type === "reply-hash" && !store.findByHash(parsed.hash)) ? cmd : effectivePrompt;
 
   // new-session in a thread: break the thread → worktree binding
@@ -152,8 +175,8 @@ export function registerSlackHandlers(app: App, store: WorktreeStore, docker: Do
           const baseBranch = await resolveBaseBranch(client, channel);
           const channelName = await resolveChannelName(client, channel);
 
-          if (getActiveSessions() >= MAX_CONCURRENT) {
-            console.log(`[AUTO-MERGE] Skipping — at capacity (${MAX_CONCURRENT})`);
+          if (!hasCapacity(profile)) {
+            console.log(`[AUTO-MERGE] Skipping — at capacity`);
             return;
           }
 
@@ -259,9 +282,9 @@ export function registerSlackHandlers(app: App, store: WorktreeStore, docker: Do
       console.log(`[CMD] Hash ${parsed.hash} is not a session, treating as prompt`);
     }
 
-    // New session — parse keywords only here
-    const { forceNew, quiet: explicitQuiet, ciAllow: cmdCiAllow, profile: cmdProfile, prompt: effectivePrompt } = parseKeywords(parsed);
-    const quiet = await resolveQuietMode(client, channel, explicitQuiet);
+    // New session — parse --flags only here
+    const { forceNew, ciAllow: cmdCiAllow, profile: cmdProfile, prompt: effectivePrompt } = parseKeywords(parsed);
+    const quiet = await resolveQuietMode(client, channel, null);
     const prompt = (parsed.type === "reply-hash" && !store.findByHash(parsed.hash)) ? text : effectivePrompt;
     await ack({ text: `ClaudeBox starting: _${truncate(prompt)}_` });
     await startNewSession(client, channel, null, prompt, "", userName, store, docker, baseBranch, quiet, channelName, cmdCiAllow, cmdProfile);

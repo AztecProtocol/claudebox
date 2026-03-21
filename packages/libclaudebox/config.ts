@@ -9,7 +9,9 @@ export const API_SECRET = process.env.CLAUDEBOX_API_SECRET || "";
 export const GITHUB_WEBHOOK_SECRET = process.env.GITHUB_WEBHOOK_SECRET || "";
 export const HTTP_PORT = parseInt(process.env.CLAUDEBOX_PORT || "3000", 10);
 export const INTERNAL_PORT = parseInt(process.env.CLAUDEBOX_INTERNAL_PORT || String(HTTP_PORT + 2), 10);
-export const MAX_CONCURRENT = 10;
+export const MAX_CONCURRENT = parseInt(process.env.CLAUDEBOX_MAX_CONCURRENT || "10", 10);
+/** Hard global ceiling — even profiles with Infinity respect this. */
+export const MAX_GLOBAL_SESSIONS = parseInt(process.env.CLAUDEBOX_MAX_GLOBAL_SESSIONS || "200", 10);
 
 // ── Paths ───────────────────────────────────────────────────────
 export const REPO_DIR = process.env.CLAUDE_REPO_DIR ?? join(homedir(), "repo");
@@ -19,6 +21,8 @@ export const SESSIONS_DIR = join(CLAUDEBOX_DIR, "sessions");
 export const CLAUDEBOX_SESSIONS_DIR = SESSIONS_DIR; // alias for back-compat
 export const CLAUDEBOX_WORKTREES_DIR = join(CLAUDEBOX_DIR, "worktrees");
 export const CLAUDEBOX_STATS_DIR = join(CLAUDEBOX_DIR, "stats");
+export const CLAUDEBOX_CRONS_DIR = join(CLAUDEBOX_DIR, "crons");
+export const CLAUDEBOX_INITIATIVES_DIR = join(CLAUDEBOX_DIR, "initiatives");
 // Parent of packages/libclaudebox/ — the root claudebox directory
 export const CLAUDEBOX_CODE_DIR = join(dirname(import.meta.url.replace("file://", "")), "../..");
 export const CLAUDE_BINARY = process.env.CLAUDE_BINARY ?? join(homedir(), ".local", "bin", "claude");

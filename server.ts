@@ -6,7 +6,7 @@
  *   Full:      Slack Socket Mode + HTTP API (default)
  *   HTTP-only: node server.ts --http-only  (no Slack tokens required)
  *
- * Max 10 concurrent sessions.
+ * Concurrent sessions: per-profile caps (env CLAUDEBOX_MAX_CONCURRENT for global default).
  */
 
 // Set env var early so config.ts sees it during import
@@ -17,7 +17,7 @@ import {
   SLACK_APP_TOKEN, HTTP_PORT, INTERNAL_PORT, DOCKER_IMAGE, MAX_CONCURRENT,
   CLAUDEBOX_DIR,
 } from "./packages/libclaudebox/config.ts";
-import { setChannelMaps } from "./packages/libclaudebox/runtime.ts";
+import { setChannelMaps, setProfileRuntime, setCronStore } from "./packages/libclaudebox/runtime.ts";
 
 // SLACK_BOT_TOKEN via libcreds-host — needed for Slack Bolt App initialization.
 import { getSlackBotToken } from "./packages/libcreds-host/index.ts";
@@ -28,6 +28,8 @@ import { createHttpServer } from "./packages/libclaudebox/http-routes.ts";
 import { DmRegistry } from "./packages/libclaudebox/dm-registry.ts";
 import { setProfilesDir, buildChannelProfileMap, buildChannelBranchMap, loadAllProfiles } from "./packages/libclaudebox/profile-loader.ts";
 import { ProfileRuntime } from "./packages/libclaudebox/profile.ts";
+import { CronStore } from "./packages/libclaudebox/cron-store.ts";
+import { CLAUDEBOX_CRONS_DIR } from "./packages/libclaudebox/config.ts";
 import { startAutoUpdate } from "./packages/libclaudebox/auto-update.ts";
 import { join, dirname } from "path";
 
@@ -149,11 +151,22 @@ async function main() {
   for (const profile of profiles) {
     await profileRuntime.loadProfile(profile);
   }
+  setProfileRuntime(profileRuntime);
+
+  // ── Cron store ──
+  const cronStore = new CronStore(CLAUDEBOX_CRONS_DIR);
+  setCronStore(cronStore);
+  setInterval(() => {
+    cronStore.tick(docker, store).catch(e => {
+      console.error(`[CRON] Tick error: ${e.message}`);
+    });
+  }, 30_000);
+
   const profileRoutes = profileRuntime.getRoutes();
   if (profileRoutes.length) console.log(`  Profile routes: ${profileRoutes.length} endpoints`);
 
   // ── HTTP servers ──
-  const { public: publicServer, internal: internalServer } = createHttpServer(store, docker, profileRuntime, dmRegistry);
+  const { public: publicServer, internal: internalServer } = createHttpServer(store, docker, profileRuntime, dmRegistry, cronStore);
 
   publicServer.listen(HTTP_PORT, () => {
     console.log(`  HTTP (public) listening on :${HTTP_PORT}`);

@@ -13,7 +13,7 @@ import {
   CLAUDEBOX_HOST, CLAUDEBOX_DIR, CLAUDEBOX_STATS_DIR, API_SECRET,
   buildLogUrl,
 } from "./config.ts";
-import { incrActiveSessions, decrActiveSessions } from "./runtime.ts";
+import { incrActiveSessions, decrActiveSessions, getProfileRuntime } from "./runtime.ts";
 import { updateGithubOnCompletion } from "./github-completion.ts";
 
 // Token env vars — sourced from libcreds-host (the only package that reads token env vars).
@@ -119,7 +119,7 @@ export class DockerService {
     onOutput?: (data: string) => void,
     onStart?: (logUrl: string, worktreeId: string) => void,
   ): Promise<number> {
-    incrActiveSessions();
+    incrActiveSessions(opts.profile);
 
     // Resolve worktree first (needed for logId)
     const wt = store.getOrCreateWorktree(opts.worktreeId);
@@ -215,7 +215,7 @@ export class DockerService {
       await this.createNetwork(networkName);
       console.log(`[DOCKER] Network created: ${networkName}`);
     } catch (e: any) {
-      decrActiveSessions();
+      decrActiveSessions(opts.profile);
       throw new Error(`Failed to create Docker network: ${e.message}`);
     }
 
@@ -297,6 +297,8 @@ export class DockerService {
           `CLAUDEBOX_REPO_NAME=${basename(REPO_DIR)}`,
           `CLAUDEBOX_QUIET=${opts.quiet ? "1" : "0"}`,
           `CLAUDEBOX_CI_ALLOW=${opts.ciAllow ? "1" : "0"}`,
+          `CLAUDEBOX_CRON_ALLOW=${opts.cronAllow ? "1" : "0"}`,
+          ...(opts.cronJobId ? [`CLAUDEBOX_CRON_JOB_ID=${opts.cronJobId}`] : []),
           `CLAUDEBOX_PROFILE=${profileDir}`,
           `CLAUDEBOX_SCOPES=${(opts.scopes || []).join(",")}`,
           ...(hasGcp ? [`GOOGLE_APPLICATION_CREDENTIALS=/opt/gcp/claudesa.json`] : []),
@@ -440,7 +442,7 @@ export class DockerService {
         });
 
         container.on("close", (code) => {
-          decrActiveSessions();
+          decrActiveSessions(opts.profile);
           const exitCode = code ?? 1;
           console.log(`[DOCKER] Claude container ${claudeName} exited: ${exitCode}`);
 
@@ -474,11 +476,46 @@ export class DockerService {
           updateGithubOnCompletion(store, logId, worktreeId, exitCode)
             .catch((e) => console.warn(`[DOCKER] GitHub completion update failed: ${e.message}`));
 
+          // Notify profile of completion
+          const profileRuntime = getProfileRuntime();
+          if (profileRuntime && opts.profile) {
+            const sessionMeta = store.get(logId);
+            if (sessionMeta) {
+              profileRuntime.notifySessionComplete(opts.profile, logId, sessionMeta)
+                .catch((e) => console.warn(`[DOCKER] Profile completion hook failed: ${e.message}`));
+            }
+          }
+
+          // Auto-start next queued prompt
+          const queued = store.drainQueue(logId);
+          if (queued.length > 0) {
+            const next = queued[0];
+            const remaining = queued.slice(1);
+            console.log(`[DOCKER] Auto-starting queued prompt for worktree ${worktreeId}: "${next.text.slice(0, 60)}..."`);
+            this.runContainerSession({
+              prompt: next.text,
+              userName: next.user || opts.userName,
+              profile: opts.profile,
+              worktreeId,
+              slackChannel: opts.slackChannel,
+              slackThreadTs: opts.slackThreadTs,
+              targetRef: opts.targetRef,
+            }, store, undefined, (_logUrl, _wId) => {
+              // Re-queue remaining messages as soon as the new session starts
+              if (remaining.length) {
+                const newSession = store.findByWorktreeId(worktreeId);
+                if (newSession?._log_id) {
+                  for (const m of remaining) store.queueMessage(newSession._log_id, m);
+                }
+              }
+            }).catch((e) => console.error(`[DOCKER] Auto-start failed: ${e.message}`));
+          }
+
           resolve(exitCode);
         });
       });
     } catch (e: any) {
-      decrActiveSessions();
+      decrActiveSessions(opts.profile);
       console.error(`[DOCKER] Session ${logId} failed: ${e.message}`);
       cleanup();
       store.update(logId, { status: "error", error: e.message, finished: new Date().toISOString() });
@@ -537,13 +574,13 @@ export class DockerService {
 
         // Container is still running — re-attach!
         console.log(`[RECOVER] ${logId}: container ${containerName} still running — re-attaching...`);
-        incrActiveSessions();
+        incrActiveSessions(session.profile);
         this.recoveredSessions.add(logId);
 
         // Shared exit handler — used by both with-worktree and without-worktree paths
         const onContainerExit = (code: number, streamer?: SessionStreamer, cacheLogProc?: ChildProcess | null) => {
           this.recoveredSessions.delete(logId);
-          decrActiveSessions();
+          decrActiveSessions(session.profile);
           console.log(`[RECOVER] Container ${containerName} exited: ${code}`);
 
           // Stop streamer and cache_log

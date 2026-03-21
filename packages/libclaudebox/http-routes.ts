@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "http";
 import { SignJWT, jwtVerify, type JWTPayload } from "jose";
 import { createHmac, timingSafeEqual } from "crypto";
 import { API_SECRET, SESSION_PAGE_USER, SESSION_PAGE_PASS, MAX_CONCURRENT, DEFAULT_BASE_BRANCH, GITHUB_WEBHOOK_SECRET } from "./config.ts";
-import { getActiveSessions, getChannelBranches } from "./runtime.ts";
+import { getActiveSessions, getChannelBranches, getChannelProfiles, hasCapacity, getEffectiveMaxConcurrent } from "./runtime.ts";
 import { getHostCreds } from "../libcreds-host/index.ts";
 import { dmAuthor } from "../libcreds-host/slack.ts";
 import { existsSync, readFileSync, readdirSync, statSync, watch, mkdirSync, openSync, readSync, fstatSync, closeSync } from "fs";
@@ -344,10 +344,6 @@ const routes: Route[] = [
   {
     method: "POST", pattern: /^\/run$/, auth: "api",
     handler: async (req, res, _params, { store, docker }) => {
-      if (getActiveSessions() >= MAX_CONCURRENT) {
-        json(res, 503, { error: "at capacity", active: getActiveSessions(), max: MAX_CONCURRENT });
-        return;
-      }
       let body: any;
       try { body = JSON.parse(await readBody(req)); }
       catch { json(res, 400, { error: "invalid JSON" }); return; }
@@ -359,6 +355,13 @@ const routes: Route[] = [
       const keywords = parseKeywords({ type: "fresh", prompt });
       const ciAllow = keywords.ciAllow;
       const runProfile = body.profile || keywords.profile || "";
+
+      // Per-profile capacity check
+      if (!hasCapacity(runProfile)) {
+        const max = getEffectiveMaxConcurrent(runProfile);
+        json(res, 503, { error: "at capacity", active: getActiveSessions(), max });
+        return;
+      }
       prompt = keywords.prompt;
 
       let worktreeId = body.worktree_id || "";
@@ -531,8 +534,8 @@ const routes: Route[] = [
 
       console.log(`[WEBHOOK] claude-review label on ${repo}#${prNumber} "${prTitle}" by ${prAuthor}`);
 
-      // Capacity check
-      if (getActiveSessions() >= MAX_CONCURRENT) {
+      // Capacity check (review profile uses default capacity)
+      if (!hasCapacity("review")) {
         json(res, 503, { error: "at capacity" });
         return;
       }
@@ -1823,6 +1826,7 @@ export function createHttpServer(
   docker: DockerService,
   profileRuntime?: import("./profile.ts").ProfileRuntime,
   dmRegistry?: import("./dm-registry.ts").DmRegistry,
+  cronStore?: import("./cron-store.ts").CronStore,
 ) {
   const ctx = { store, docker };
 
@@ -1864,8 +1868,217 @@ export function createHttpServer(
     );
   }
 
+  // Cron API routes
+  const cronRoutes: Route[] = [];
+  if (cronStore) {
+    // Public cron routes (basic auth — for dashboards/UI)
+    cronRoutes.push(
+      {
+        method: "GET", pattern: /^\/api\/crons$/, auth: "basic",
+        handler: async (req, res) => {
+          const url = new URL(req.url || "/", "http://localhost");
+          const profile = url.searchParams.get("profile") || undefined;
+          const channel = url.searchParams.get("channel") || undefined;
+          const jobs = profile ? cronStore.listByProfile(profile) : cronStore.list(channel);
+          json(res, 200, jobs);
+        },
+      },
+      {
+        method: "POST", pattern: /^\/api\/crons$/, auth: "basic",
+        handler: async (req, res) => {
+          let body: any;
+          try { body = JSON.parse(await readBody(req)); }
+          catch { json(res, 400, { error: "invalid JSON" }); return; }
+          try {
+            const job = cronStore.create({
+              channel_id: body.channel_id || "",
+              name: body.name || "Untitled",
+              schedule: body.schedule || "",
+              prompt: body.prompt || "",
+              user: body.user || "dashboard",
+              enabled: body.enabled !== false,
+            });
+            json(res, 201, job);
+          } catch (e: any) {
+            json(res, 400, { error: e.message });
+          }
+        },
+      },
+      {
+        method: "PUT", pattern: /^\/api\/crons\/([a-f0-9]+)$/, auth: "basic",
+        handler: async (req, res, params) => {
+          let body: any;
+          try { body = JSON.parse(await readBody(req)); }
+          catch { json(res, 400, { error: "invalid JSON" }); return; }
+          const id = params[0];
+          try {
+            const job = cronStore.update(id, body);
+            if (!job) { json(res, 404, { error: "cron not found" }); return; }
+            json(res, 200, job);
+          } catch (e: any) {
+            json(res, 400, { error: e.message });
+          }
+        },
+      },
+      {
+        method: "DELETE", pattern: /^\/api\/crons\/([a-f0-9]+)$/, auth: "basic",
+        handler: async (_req, res, params) => {
+          const id = params[0];
+          const ok = cronStore.delete(id);
+          json(res, ok ? 200 : 404, { ok });
+        },
+      },
+      {
+        method: "POST", pattern: /^\/api\/crons\/([a-f0-9]+)\/trigger$/, auth: "basic",
+        handler: async (_req, res, params) => {
+          const id = params[0];
+          const job = cronStore.get(id);
+          if (!job) { json(res, 404, { error: "cron not found" }); return; }
+          const profile = getChannelProfiles()[job.channel_id] || "default";
+          if (!hasCapacity(profile)) {
+            json(res, 503, { error: "at capacity" });
+            return;
+          }
+          docker.runContainerSession({
+            prompt: job.prompt,
+            userName: job.user || "cron",
+            profile,
+            slackChannel: job.channel_id,
+            cronJobId: job.id,
+          }, store);
+          cronStore.update(id, { lastRunAt: new Date().toISOString() });
+          json(res, 202, { ok: true, triggered: id });
+        },
+      },
+    );
+
+    // Internal cron routes (for MCP sidecar — port 3002)
+    cronRoutes.push(
+      {
+        method: "GET", pattern: /^\/api\/internal\/crons$/, auth: "none", internal: true,
+        handler: async (req, res) => {
+          const url = new URL(req.url || "/", "http://localhost");
+          const channel = url.searchParams.get("channel") || undefined;
+          json(res, 200, cronStore.list(channel));
+        },
+      },
+      {
+        method: "POST", pattern: /^\/api\/internal\/crons$/, auth: "none", internal: true,
+        handler: async (req, res) => {
+          let body: any;
+          try { body = JSON.parse(await readBody(req)); }
+          catch { json(res, 400, { error: "invalid JSON" }); return; }
+          try {
+            const job = cronStore.create({
+              channel_id: body.channel_id || "",
+              name: body.name || "Untitled",
+              schedule: body.schedule || "",
+              prompt: body.prompt || "",
+              user: body.user || "agent",
+              enabled: body.enabled !== false,
+            });
+            json(res, 201, job);
+          } catch (e: any) {
+            json(res, 400, { error: e.message });
+          }
+        },
+      },
+      {
+        method: "PUT", pattern: /^\/api\/internal\/crons\/([a-f0-9]+)$/, auth: "none", internal: true,
+        handler: async (req, res, params) => {
+          let body: any;
+          try { body = JSON.parse(await readBody(req)); }
+          catch { json(res, 400, { error: "invalid JSON" }); return; }
+          const id = params[0];
+          try {
+            const job = cronStore.update(id, body);
+            if (!job) { json(res, 404, { error: "cron not found" }); return; }
+            json(res, 200, job);
+          } catch (e: any) {
+            json(res, 400, { error: e.message });
+          }
+        },
+      },
+      {
+        method: "DELETE", pattern: /^\/api\/internal\/crons\/([a-f0-9]+)$/, auth: "none", internal: true,
+        handler: async (_req, res, params) => {
+          const id = params[0];
+          const ok = cronStore.delete(id);
+          json(res, ok ? 200 : 404, { ok });
+        },
+      },
+    );
+  }
+
+  // Bulk sessions endpoint
+  const bulkRoutes: Route[] = [
+    {
+      method: "POST", pattern: /^\/api\/sessions\/bulk$/, auth: "basic",
+      handler: async (req, res) => {
+        let body: any;
+        try { body = JSON.parse(await readBody(req)); }
+        catch { json(res, 400, { error: "invalid JSON" }); return; }
+
+        const prompts: string[] = body.prompts || [];
+        const profile = body.profile || "";
+        const baseBranch = body.base_branch || "";
+        const user = body.user || "dashboard";
+
+        const results: Array<{ ok: boolean; worktree_id?: string; error?: string }> = [];
+        for (const prompt of prompts) {
+          if (!hasCapacity(profile)) {
+            results.push({ ok: false, error: "at capacity" });
+            continue;
+          }
+          try {
+            const wt = store.getOrCreateWorktree();
+            docker.runContainerSession({
+              prompt,
+              userName: user,
+              profile,
+              worktreeId: wt.worktreeId,
+              targetRef: baseBranch || undefined,
+            }, store);
+            results.push({ ok: true, worktree_id: wt.worktreeId });
+          } catch (e: any) {
+            results.push({ ok: false, error: e.message });
+          }
+        }
+        json(res, 200, { results });
+      },
+    },
+    // Queue API: read queued messages for a worktree
+    {
+      method: "GET", pattern: /^\/api\/queue\/([a-f0-9]+)$/, auth: "basic",
+      handler: async (_req, res, params) => {
+        const worktreeId = params[0];
+        const session = store.findByWorktreeId(worktreeId);
+        if (!session?._log_id) { json(res, 404, { error: "session not found" }); return; }
+        const messages = store.peekQueue(session._log_id);
+        json(res, 200, { messages });
+      },
+    },
+    // Queue API: add a prompt to a worktree's queue
+    {
+      method: "POST", pattern: /^\/api\/queue\/([a-f0-9]+)$/, auth: "basic",
+      handler: async (req, res, params) => {
+        const worktreeId = params[0];
+        let body: any;
+        try { body = JSON.parse(await readBody(req)); }
+        catch { json(res, 400, { error: "invalid JSON" }); return; }
+
+        const session = store.findByWorktreeId(worktreeId);
+        if (!session?._log_id) { json(res, 404, { error: "session not found" }); return; }
+
+        const msg = { text: body.prompt || "", user: body.user || "dashboard", ts: new Date().toISOString() };
+        store.queueMessage(session._log_id, msg);
+        json(res, 200, { ok: true, queued: msg });
+      },
+    },
+  ];
+
   // Adapt profile routes into internal Route format
-  const allRoutes: Route[] = [...routes, ...dmRoutes];
+  const allRoutes: Route[] = [...routes, ...cronRoutes, ...bulkRoutes, ...dmRoutes];
   if (profileRuntime) {
     for (const pr of profileRuntime.getRoutes()) {
       const paramNames: string[] = [];

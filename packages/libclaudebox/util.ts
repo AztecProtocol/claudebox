@@ -41,8 +41,9 @@ export function parseMessage(text: string, findSession: (hash: string) => RunMet
 
 export interface ParsedKeywords {
   forceNew: boolean;
-  quiet: boolean | null;  // null = use auto-detect
   ciAllow: boolean;
+  cronAllow: boolean;
+  listCrons: string | true | false;  // false=unset, true=current channel, string=specific channelId
   profile: string;  // "" = default
   prompt: string;
 }
@@ -50,29 +51,50 @@ export interface ParsedKeywords {
 // Profile keywords are derived from discovered profiles (excludes "default")
 const PROFILE_KEYWORDS = discoverProfiles().filter(p => p !== "default");
 
-/** Detect keywords (new-session, quiet, loud, ci-allow, profile names) at start of prompt, in any order. */
+// Boolean --flags: flag string → key in ParsedKeywords
+const BOOLEAN_FLAGS: Array<[string, "forceNew" | "ciAllow" | "cronAllow"]> = [
+  ["--new-session", "forceNew"],
+  ["--ci-allow", "ciAllow"],
+  ["--cron-allow", "cronAllow"],
+];
+
+/** Parse --flags and profile keywords from the start of a prompt. */
 export function parseKeywords(parsed: ParseResult): ParsedKeywords {
   let prompt = parsed.prompt;
-  let forceNew = false;
-  let quiet: boolean | null = null;
-  let ciAllow = false;
+  const boolFlags: Record<string, boolean> = { forceNew: false, ciAllow: false, cronAllow: false };
+  let listCrons: string | true | false = false;
   let profile = "";
 
   let changed = true;
   while (changed) {
     changed = false;
-    if (/^new-session\b/i.test(prompt)) {
-      forceNew = true; prompt = prompt.replace(/^new-session\s*/i, ""); changed = true;
+
+    // --flag parsing
+    for (const [flag, key] of BOOLEAN_FLAGS) {
+      if (prompt.toLowerCase().startsWith(flag) && (prompt.length === flag.length || /\s/.test(prompt[flag.length]))) {
+        boolFlags[key] = true;
+        prompt = prompt.slice(flag.length).trimStart();
+        changed = true;
+        break;
+      }
     }
-    if (/^quiet\b/i.test(prompt)) {
-      quiet = true; prompt = prompt.replace(/^quiet\s*/i, ""); changed = true;
+
+    // --list-crons [channelId]
+    if (/^--list-crons(?:\s|$)/i.test(prompt)) {
+      prompt = prompt.slice("--list-crons".length).trimStart();
+      // Optional channel ID argument
+      const channelMatch = prompt.match(/^([A-Z][A-Z0-9]+)\s*/);
+      if (channelMatch) {
+        listCrons = channelMatch[1];
+        prompt = prompt.slice(channelMatch[0].length);
+      } else {
+        listCrons = true;
+      }
+      changed = true;
+      continue;
     }
-    if (/^loud\b/i.test(prompt)) {
-      quiet = false; prompt = prompt.replace(/^loud\s*/i, ""); changed = true;
-    }
-    if (/^(ci-allow|allow-ci)\b/i.test(prompt)) {
-      ciAllow = true; prompt = prompt.replace(/^(ci-allow|allow-ci)\s*/i, ""); changed = true;
-    }
+
+    // Profile keywords (bare words, no -- prefix)
     for (const kw of PROFILE_KEYWORDS) {
       const re = new RegExp(`^${kw}\\b`, "i");
       if (re.test(prompt)) {
@@ -80,7 +102,14 @@ export function parseKeywords(parsed: ParseResult): ParsedKeywords {
       }
     }
   }
-  return { forceNew, quiet, ciAllow, profile, prompt };
+  return {
+    forceNew: boolFlags.forceNew,
+    ciAllow: boolFlags.ciAllow,
+    cronAllow: boolFlags.cronAllow,
+    listCrons,
+    profile,
+    prompt: prompt.trim(),
+  };
 }
 
 /** Validate a session for resume. Returns error message or null if OK. */

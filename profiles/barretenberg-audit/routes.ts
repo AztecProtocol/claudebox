@@ -9,8 +9,9 @@ import { auditDashboardHTML } from "../../packages/libclaudebox/html/audit-dashb
 import { existsSync, readFileSync, readdirSync, statSync } from "fs";
 import { join } from "path";
 import { MAX_CONCURRENT } from "../../packages/libclaudebox/config.ts";
-import { getActiveSessions } from "../../packages/libclaudebox/runtime.ts";
+import { getActiveSessions, hasCapacity } from "../../packages/libclaudebox/runtime.ts";
 import { getHostCreds } from "../../packages/libcreds-host/index.ts";
+import type { InitiativeStore } from "./initiative-store.ts";
 
 const AUDIT_REPO = "AztecProtocol/barretenberg-claude";
 
@@ -43,7 +44,7 @@ function readJsonl(statsDir: string, filename: string): any[] {
   return entries;
 }
 
-export function registerAuditRoutes(ctx: ProfileContext): void {
+export function registerAuditRoutes(ctx: ProfileContext, initiativeStore?: InitiativeStore): void {
   // ── Audit dashboard page ──
   ctx.route("GET", "/audit", async ({ res }) => {
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
@@ -208,6 +209,107 @@ export function registerAuditRoutes(ctx: ProfileContext): void {
         summary: s.summary, ts: s._ts, session: s._log_id,
       })),
     });
+  });
+
+  // ── Initiative routes ──────────────────────────────────────────
+
+  if (!initiativeStore) return;
+
+  // List page
+  ctx.route("GET", "/audit/initiatives", async ({ res }) => {
+    const { initiativesListHTML } = await import("./html/initiatives-list.ts");
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    res.end(initiativesListHTML());
+  }, "none");
+
+  // Detail page
+  ctx.route("GET", "/audit/initiatives/:tag", async ({ res, params }) => {
+    const { initiativeDetailHTML } = await import("./html/initiative-detail.ts");
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    res.end(initiativeDetailHTML(params.tag));
+  }, "none");
+
+  // API: list initiatives
+  ctx.route("GET", "/api/audit/initiatives", async ({ res }) => {
+    jsonResponse(res, 200, initiativeStore.list());
+  });
+
+  // API: create initiative
+  ctx.route("POST", "/api/audit/initiatives", async ({ req, res }) => {
+    let body: any;
+    try { body = JSON.parse(await readBody(req)); }
+    catch { jsonResponse(res, 400, { error: "invalid JSON" }); return; }
+    try {
+      const init = initiativeStore.create({
+        name: body.name || "",
+        tag: body.tag || "",
+        defaultPrompt: body.defaultPrompt || "",
+        summaryPrompt: body.summaryPrompt,
+        summaryThreshold: body.summaryThreshold,
+      });
+      jsonResponse(res, 201, init);
+    } catch (e: any) {
+      jsonResponse(res, 400, { error: e.message });
+    }
+  });
+
+  // API: update initiative
+  ctx.route("PUT", "/api/audit/initiatives/:id", async ({ req, res, params }) => {
+    let body: any;
+    try { body = JSON.parse(await readBody(req)); }
+    catch { jsonResponse(res, 400, { error: "invalid JSON" }); return; }
+    const init = initiativeStore.update(params.id, body);
+    if (!init) { jsonResponse(res, 404, { error: "not found" }); return; }
+    jsonResponse(res, 200, init);
+  });
+
+  // API: delete initiative
+  ctx.route("DELETE", "/api/audit/initiatives/:id", async ({ req, res, params }) => {
+    const ok = initiativeStore.delete(params.id);
+    jsonResponse(res, ok ? 200 : 404, { ok });
+  });
+
+  // API: spawn worker for initiative
+  ctx.route("POST", "/api/audit/initiatives/:id/worker", async ({ req, res, params, store, docker }) => {
+    const init = initiativeStore.get(params.id);
+    if (!init) { jsonResponse(res, 404, { error: "initiative not found" }); return; }
+    if (!hasCapacity("barretenberg-audit")) {
+      jsonResponse(res, 503, { error: "at capacity" });
+      return;
+    }
+    let body: any = {};
+    try { body = JSON.parse(await readBody(req)); } catch {}
+
+    const basePrompt = body.prompt || init.defaultPrompt;
+    const prompt = `${basePrompt}\n\nIMPORTANT: After cloning, call set_tag with tag "${init.tag}" to associate this session with the "${init.name}" initiative.`;
+    docker.runContainerSession({
+      prompt,
+      userName: body.user || "initiative",
+      profile: "barretenberg-audit",
+    }, store);
+    jsonResponse(res, 202, { ok: true, initiative: init.name, tag: init.tag });
+  });
+
+  // API: send one-off prompt to a new worker
+  ctx.route("POST", "/api/audit/initiatives/:id/prompt", async ({ req, res, params, store, docker }) => {
+    const init = initiativeStore.get(params.id);
+    if (!init) { jsonResponse(res, 404, { error: "initiative not found" }); return; }
+    if (!hasCapacity("barretenberg-audit")) {
+      jsonResponse(res, 503, { error: "at capacity" });
+      return;
+    }
+    let body: any;
+    try { body = JSON.parse(await readBody(req)); }
+    catch { jsonResponse(res, 400, { error: "invalid JSON" }); return; }
+    if (!body.prompt) { jsonResponse(res, 400, { error: "prompt required" }); return; }
+
+    const prompt = `${body.prompt}\n\nIMPORTANT: After cloning, call set_tag with tag "${init.tag}" to associate this session with the "${init.name}" initiative.`;
+    docker.runContainerSession({
+      prompt,
+      userName: body.user || "initiative",
+      profile: "barretenberg-audit",
+    }, store);
+    jsonResponse(res, 202, { ok: true, initiative: init.name, tag: init.tag });
   });
 
 }

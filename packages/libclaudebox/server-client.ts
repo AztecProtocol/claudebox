@@ -160,6 +160,26 @@ export class HostClient {
     });
   }
 
+  // ── Cron operations ─────────────────────────────────────────
+
+  async listCrons(channelId?: string): Promise<any[]> {
+    if (!this.hasServer) return [];
+    const qs = channelId ? `?channel=${channelId}` : "";
+    return (await this.serverFetch(`/api/internal/crons${qs}`, { method: "GET" })) || [];
+  }
+
+  async createCron(opts: { channel_id: string; name: string; schedule: string; prompt: string; user?: string }): Promise<any> {
+    return this.serverFetch("/api/internal/crons", { body: opts });
+  }
+
+  async updateCron(id: string, patch: Record<string, any>): Promise<any> {
+    return this.serverFetch(`/api/internal/crons/${id}`, { method: "PUT", body: patch });
+  }
+
+  async deleteCron(id: string): Promise<any> {
+    return this.serverFetch(`/api/internal/crons/${id}`, { method: "DELETE" });
+  }
+
   // ── Session metadata ─────────────────────────────────────────
 
   updateRunMeta(meta: Record<string, string>): void {

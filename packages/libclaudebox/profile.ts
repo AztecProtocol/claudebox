@@ -9,6 +9,7 @@ import type { IncomingMessage, ServerResponse } from "http";
 import type { WorktreeStore } from "./worktree-store.ts";
 import type { DockerService } from "./docker.ts";
 import type { RunMeta, ContainerSessionOpts } from "./types.ts";
+import { MAX_CONCURRENT } from "./config.ts";
 
 // ── Shared types ──────────────────────────────────────────────────
 
@@ -115,8 +116,14 @@ export interface Profile {
   /** Prompt queued as a follow-up after session completes (e.g. "write a summary") */
   summaryPrompt?: string;
 
+  /** Max concurrent sessions for this profile (default: global MAX_CONCURRENT, Infinity = unlimited) */
+  maxConcurrent?: number;
+
   /** Fixed tag categories for session classification (used by set_tag tool and dashboard) */
   tagCategories?: string[];
+
+  /** Called when a session using this profile completes */
+  onSessionComplete?(logId: string, meta: RunMeta, ctx: { store: WorktreeStore; docker: DockerService }): void | Promise<void>;
 
   /** Called once at startup to register handlers and routes */
   setup(ctx: ProfileContext): void | Promise<void>;
@@ -179,6 +186,30 @@ export class ProfileRuntime {
   /** Get all loaded profiles. */
   getProfiles(): Profile[] {
     return this.profiles;
+  }
+
+  /** Get a profile by name. */
+  getProfile(name: string): Profile | undefined {
+    return this.profiles.find(p => p.name === name);
+  }
+
+  /** Get maxConcurrent for a profile (falls back to global MAX_CONCURRENT). */
+  getMaxConcurrent(profileName: string): number {
+    const profile = this.getProfile(profileName);
+    if (profile?.maxConcurrent !== undefined) return profile.maxConcurrent;
+    return MAX_CONCURRENT;
+  }
+
+  /** Notify profile of session completion. */
+  async notifySessionComplete(profileName: string, logId: string, meta: RunMeta): Promise<void> {
+    const profile = this.getProfile(profileName);
+    if (profile?.onSessionComplete) {
+      try {
+        await profile.onSessionComplete(logId, meta, { store: this.store, docker: this.docker });
+      } catch (e: any) {
+        console.error(`[PROFILE] onSessionComplete error for ${profileName}: ${e.message}`);
+      }
+    }
   }
 
 }
