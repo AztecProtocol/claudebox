@@ -8,6 +8,8 @@ import { join } from "path";
 export const PORT = parseInt(process.env.MCP_PORT || "9801", 10);
 export const QUIET_MODE = process.env.CLAUDEBOX_QUIET === "1";
 export const CI_ALLOW = process.env.CLAUDEBOX_CI_ALLOW === "1";
+export const CRON_ALLOW = process.env.CLAUDEBOX_CRON_ALLOW === "1";
+export const CRON_JOB_ID = process.env.CLAUDEBOX_CRON_JOB_ID || "";
 export const STATS_DIR = process.env.CLAUDEBOX_STATS_DIR || "/stats";
 export const CLAUDEBOX_HOST = process.env.CLAUDEBOX_HOST || "claudebox.work";
 export const WORKTREE_ID = process.env.CLAUDEBOX_WORKTREE_ID || "";

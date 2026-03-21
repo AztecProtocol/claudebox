@@ -515,6 +515,16 @@ export class WorktreeStore {
     } catch {}
   }
 
+  /** Peek at queued messages without draining. */
+  peekQueue(logId: string): { text: string; user: string; ts: string }[] {
+    this.validateId(logId, "logId");
+    const path = join(this.sessionsDir, `${logId}.json`);
+    try {
+      const meta = existsSync(path) ? JSON.parse(readFileSync(path, "utf-8")) : {};
+      return meta.queued_messages || [];
+    } catch { return []; }
+  }
+
   /** Pop all queued messages and return them (clears the queue). */
   drainQueue(logId: string): { text: string; user: string; ts: string }[] {
     this.validateId(logId, "logId");

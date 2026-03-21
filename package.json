@@ -19,6 +19,7 @@
     "@slack/bolt": "^4.6.0",
     "@types/dockerode": "^4.0.1",
     "@types/ws": "^8.18.1",
+    "cron-parser": "^5.5.0",
     "dockerode": "^4.0.9",
     "jose": "^6.2.0",
     "ngrok": "^5.0.0-beta.2",

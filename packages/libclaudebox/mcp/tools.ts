@@ -20,6 +20,7 @@ import {
   getHostClient,
 } from "./activity.ts";
 import { getCreds, hasGhToken, hasLinearToken } from "./helpers.ts";
+import { registerCronTools } from "./cron-tools.ts";
 
 // ── Workspace name (shared state for branch naming) ─────────────
 export let workspaceName = "";
@@ -290,7 +291,7 @@ For writes, use dedicated tools: create_pr, update_pr, create_gist, create_issue
     `Record a structured data point. Appends to /stats/<schema>.jsonl. Auto-adds _ts, _log_id, _worktree_id.\n\nAvailable schemas:\n${schemasPrompt()}`,
     {
       schema: z.string().describe(`Schema name: ${allSchemas().map(s => s.name).join(", ")}`),
-      data: z.record(z.any()).describe("Data object matching the schema fields"),
+      data: z.object({}).passthrough().describe("Data object matching the schema fields"),
     },
     async ({ schema, data }) => {
       const s = getSchema(schema);
@@ -374,4 +375,7 @@ For writes, use dedicated tools: create_pr, update_pr, create_gist, create_issue
         return { content: [{ type: "text", text: `update_gist: ${e.message}` }], isError: true };
       }
     });
+
+  // ── Cron tools ───────────────────────────────────────────────
+  registerCronTools(server);
 }

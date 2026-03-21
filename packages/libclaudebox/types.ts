@@ -9,6 +9,7 @@ export interface RunMeta {
   worktree_id?: string;
   _log_id?: string;
   scopes?: string[];
+  tags?: string[];
   [key: string]: any;
 }
 
@@ -27,6 +28,8 @@ export interface ContainerSessionOpts {
   targetRef?: string;
   quiet?: boolean;
   ciAllow?: boolean;
+  cronAllow?: boolean;
+  cronJobId?: string;
   profile?: string;
   model?: string;
   scopes?: string[];

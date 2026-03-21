@@ -11,8 +11,10 @@
 import type { Profile } from "../../packages/libclaudebox/profile.ts";
 import { register } from "../../packages/libclaudebox/stat-schemas.ts";
 import { registerAuditRoutes } from "./routes.ts";
+import { InitiativeStore } from "./initiative-store.ts";
 
 const AUDIT_CHANNEL = "C0AJCUKUNGP";
+const initiativeStore = new InitiativeStore();
 
 const plugin: Profile = {
   name: "barretenberg-audit",
@@ -24,6 +26,7 @@ const plugin: Profile = {
 
   channels: [AUDIT_CHANNEL],
   requiresServer: true,
+  maxConcurrent: Infinity,
 
   schemas: [
     {
@@ -79,9 +82,18 @@ const plugin: Profile = {
     },
   ],
 
+  async onSessionComplete(logId, meta, ctx) {
+    const tags: string[] = meta.tags || [];
+    for (const tag of tags) {
+      if (initiativeStore.getByTag(tag)) {
+        await initiativeStore.onSessionComplete(tag, ctx.store, ctx.docker, "barretenberg-audit");
+      }
+    }
+  },
+
   setup(ctx) {
     for (const s of plugin.schemas || []) register(s);
-    registerAuditRoutes(ctx);
+    registerAuditRoutes(ctx, initiativeStore);
   },
 };
 

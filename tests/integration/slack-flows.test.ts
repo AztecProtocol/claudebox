@@ -420,24 +420,21 @@ describe("Slack message handling flows", () => {
 
   // ── Test 4: Keyword parsing in prompts ─────────────────────
 
-  it("parses quiet, ci-allow, and profile keywords from the prompt", async () => {
+  it("parses --ci-allow and profile keywords from the prompt", async () => {
     await registerHandlers();
 
-    await simulateMention("quiet ci-allow barretenberg-audit fix the bug", {
+    await simulateMention("--ci-allow barretenberg-audit fix the bug", {
       ts: "1700000500.000001",
     });
 
     assert.equal(mockDocker.sessionCount, 1, "Should create exactly one session");
-    assert.equal(mockDocker.lastSession.quiet, true, "Should be quiet");
     assert.equal(mockDocker.lastSession.ciAllow, true, "Should have ciAllow");
     assert.equal(mockDocker.lastSession.profile, "barretenberg-audit", "Should use barretenberg-audit profile");
     assert.ok(mockDocker.lastSession.prompt.includes("fix the bug"),
       `Prompt should be 'fix the bug', got: ${mockDocker.lastSession.prompt}`);
-    // The prompt should NOT include the keywords
-    assert.ok(!mockDocker.lastSession.prompt.includes("quiet"),
-      "Prompt should not contain keyword 'quiet'");
-    assert.ok(!mockDocker.lastSession.prompt.includes("ci-allow"),
-      "Prompt should not contain keyword 'ci-allow'");
+    // The prompt should NOT include the flags
+    assert.ok(!mockDocker.lastSession.prompt.includes("--ci-allow"),
+      "Prompt should not contain flag '--ci-allow'");
   });
 
   // ── Test 5: Bot message filtering ──────────────────────────
@@ -515,8 +512,8 @@ describe("Slack message handling flows", () => {
     // Bind the thread so clearThreadBinding has something to clear
     mockStore.bindThread(TEST_CHANNEL, threadTs, oldWorktreeId);
 
-    // Send new-session in the same thread
-    await simulateMention("new-session do something else", {
+    // Send --new-session in the same thread
+    await simulateMention("--new-session do something else", {
       threadTs,
       ts: "1700000900.000001",
     });
